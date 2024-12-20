@@ -128,7 +128,6 @@ void sys_pthread_exit() {
 }
 
 tid_t sys_pthread_join(tid_t tid) { return syscall1(SYS_PT_JOIN, tid); }
-
 bool lock_init(lock_t* lock) { return syscall1(SYS_LOCK_INIT, lock); }
 
 void lock_acquire(lock_t* lock) {

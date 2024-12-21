@@ -1,4 +1,4 @@
-# Argument Passing
+# Design docsg
 
 First of all, the argv pointers to all argments for the program is passed to the runtask function. For example, run do-nothing a b c will result in a pointer to a pointer of characters that hold run, do-nothing, a, b, c.
 
@@ -90,3 +90,61 @@ Beware: a 4-byte memory region (e.g. a 32-bit integer) may consist of 2 bytes of
 What about the cases where dereferencing a pointer taking us to a kernel space? Need to check this as well
 
 How does syscall work? Where does it start? How does the transition occur?
+
+- Basically we validate the arguments, push them to the stack and then call INT 30
+
+When a system call is called. The following steps happened:
+
+1. Depending on the call, one of the following function will be called with appropritate args passed in:
+
+- syscall0
+- syscall1
+- syscall1f
+- syscall2
+- syscall3
+
+Each of these functions has a NUMBER which is a specifier for which system call. All of these enums are in syscall-nr.h
+
+These syscall performs assembly instruction that pushes the NUMBER and the arguments onto the user stack, then perform int $0x30, which is essentially a trap to handler system call specifically
+
+When this is called, it saves the CPU state, perform mode transitioning from user to kernel mode, then jump to intr_handler.
+
+When the OS is booted, it has already set up intr_handler via syscall_init, intr_handler is essentially syscall_handler. This syscall_handler is actually the place we will handle all of our system call logic depending the NUMBER.
+
+We already have an example with for calling exit(0).
+
+Right now, we have no checks to validate the arguments to make sure the parameters are not accessing kernel memory.
+
+We will create a function to perform this check in syscal.c file.
+
+Notice that we either have 1, 2, or 3 arguments. We also know which syscall has how many arguments, so we could write a generic code to handle each one accordingly. I don't know how this would look like yet.
+
+What exactly are being passed? Most arguments are either an int, a pointer, or an unsigned number. We have to make sure the pointer is not pointing to kernel.
+
+How do I write my own tests?
+
+```c
+  if (args[0] == SYS_EXIT) {
+    f->eax = args[1];
+    printf("%s: exit(%d)\n", thread_current()->pcb->process_name, args[1]);
+    process_exit();
+  }
+```
+
+```c
+void syscall_init(void) { intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall"); }
+```
+
+```c
+/* Invokes syscall NUMBER, passing argument ARG0, and returns the
+   return value as an `int'. */
+#define syscall1(NUMBER, ARG0)                                                                     \
+  ({                                                                                               \
+    int retval;                                                                                    \
+    asm volatile("pushl %[arg0]; pushl %[number]; int $0x30; addl $8, %%esp"                       \
+                 : "=a"(retval)                                                                    \
+                 : [number] "i"(NUMBER), [arg0] "g"(ARG0)                                          \
+                 : "memory");                                                                      \
+    retval;                                                                                        \
+  })
+```

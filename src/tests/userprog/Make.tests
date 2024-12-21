@@ -28,7 +28,7 @@ child-rox compute-e fp-asm-helper)
 tests/userprog/iloveos_SRC = tests/userprog/iloveos.c tests/main.c
 tests/userprog/practice_SRC = tests/userprog/practice.c tests/main.c
 tests/userprog/do-nothing_SRC = tests/userprog/do-nothing.c
-tests/userprog/do-nothing_SRC = tests/userprog/make-new-test.c
+tests/userprog/make-new-test_SRC = tests/userprog/make-new-test.c
 tests/userprog/stack-align-0_SRC = tests/userprog/stack-align-0.c
 tests/userprog/stack-align-1_SRC = tests/userprog/stack-align.c
 tests/userprog/stack-align-2_SRC = tests/userprog/stack-align.c

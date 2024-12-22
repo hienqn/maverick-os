@@ -50,7 +50,6 @@ static int get_argc(const char* file_name_) {
 }
 
 static bool parse_file_name(const char* file_name_, char** argv) {
-  // check to make sure it's less than 4096
   int str_len = strlen(file_name_) + 1;
 
   char* file_name_copy = (char*)malloc(str_len);
@@ -81,7 +80,45 @@ static bool parse_file_name(const char* file_name_, char** argv) {
   return true;
 }
 
-static bool prepare_stack(int argc, char** argv, void (**eip)(void), void** esp) {}
+static bool prepare_stack(int argc, char** argv, void** esp) {
+  uint32_t* argv_address[argc]; // +1 to include space for NULL
+
+  for (int i = argc - 1; i >= 0; i--) { // Iterate through arguments in reverse
+    size_t len = strlen(argv[i]) + 1;   // Length of the string including null terminator
+    *esp -= len;                        // Allocate space on the stack
+    memcpy(*esp, argv[i], len);         // Copy the string to the stack
+    argv_address[i] = (uint32_t*)*esp;  // Store the address of the string
+  }
+
+  size_t pointer_size = sizeof(void*);
+
+  size_t total_size = (argc + 3) * pointer_size;
+
+  size_t misalignment = ((size_t)*esp - total_size) % 16;
+
+  *esp -= misalignment;
+
+  memset(*esp, 0, misalignment);
+
+  *esp = (uint32_t*)*esp - 1;
+  *(uint32_t*)*esp = 0;
+
+  for (int i = argc - 1; i >= 0; i--) {
+    *esp -= pointer_size;
+    memcpy(*esp, argv_address[i], pointer_size);
+  }
+
+  *esp = (uint32_t*)*esp - 1;
+  *(uint32_t*)*esp = (uint32_t)((uint32_t*)*esp + 1);
+
+  *esp = (uint32_t*)*esp - 1;
+  *(uint32_t*)*esp = argc;
+
+  *esp = (uint32_t*)*esp - 1;
+  *(uint32_t*)*esp = 0;
+
+  return true;
+}
 
 /* Initializes user programs in the system by ensuring the main
    thread has a minimal PCB so that it can execute and wait for
@@ -172,60 +209,10 @@ static void start_process(void* file_name_) {
     if_.eflags = FLAG_IF | FLAG_MBS;
 
     success = load(argv[0], &if_.eip, &if_.esp);
+  }
 
-    // printf("\nAddress of esp: %p\n", (void*)if_.esp);
-    uint32_t* argv_address[argc]; // +1 to include space for NULL
-
-    for (int i = argc - 1; i >= 0; i--) {   // Iterate through arguments in reverse
-      size_t len = strlen(argv[i]) + 1;     // Length of the string including null terminator
-      if_.esp -= len;                       // Allocate space on the stack
-      memcpy(if_.esp, argv[i], len);        // Copy the string to the stack
-      argv_address[i] = (uint32_t*)if_.esp; // Store the address of the string
-      // printf("\nAddress of esp after pushing value of arguments %d on stack: %p with value %s\n",
-      //        i, (void*)if_.esp, (char*)if_.esp);
-    }
-
-    size_t pointer_size = sizeof(void*);
-    // printf("pointer_size %d\n", pointer_size);
-
-    // 1 for fake return, 1 for argc, and 1 for argv itself, 1 for the argv[argc]
-    size_t total_size = (argc + 3) * pointer_size;
-    // printf("total_size %d\n", total_size);
-
-    // // Calculate misalignment
-    size_t misalignment = ((size_t)if_.esp - total_size) % 16;
-    // printf("misalignment %d\n", misalignment);
-
-    // printf("esp before padded %p\n", (void*)if_.esp);
-
-    if_.esp -= misalignment;
-
-    memset(if_.esp, 0, misalignment);
-
-    // printf("esp after padded %p\n", (void*)if_.esp);
-
-    if_.esp = (uint32_t*)if_.esp - 1;
-    *(uint32_t*)if_.esp = 0;
-
-    // printf("esp after accounting for argc %p\n", (void*)if_.esp);
-
-    for (int i = argc - 1; i >= 0; i--) {
-      if_.esp -= pointer_size;
-      memcpy(if_.esp, argv_address[i], pointer_size);
-    }
-
-    // printf("esp after accounting for all arguments %p\n", (void*)if_.esp);
-    if_.esp = (uint32_t*)if_.esp - 1;
-    *(uint32_t*)if_.esp = (uint32_t)((uint32_t*)if_.esp + 1);
-    // printf("esp after pushing argv end %p\n", (void*)if_.esp);
-
-    if_.esp = (uint32_t*)if_.esp - 1;
-    *(uint32_t*)if_.esp = argc;
-    // printf("esp after pushing argc end %p\n", (void*)if_.esp);
-
-    if_.esp = (uint32_t*)if_.esp - 1;
-    *(uint32_t*)if_.esp = 0;
-    // printf("esp after pushing fake return address %p\n", (void*)if_.esp);
+  if (success) {
+    success = prepare_stack(argc, argv, &if_.esp);
   }
 
   /* Free argv under all circumstances because we no longer use it */

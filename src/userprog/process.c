@@ -134,6 +134,18 @@ static void start_process(void* file_name_) {
   struct intr_frame if_;
   bool success, pcb_success, argv_success, argc_success;
 
+  /* Figure how argc, success is true only if argc > 0 */
+  int argc = get_argc(file_name);
+  success = argc_success = argc > 0;
+
+  /* Allocate memory for argv */
+  char** argv = (char**)malloc(argc * sizeof(void*));
+  success = argv_success = argv != NULL;
+
+  if (success) {
+    success = parse_file_name(file_name, argv);
+  }
+
   /* Allocate process control block */
   struct process* new_pcb = malloc(sizeof(struct process));
   success = pcb_success = new_pcb != NULL;
@@ -147,7 +159,9 @@ static void start_process(void* file_name_) {
 
     // Continue initializing the PCB as normal
     t->pcb->main_thread = t;
-    strlcpy(t->pcb->process_name, t->name, sizeof t->name);
+
+    strlcpy(t->name, argv[0], strlen(argv[0]) + 1);
+    strlcpy(t->pcb->process_name, argv[0], strlen(argv[0]) + 1);
   }
 
   /* Initialize interrupt frame and load executable. */
@@ -157,80 +171,65 @@ static void start_process(void* file_name_) {
     if_.cs = SEL_UCSEG;
     if_.eflags = FLAG_IF | FLAG_MBS;
 
-    int argc = get_argc(file_name);
-    success = argc_success = argc > 0;
+    success = load(argv[0], &if_.eip, &if_.esp);
 
-    char** argv = (char**)malloc(argc * sizeof(void*));
-    success = argv_success = argv != NULL;
+    // printf("\nAddress of esp: %p\n", (void*)if_.esp);
+    uint32_t* argv_address[argc]; // +1 to include space for NULL
 
-    if (success) {
-      success = parse_file_name(file_name, argv);
+    for (int i = argc - 1; i >= 0; i--) {   // Iterate through arguments in reverse
+      size_t len = strlen(argv[i]) + 1;     // Length of the string including null terminator
+      if_.esp -= len;                       // Allocate space on the stack
+      memcpy(if_.esp, argv[i], len);        // Copy the string to the stack
+      argv_address[i] = (uint32_t*)if_.esp; // Store the address of the string
+      // printf("\nAddress of esp after pushing value of arguments %d on stack: %p with value %s\n",
+      //        i, (void*)if_.esp, (char*)if_.esp);
     }
 
-    if (success) {
-      success = load(argv[0], &if_.eip, &if_.esp);
-    };
+    size_t pointer_size = sizeof(void*);
+    // printf("pointer_size %d\n", pointer_size);
 
-    if (success) {
-      // printf("\nAddress of esp: %p\n", (void*)if_.esp);
+    // 1 for fake return, 1 for argc, and 1 for argv itself, 1 for the argv[argc]
+    size_t total_size = (argc + 3) * pointer_size;
+    // printf("total_size %d\n", total_size);
 
-      uint32_t* argv_address[argc]; // +1 to include space for NULL
+    // // Calculate misalignment
+    size_t misalignment = ((size_t)if_.esp - total_size) % 16;
+    // printf("misalignment %d\n", misalignment);
 
-      for (int i = argc - 1; i >= 0; i--) {   // Iterate through arguments in reverse
-        size_t len = strlen(argv[i]) + 1;     // Length of the string including null terminator
-        if_.esp -= len;                       // Allocate space on the stack
-        memcpy(if_.esp, argv[i], len);        // Copy the string to the stack
-        argv_address[i] = (uint32_t*)if_.esp; // Store the address of the string
-        // printf("\nAddress of esp after pushing value of arguments %d on stack: %p with value %s\n",
-        //        i, (void*)if_.esp, (char*)if_.esp);
-      }
+    // printf("esp before padded %p\n", (void*)if_.esp);
 
-      size_t pointer_size = sizeof(void*);
-      // printf("pointer_size %d\n", pointer_size);
+    if_.esp -= misalignment;
 
-      // 1 for fake return, 1 for argc, and 1 for argv itself, 1 for the argv[argc]
-      size_t total_size = (argc + 3) * pointer_size;
-      // printf("total_size %d\n", total_size);
+    memset(if_.esp, 0, misalignment);
 
-      // // Calculate misalignment
-      size_t misalignment = ((size_t)if_.esp - total_size) % 16;
-      // printf("misalignment %d\n", misalignment);
+    // printf("esp after padded %p\n", (void*)if_.esp);
 
-      // printf("esp before padded %p\n", (void*)if_.esp);
+    if_.esp = (uint32_t*)if_.esp - 1;
+    *(uint32_t*)if_.esp = 0;
 
-      if_.esp -= misalignment;
+    // printf("esp after accounting for argc %p\n", (void*)if_.esp);
 
-      memset(if_.esp, 0, misalignment);
-
-      // printf("esp after padded %p\n", (void*)if_.esp);
-
-      if_.esp = (uint32_t*)if_.esp - 1;
-      *(uint32_t*)if_.esp = 0;
-
-      // printf("esp after accounting for argc %p\n", (void*)if_.esp);
-
-      for (int i = argc - 1; i >= 0; i--) {
-        if_.esp -= pointer_size;
-        *(uint32_t*)if_.esp = argv_address[i];
-      }
-
-      // printf("esp after accounting for all arguments %p\n", (void*)if_.esp);
-
-      if_.esp = (uint32_t*)if_.esp - 1;
-      *(uint32_t*)if_.esp = (uint32_t*)if_.esp + 1;
-      // printf("esp after pushing argv end %p\n", (void*)if_.esp);
-
-      if_.esp = (uint32_t*)if_.esp - 1;
-      *(uint32_t*)if_.esp = argc;
-      // printf("esp after pushing argc end %p\n", (void*)if_.esp);
-
-      if_.esp = (uint32_t*)if_.esp - 1;
-      *(uint32_t*)if_.esp = 0;
-      // printf("esp after pushing fake return address %p\n", (void*)if_.esp);
+    for (int i = argc - 1; i >= 0; i--) {
+      if_.esp -= pointer_size;
+      memcpy(if_.esp, argv_address[i], pointer_size);
     }
 
-    free(argv);
+    // printf("esp after accounting for all arguments %p\n", (void*)if_.esp);
+    if_.esp = (uint32_t*)if_.esp - 1;
+    *(uint32_t*)if_.esp = (uint32_t*)if_.esp + 1;
+    // printf("esp after pushing argv end %p\n", (void*)if_.esp);
+
+    if_.esp = (uint32_t*)if_.esp - 1;
+    *(uint32_t*)if_.esp = argc;
+    // printf("esp after pushing argc end %p\n", (void*)if_.esp);
+
+    if_.esp = (uint32_t*)if_.esp - 1;
+    *(uint32_t*)if_.esp = 0;
+    // printf("esp after pushing fake return address %p\n", (void*)if_.esp);
   }
+
+  /* Free argv under all circumstances because we no longer use it */
+  free(argv);
 
   /* Handle failure with succesful PCB malloc. Must free the PCB */
   if (!success && pcb_success) {

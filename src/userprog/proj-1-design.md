@@ -1,4 +1,4 @@
-# Design docsg
+# Design docs
 
 First of all, the argv pointers to all argments for the program is passed to the runtask function. For example, run do-nothing a b c will result in a pointer to a pointer of characters that hold run, do-nothing, a, b, c.
 

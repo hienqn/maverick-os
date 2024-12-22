@@ -26,4 +26,18 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     printf("%s: exit(%d)\n", thread_current()->pcb->process_name, args[1]);
     process_exit();
   }
+
+  // if (args[0] == SYS_WRITE) {
+  //   int fd = args[1];
+  //   const void* buffer = (void*)args[2];
+  //   unsigned size = args[3];
+
+  //   if (fd == STDOUT_FILENO) {
+  //     putbuf(buffer, size);
+  //     f->eax = size; // Return the number of bytes written
+  //   } else {
+  //     // Handle other file descriptors (e.g., actual files)
+  //     f->eax = -1; // Not implemented yet
+  //   }
+  // }
 }

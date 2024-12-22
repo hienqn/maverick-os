@@ -25,6 +25,7 @@ static thread_func start_process NO_RETURN;
 static thread_func start_pthread NO_RETURN;
 static bool load(const char* file_name, void (**eip)(void), void** esp);
 bool setup_thread(void (**eip)(void), void** esp);
+static int get_argc(const char* file_name_); // Prototype declaration
 
 /* Initializes user programs in the system by ensuring the main
    thread has a minimal PCB so that it can execute and wait for
@@ -69,13 +70,69 @@ pid_t process_execute(const char* file_name) {
   return tid;
 }
 
+static int get_argc(const char* file_name_) {
+  int argc = 0;
+  char* save_ptr;
+  char* token;
+
+  // check to make sure it's less than 4096
+  int str_len = strlen(file_name_) + 1;
+
+  char* file_name_copy = (char*)malloc(str_len);
+  if (!file_name_copy) {
+    return 0;
+  }
+
+  strlcpy(file_name_copy, file_name_, str_len);
+
+  for (token = strtok_r(file_name_copy, " ", &save_ptr); token != NULL;
+       token = strtok_r(NULL, " ", &save_ptr)) {
+    argc++;
+  }
+
+  free(file_name_copy);
+  return argc;
+}
+
+static bool parse_file_name(const char* file_name_, char** argv) {
+  // check to make sure it's less than 4096
+  int str_len = strlen(file_name_) + 1;
+
+  char* file_name_copy = (char*)malloc(str_len);
+  if (!file_name_copy) {
+    return NULL;
+  }
+
+  strlcpy(file_name_copy, file_name_, str_len);
+
+  int argc = 0;
+  char* save_ptr;
+  char* token;
+  for (token = strtok_r(file_name_copy, " ", &save_ptr); token != NULL;
+       token = strtok_r(NULL, " ", &save_ptr)) {
+    argv[argc] = (char*)malloc(strlen(token) + 1); // Allocate memory for each argument
+    if (!argv[argc]) {
+      free(file_name_copy);
+      return false;
+    }
+    memcpy(argv[argc], token, strlen(token) + 1); // Copy the token
+    argc++;
+  }
+
+  argv[argc] = NULL;
+
+  free(file_name_copy);
+
+  return true;
+}
+
 /* A thread function that loads a user process and starts it
    running. */
 static void start_process(void* file_name_) {
   char* file_name = (char*)file_name_;
   struct thread* t = thread_current();
   struct intr_frame if_;
-  bool success, pcb_success;
+  bool success, pcb_success, argv_success, argc_success;
 
   /* Allocate process control block */
   struct process* new_pcb = malloc(sizeof(struct process));
@@ -99,7 +156,80 @@ static void start_process(void* file_name_) {
     if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
     if_.cs = SEL_UCSEG;
     if_.eflags = FLAG_IF | FLAG_MBS;
-    success = load(file_name, &if_.eip, &if_.esp);
+
+    int argc = get_argc(file_name);
+    success = argc_success = argc > 0;
+
+    char** argv = (char**)malloc(argc * sizeof(void*));
+    success = argv_success = argv != NULL;
+
+    if (success) {
+      success = parse_file_name(file_name, argv);
+    }
+
+    if (success) {
+      success = load(argv[0], &if_.eip, &if_.esp);
+    };
+
+    if (success) {
+      // printf("\nAddress of esp: %p\n", (void*)if_.esp);
+
+      uint32_t* argv_address[argc]; // +1 to include space for NULL
+
+      for (int i = argc - 1; i >= 0; i--) {   // Iterate through arguments in reverse
+        size_t len = strlen(argv[i]) + 1;     // Length of the string including null terminator
+        if_.esp -= len;                       // Allocate space on the stack
+        memcpy(if_.esp, argv[i], len);        // Copy the string to the stack
+        argv_address[i] = (uint32_t*)if_.esp; // Store the address of the string
+        // printf("\nAddress of esp after pushing value of arguments %d on stack: %p with value %s\n",
+        //        i, (void*)if_.esp, (char*)if_.esp);
+      }
+
+      size_t pointer_size = sizeof(void*);
+      // printf("pointer_size %d\n", pointer_size);
+
+      // 1 for fake return, 1 for argc, and 1 for argv itself, 1 for the argv[argc]
+      size_t total_size = (argc + 3) * pointer_size;
+      // printf("total_size %d\n", total_size);
+
+      // // Calculate misalignment
+      size_t misalignment = ((size_t)if_.esp - total_size) % 16;
+      // printf("misalignment %d\n", misalignment);
+
+      // printf("esp before padded %p\n", (void*)if_.esp);
+
+      if_.esp -= misalignment;
+
+      memset(if_.esp, 0, misalignment);
+
+      // printf("esp after padded %p\n", (void*)if_.esp);
+
+      if_.esp = (uint32_t*)if_.esp - 1;
+      *(uint32_t*)if_.esp = 0;
+
+      // printf("esp after accounting for argc %p\n", (void*)if_.esp);
+
+      for (int i = argc - 1; i >= 0; i--) {
+        if_.esp -= pointer_size;
+        *(uint32_t*)if_.esp = argv_address[i];
+      }
+
+      // printf("esp after accounting for all arguments %p\n", (void*)if_.esp);
+
+      if_.esp = (uint32_t*)if_.esp - 1;
+      *(uint32_t*)if_.esp = (uint32_t*)if_.esp + 1;
+      // printf("esp after pushing argv end %p\n", (void*)if_.esp);
+
+      if_.esp = (uint32_t*)if_.esp - 1;
+      *(uint32_t*)if_.esp = argc;
+      // printf("esp after pushing argc end %p\n", (void*)if_.esp);
+
+      if_.esp = (uint32_t*)if_.esp - 1;
+      *(uint32_t*)if_.esp = 0;
+      // printf("esp after pushing fake return address %p\n", (void*)if_.esp);
+    }
+
+    free(argv);
   }
 
   /* Handle failure with succesful PCB malloc. Must free the PCB */

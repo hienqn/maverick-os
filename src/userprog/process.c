@@ -25,57 +25,12 @@ static thread_func start_process NO_RETURN;
 static thread_func start_pthread NO_RETURN;
 static bool load(const char* file_name, void (**eip)(void), void** esp);
 bool setup_thread(void (**eip)(void), void** esp);
-static int get_argc(const char* file_name_); // Prototype declaration
-
-/* Initializes user programs in the system by ensuring the main
-   thread has a minimal PCB so that it can execute and wait for
-   the first user process. Any additions to the PCB should be also
-   initialized here if main needs those members */
-void userprog_init(void) {
-  struct thread* t = thread_current();
-  bool success;
-
-  /* Allocate process control block
-     It is imoprtant that this is a call to calloc and not malloc,
-     so that t->pcb->pagedir is guaranteed to be NULL (the kernel's
-     page directory) when t->pcb is assigned, because a timer interrupt
-     can come at any time and activate our pagedir */
-  t->pcb = calloc(sizeof(struct process), 1);
-  success = t->pcb != NULL;
-
-  /* Kill the kernel if we did not succeed */
-  ASSERT(success);
-}
-
-/* Starts a new thread running a user program loaded from
-   FILENAME.  The new thread may be scheduled (and may even exit)
-   before process_execute() returns.  Returns the new process's
-   process id, or TID_ERROR if the thread cannot be created. */
-pid_t process_execute(const char* file_name) {
-  char* fn_copy;
-  tid_t tid;
-
-  sema_init(&temporary, 0);
-  /* Make a copy of FILE_NAME.
-     Otherwise there's a race between the caller and load(). */
-  fn_copy = palloc_get_page(0);
-  if (fn_copy == NULL)
-    return TID_ERROR;
-  strlcpy(fn_copy, file_name, PGSIZE);
-
-  /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create(file_name, PRI_DEFAULT, start_process, fn_copy);
-  if (tid == TID_ERROR)
-    palloc_free_page(fn_copy);
-  return tid;
-}
 
 static int get_argc(const char* file_name_) {
   int argc = 0;
   char* save_ptr;
   char* token;
 
-  // check to make sure it's less than 4096
   int str_len = strlen(file_name_) + 1;
 
   char* file_name_copy = (char*)malloc(str_len);
@@ -124,6 +79,51 @@ static bool parse_file_name(const char* file_name_, char** argv) {
   free(file_name_copy);
 
   return true;
+}
+
+static bool prepare_stack(int argc, char** argv, void (**eip)(void), void** esp) {}
+
+/* Initializes user programs in the system by ensuring the main
+   thread has a minimal PCB so that it can execute and wait for
+   the first user process. Any additions to the PCB should be also
+   initialized here if main needs those members */
+void userprog_init(void) {
+  struct thread* t = thread_current();
+  bool success;
+
+  /* Allocate process control block
+     It is imoprtant that this is a call to calloc and not malloc,
+     so that t->pcb->pagedir is guaranteed to be NULL (the kernel's
+     page directory) when t->pcb is assigned, because a timer interrupt
+     can come at any time and activate our pagedir */
+  t->pcb = calloc(sizeof(struct process), 1);
+  success = t->pcb != NULL;
+
+  /* Kill the kernel if we did not succeed */
+  ASSERT(success);
+}
+
+/* Starts a new thread running a user program loaded from
+   FILENAME.  The new thread may be scheduled (and may even exit)
+   before process_execute() returns.  Returns the new process's
+   process id, or TID_ERROR if the thread cannot be created. */
+pid_t process_execute(const char* file_name) {
+  char* fn_copy;
+  tid_t tid;
+
+  sema_init(&temporary, 0);
+  /* Make a copy of FILE_NAME.
+     Otherwise there's a race between the caller and load(). */
+  fn_copy = palloc_get_page(0);
+  if (fn_copy == NULL)
+    return TID_ERROR;
+  strlcpy(fn_copy, file_name, PGSIZE);
+
+  /* Create a new thread to execute FILE_NAME. */
+  tid = thread_create(file_name, PRI_DEFAULT, start_process, fn_copy);
+  if (tid == TID_ERROR)
+    palloc_free_page(fn_copy);
+  return tid;
 }
 
 /* A thread function that loads a user process and starts it
@@ -216,7 +216,7 @@ static void start_process(void* file_name_) {
 
     // printf("esp after accounting for all arguments %p\n", (void*)if_.esp);
     if_.esp = (uint32_t*)if_.esp - 1;
-    *(uint32_t*)if_.esp = (uint32_t*)if_.esp + 1;
+    *(uint32_t*)if_.esp = (uint32_t)((uint32_t*)if_.esp + 1);
     // printf("esp after pushing argv end %p\n", (void*)if_.esp);
 
     if_.esp = (uint32_t*)if_.esp - 1;

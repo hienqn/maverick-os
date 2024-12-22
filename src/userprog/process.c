@@ -26,19 +26,20 @@ static thread_func start_pthread NO_RETURN;
 static bool load(const char* file_name, void (**eip)(void), void** esp);
 bool setup_thread(void (**eip)(void), void** esp);
 
+/* Get the number of arguments from a file name */
 static int get_argc(const char* file_name_) {
   int argc = 0;
   char* save_ptr;
   char* token;
 
-  int str_len = strlen(file_name_) + 1;
+  int file_name_length = strlen(file_name_) + 1;
 
-  char* file_name_copy = (char*)malloc(str_len);
+  char* file_name_copy = (char*)malloc(file_name_length);
   if (!file_name_copy) {
     return 0;
   }
 
-  strlcpy(file_name_copy, file_name_, str_len);
+  strlcpy(file_name_copy, file_name_, file_name_length);
 
   for (token = strtok_r(file_name_copy, " ", &save_ptr); token != NULL;
        token = strtok_r(NULL, " ", &save_ptr)) {
@@ -49,31 +50,32 @@ static int get_argc(const char* file_name_) {
   return argc;
 }
 
+/* Parse a file name to construct argv to the next stage to prepare the stack */
 static bool parse_file_name(const char* file_name_, char** argv) {
-  int str_len = strlen(file_name_) + 1;
-
-  char* file_name_copy = (char*)malloc(str_len);
-  if (!file_name_copy) {
-    return NULL;
-  }
-
-  strlcpy(file_name_copy, file_name_, str_len);
-
+  int file_name_length = strlen(file_name_) + 1;
   int argc = 0;
   char* save_ptr;
   char* token;
+
+  char* file_name_copy = (char*)malloc(file_name_length);
+  if (!file_name_copy) {
+    prinft("parse_file_name: Failed to allocate memory");
+    return false;
+  }
+
+  strlcpy(file_name_copy, file_name_, file_name_length);
+
   for (token = strtok_r(file_name_copy, " ", &save_ptr); token != NULL;
        token = strtok_r(NULL, " ", &save_ptr)) {
-    argv[argc] = (char*)malloc(strlen(token) + 1); // Allocate memory for each argument
+    argv[argc] = (char*)malloc(strlen(token) + 1);
     if (!argv[argc]) {
+      prinft("parse_file_name: Failed to allocate memory for token");
       free(file_name_copy);
       return false;
     }
-    memcpy(argv[argc], token, strlen(token) + 1); // Copy the token
+    memcpy(argv[argc], token, strlen(token) + 1);
     argc++;
   }
-
-  argv[argc] = NULL;
 
   free(file_name_copy);
 
@@ -81,8 +83,9 @@ static bool parse_file_name(const char* file_name_, char** argv) {
 }
 
 static bool prepare_stack(int argc, char** argv, void** esp) {
-  uint32_t* argv_address[argc]; // +1 to include space for NULL
+  uint32_t* argv_address[argc - 1];
 
+  /* Step 1. Push all the argv values on stack first */
   for (int i = argc - 1; i >= 0; i--) { // Iterate through arguments in reverse
     size_t len = strlen(argv[i]) + 1;   // Length of the string including null terminator
     *esp -= len;                        // Allocate space on the stack
@@ -90,30 +93,39 @@ static bool prepare_stack(int argc, char** argv, void** esp) {
     argv_address[i] = (uint32_t*)*esp;  // Store the address of the string
   }
 
+  /* Step 2. Add padding */
+
+  /* Figure system pointer size */
   size_t pointer_size = sizeof(void*);
-
+  /* Figure the total size after padding that will be substracted. 
+  This includes: 4 bytes for argc, 4 bytes for argv, 4 bytes for the null value after the last argment by C convention, 
+  and argc * 4 bytes for the pointers to the values that were just pushed. We will then be able to figure how much bytes to pad
+  so that after setting up the stack, esp is aligned.
+  */
   size_t total_size = (argc + 3) * pointer_size;
+  size_t padding = ((size_t)*esp - total_size) % 16;
+  *esp -= padding;
+  memset(*esp, 0, padding);
 
-  size_t misalignment = ((size_t)*esp - total_size) % 16;
-
-  *esp -= misalignment;
-
-  memset(*esp, 0, misalignment);
-
+  /* Step 3. By C convention, the last agrv should be null, so we account for that */
   *esp = (uint32_t*)*esp - 1;
   *(uint32_t*)*esp = 0;
 
+  /* Step 4. Pushing all the pointer to the values that were pushed previously */
   for (int i = argc - 1; i >= 0; i--) {
     *esp -= pointer_size;
     memcpy(*esp, argv_address[i], pointer_size);
   }
 
+  /* Step 5. Push the argv pointer */
   *esp = (uint32_t*)*esp - 1;
   *(uint32_t*)*esp = (uint32_t)((uint32_t*)*esp + 1);
 
+  /* Step 6. Push the argc value. Officially making it aligned */
   *esp = (uint32_t*)*esp - 1;
   *(uint32_t*)*esp = argc;
 
+  /* Step 7. Push a fake return address. */
   *esp = (uint32_t*)*esp - 1;
   *(uint32_t*)*esp = 0;
 
@@ -156,7 +168,9 @@ pid_t process_execute(const char* file_name) {
     return TID_ERROR;
   strlcpy(fn_copy, file_name, PGSIZE);
 
-  /* Create a new thread to execute FILE_NAME. */
+  /* Create a new thread to execute FILE_NAME. Note that file_name being
+    passed in contains all the arguments. It will be changed later in start_process.
+  */
   tid = thread_create(file_name, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
     palloc_free_page(fn_copy);
@@ -175,9 +189,17 @@ static void start_process(void* file_name_) {
   int argc = get_argc(file_name);
   success = argc_success = argc > 0;
 
+  if (!success) {
+    printf("argc cannot be less than 1\n");
+  }
+
   /* Allocate memory for argv */
   char** argv = (char**)malloc(argc * sizeof(void*));
   success = argv_success = argv != NULL;
+
+  if (!argv_success) {
+    printf("Failed to allocate memory for argv!");
+  }
 
   if (success) {
     success = parse_file_name(file_name, argv);
@@ -196,7 +218,6 @@ static void start_process(void* file_name_) {
 
     // Continue initializing the PCB as normal
     t->pcb->main_thread = t;
-
     strlcpy(t->name, argv[0], strlen(argv[0]) + 1);
     strlcpy(t->pcb->process_name, argv[0], strlen(argv[0]) + 1);
   }

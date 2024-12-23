@@ -59,7 +59,7 @@ static bool parse_file_name(const char* file_name_, char** argv) {
 
   char* file_name_copy = (char*)malloc(file_name_length);
   if (!file_name_copy) {
-    prinft("parse_file_name: Failed to allocate memory");
+    printf("parse_file_name: Failed to allocate memory");
     return false;
   }
 
@@ -69,7 +69,7 @@ static bool parse_file_name(const char* file_name_, char** argv) {
        token = strtok_r(NULL, " ", &save_ptr)) {
     argv[argc] = (char*)malloc(strlen(token) + 1);
     if (!argv[argc]) {
-      prinft("parse_file_name: Failed to allocate memory for token");
+      printf("parse_file_name: Failed to allocate memory for token");
       free(file_name_copy);
       return false;
     }
@@ -82,52 +82,74 @@ static bool parse_file_name(const char* file_name_, char** argv) {
   return true;
 }
 
-static bool prepare_stack(int argc, char** argv, void** esp) {
-  uint32_t* argv_address[argc - 1];
+static bool debug_prepare_stack = false; // Off by default
 
-  /* Step 1. Push all the argv values on stack first */
-  for (int i = argc - 1; i >= 0; i--) { // Iterate through arguments in reverse
-    size_t len = strlen(argv[i]) + 1;   // Length of the string including null terminator
-    *esp -= len;                        // Allocate space on the stack
-    memcpy(*esp, argv[i], len);         // Copy the string to the stack
-    argv_address[i] = (uint32_t*)*esp;  // Store the address of the string
+static void debug_print(const char* fmt, ...) {
+  if (!debug_prepare_stack) {
+    return; // No-op if the flag is off
+  }
+  va_list args;
+  va_start(args, fmt);
+  vprintf(fmt, args);
+  va_end(args);
+}
+
+static bool prepare_stack(int argc, char** argv, void** esp) {
+  uint32_t* argv_address[argc];
+
+  debug_print("[DEBUG] Step 0: Initial esp = %p\n", (void*)*esp);
+
+  /* Step 1. Push all the argv values on the stack (reverse order) */
+  for (int i = argc - 1; i >= 0; i--) {
+    size_t len = strlen(argv[i]) + 1;
+    *esp -= len;
+    memcpy(*esp, argv[i], len);
+    argv_address[i] = (uint32_t*)*esp;
+
+    debug_print("[DEBUG] Step 1: Pushed argv[%d] = \"%s\"\n", i, argv[i]);
+    debug_print("[DEBUG]          Copied %zu bytes at esp = %p\n", len, (void*)*esp);
+    debug_print("[DEBUG]          argv_address[%d] = %p\n", i, (void*)argv_address[i]);
   }
 
-  /* Step 2. Add padding */
-
-  /* Figure system pointer size */
+  /* Step 2. Align the stack on 16 bytes. */
   size_t pointer_size = sizeof(void*);
-  /* Figure the total size after padding that will be substracted. 
-  This includes: 4 bytes for argc, 4 bytes for argv, 4 bytes for the null value after the last argment by C convention, 
-  and argc * 4 bytes for the pointers to the values that were just pushed. We will then be able to figure how much bytes to pad
-  so that after setting up the stack, esp is aligned.
-  */
   size_t total_size = (argc + 3) * pointer_size;
-  size_t padding = ((size_t)*esp - total_size) % 16;
-  *esp -= padding;
-  memset(*esp, 0, padding);
+  size_t misalignment = ((uintptr_t)*esp - total_size) % 16;
+  *esp -= misalignment;
+  memset(*esp, 0, misalignment);
 
-  /* Step 3. By C convention, the last agrv should be null, so we account for that */
+  debug_print("[DEBUG] Step 2: Applied %zu bytes of padding; esp now = %p\n", misalignment,
+              (void*)*esp);
+
+  /* Step 3. Push NULL terminator for argv. */
   *esp = (uint32_t*)*esp - 1;
   *(uint32_t*)*esp = 0;
+  debug_print("[DEBUG] Step 3: Pushed NULL terminator; esp now = %p\n", (void*)*esp);
 
-  /* Step 4. Pushing all the pointer to the values that were pushed previously */
+  /* Step 4. Push the pointers to each argv[] in reverse order. */
   for (int i = argc - 1; i >= 0; i--) {
-    *esp -= pointer_size;
-    memcpy(*esp, argv_address[i], pointer_size);
+    *esp = (uint32_t*)*esp - 1;
+    *(uint32_t*)*esp = (uint32_t)argv_address[i];
+
+    debug_print("[DEBUG] Step 4: Pushed pointer argv[%d] (%p) at esp=%p\n", i,
+                (void*)argv_address[i], (void*)*esp);
   }
 
-  /* Step 5. Push the argv pointer */
+  /* Step 5. Push the address of argv (i.e., &argv[0]) */
   *esp = (uint32_t*)*esp - 1;
   *(uint32_t*)*esp = (uint32_t)((uint32_t*)*esp + 1);
+  debug_print("[DEBUG] Step 5: Pushed &argv; esp=%p, content=%p\n", (void*)*esp,
+              (void*)(*(uint32_t*)*esp));
 
-  /* Step 6. Push the argc value. Officially making it aligned */
+  /* Step 6. Push argc */
   *esp = (uint32_t*)*esp - 1;
   *(uint32_t*)*esp = argc;
+  debug_print("[DEBUG] Step 6: Pushed argc=%d; esp=%p\n", argc, (void*)*esp);
 
-  /* Step 7. Push a fake return address. */
+  /* Step 7. Push a fake return address (0) */
   *esp = (uint32_t*)*esp - 1;
   *(uint32_t*)*esp = 0;
+  debug_print("[DEBUG] Step 7: Pushed fake return address; esp=%p\n", (void*)*esp);
 
   return true;
 }

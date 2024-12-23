@@ -5,6 +5,7 @@
 #include "userprog/process.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
+#include "threads/vaddr.h"
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
@@ -78,6 +79,8 @@ static void kill(struct intr_frame* f) {
       printf("%s: dying due to interrupt %#04x (%s).\n", thread_name(), f->vec_no,
              intr_name(f->vec_no));
       intr_dump_frame(f);
+      f->eax = -1;
+      printf("%s: exit(%d)\n", thread_current()->pcb->process_name, -1);
       process_exit();
       NOT_REACHED();
 

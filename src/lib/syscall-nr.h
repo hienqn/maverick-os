@@ -38,8 +38,10 @@ enum {
   SYS_CHDIR,   /* Change the current directory. */
   SYS_MKDIR,   /* Create a directory. */
   SYS_READDIR, /* Reads a directory entry. */
-  SYS_ISDIR,   /* Tests if a fd represents a directory. */
+  SYS_ISDIR,   /* Tests if a fd represents a di rectory. */
   SYS_INUMBER  /* Returns the inode number for a fd. */
 };
+
+#define SYS_CALL_COUNT (SYS_INUMBER + 1)
 
 #endif /* lib/syscall-nr.h */

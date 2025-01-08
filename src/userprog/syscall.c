@@ -108,7 +108,7 @@ bool validate_file(char* file) {
   return true;
 }
 
-static void syscall_handler(struct intr_frame* f UNUSED) {
+static void syscall_handler(struct intr_frame* f) {
   uint32_t* args = ((uint32_t*)f->esp);
 
   if (!validate_pointer(args, sizeof(uint32_t))) {

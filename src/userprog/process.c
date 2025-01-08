@@ -299,6 +299,19 @@ static void start_process(void* file_name_) {
    does nothing. */
 int process_wait(pid_t child_pid UNUSED) {
   sema_down(&temporary);
+  // have access to the current thread, can get the thread id of the current thread
+  // while current thread != child_pid, spin 
+  // current thread status = THREAD_DYING
+  // We will add a exit_status in the PCB, passed that to process_exit
+  // so t->pcb->exit_status will give us the exit status
+
+  // How do I know it was killed due to an exeption? pass in -1 in process_exit
+
+  // childId is valid?
+
+  // need to record the list child of the current process
+  
+  // process_wait() has already been successfully called for the given PID
   return 0;
 }
 

@@ -1,152 +1,159 @@
-# Design docs
+# Project 1: User Programs Design Documentation
 
-First of all, the argv pointers to all argments for the program is passed to the runtask function. For example, run do-nothing a b c will result in a pointer to a pointer of characters that hold run, do-nothing, a, b, c.
+This project has 4 tasks in total:
 
-The string passed in process_execute actually already contains all you need. For example, ... run "ls a b c"
+1. Argument passing
+2. Process control syscalls
+3. File operation syscalls
+4. Floating point operations
 
-String constant will already contain ls a b c for you
+The goal of this document is to outline our group's thought process and plans to build the above features.
 
-:check: With multiple args, load will fail because it loads "ls a b c" instead of "ls"
+## Argument Passing
 
-:check: where do we set up the stack? In start_process makes the most sense
+Currently, ```process_execute``` does not support command-line arguments. A lot of the tests written check for the existence of ```argv[0]```. Because ```argv``` doesn't exist, many tests will fail.
 
-:check: How does it jump to _start?
+For more context, in the current set-up, ```process_execute``` are invoked from two different paths:
 
-:check: How does it achieve stack alignment?
+1. From calling [```exec```](../tests/userprog/exec-arg.c) system call in user space, ```exec``` will excecute ```process_execute``` with the arguments passed in from the user space.
+2. From kernel tests when it calls ```run``` alongside with a program and its argument. The flow is: [run_actions](../threads/init.c#L136) => [run_task](../threads/init.c#L310) => [process_execute](./process.c#L181)
 
-:check: Where should this be done? In load because the esp points to the start of the user virtual memory PHYS_BASE after the stack is set up. This could be done either in the function itself or another function called prepare argments.
+In both of these paths, ```process_execute``` would just accept whatever passes into the argument and assume that this is all it needs to execute the program, but in reality executing a program would needs more than just a filename. This behavior is undesireable, as it does not allow for any arguments of a program to be added.
 
-:check: Assuming we set up the arguments in the stack correctly, how does it jump to start the program?
+We propose a solution to address this, outlined below:
 
-Need to think about test cases
+In ```process_execute```, we will change the argument name from ```file_name``` to ```program_with_args``` because the current name would longer be fitting if we were to add arguments.
 
-1. When the user program is compiled, it was compiled with user.Lds and entry.c and other debugging files to lay out the memory properly and set up the entry of the program. This entry called _started. When the kernel load the program, it points ```eip``` to ```_start``` of the program.
+We will make a copy of the ```file_name``` from ```fn_copy``` page, to pass in ```thread_create```, otherwise its name might also contain arguments for the program. For example, passing ```program a b c``` to ```process_excute``` would mean that ```thread_create``` inherit ```program a b c``` as its thread name. This not is desirable as its thread name should be just ```program```.
 
-2. ```*eip = (void (*)(void))ehdr.e_entry;```
-
-# Stack Layout (From Higher to Lower Addresses)
-
-| **Stack Address** | **Field**          | **Size**   | **Explanation**                  |
-|--------------------|--------------------|------------|----------------------------------|
-| `ESP + 76`         | `ss`              | 2 bytes    | Optional, saved by CPU.          |
-| `ESP + 72`         | `esp`             | 4 bytes    | Optional, saved by CPU.          |
-| `ESP + 68`         | `eflags`          | 4 bytes    | Saved by CPU.                    |
-| `ESP + 64`         | **padding**       | 2 bytes    | Aligns next field to 4 bytes.    |
-| `ESP + 64`         | `cs`              | 2 bytes    | Saved by CPU.                    |
-| `ESP + 60`         | `eip`             | 4 bytes    | Saved by CPU.                    |
-| `ESP + 56`         | `frame_pointer`   | 4 bytes    | Saved by `pushl %ebp`.           |
-| `ESP + 52`         | `error_code`      | 4 bytes    | Pushed by CPU or stub.           |
-| `ESP + 48`         | `vec_no`          | 4 bytes    | Saved by `intrNN_stub`.          |
-| `ESP + 46`         | **padding**       | 2 bytes    | Aligns next field to 4 bytes.    |
-| `ESP + 44`         | `ds`              | 2 bytes    | Saved by `pushl %ds`.            |
-| `ESP + 42`         | **padding**       | 2 bytes    | Aligns next field to 4 bytes.    |
-| `ESP + 40`         | `es`              | 2 bytes    | Saved by `pushl %es`.            |
-| `ESP + 38`         | **padding**       | 2 bytes    | Aligns next field to 4 bytes.    |
-| `ESP + 36`         | `fs`              | 2 bytes    | Saved by `pushl %fs`.            |
-| `ESP + 34`         | **padding**       | 2 bytes    | Aligns next field to 4 bytes.    |
-| `ESP + 32`         | `gs`              | 2 bytes    | Saved by `pushl %gs`.            |
-| `ESP + 28`         | `eax`             | 4 bytes    | Saved by `pushal`.               |
-| `ESP + 24`         | `ecx`             | 4 bytes    | Saved by `pushal`.               |
-| `ESP + 20`         | `edx`             | 4 bytes    | Saved by `pushal`.               |
-| `ESP + 16`         | `ebx`             | 4 bytes    | Saved by `pushal`.               |
-| `ESP + 12`         | `esp_dummy`       | 4 bytes    | Saved by `pushal`.               |
-| `ESP + 8`          | `ebp`             | 4 bytes    | Saved by `pushal`.               |
-| `ESP + 4`          | `esi`             | 4 bytes    | Saved by `pushal`.               |
-| `ESP`              | `edi`             | 4 bytes    | Saved by `pushal`.               |
+In ```start_process```, we will parse the string argument that is passed in as ```aux``` pointer to get ```argc``` (argument count) and ```argv``` (argument vector). Below is the function signature of the parser:
 
 ```c
-/*Runs the task specified in ARGV[1]. */
-static void run_task(char** argv) {
-  const char* task = argv[1];
-  printf("Executing '%s':\n", task);
-# ifdef USERPROG
-  process_wait(process_execute(task));
-# endif
-  printf("Execution of '%s' complete.\n", task);
-}
+static bool parse_file_name(const char* file_name_, char** argv)
 ```
 
-```process_execute``` will then execute ```thread_create```
+```argv``` argument is an address to a pointer. Its pointer points to memory region allocated in the ```start_process``` using ```malloc```. 
 
-t = palloc_get_page(PAL_ZERO);
-Purpose: Allocates memory for the new thread structure (struct thread) from the kernel's page allocator.
-Flag Used: PAL_ZERO ensures that the allocated memory is zeroed ouailure Case: If memory allocation fails, the function returns TID_ERROR.
-
-init_thread(t, name, priority);
-Purpose: Initializes the thread's structure:
-Sets its name.
-Sets its priority.
-Initializes other fields such as state, stack pointer, and list entries.
-Why: Every thread must be properly initialized before use.
-
-# Process Control Syscalls
-
-[How] You are not allowed to have the kernel crash while trying to dereference an invalid or null pointer.
-
-Try to avoid writing large amounts of repetitive code for implementing system calls. Each system call argument, whether an integer or a pointer, takes up 4 bytes on the stack. You should be able to take advantage of this to avoid writing much near-identical code for retrieving each system call’s arguments from the stack.
-
-Beware: a 4-byte memory region (e.g. a 32-bit integer) may consist of 2 bytes of valid memory and 2 bytes of invalid memory, if the memory lies on a page boundary. You should handle these cases by terminating the user process => an integer could lie on the boundary.
-
-What about the cases where dereferencing a pointer taking us to a kernel space? Need to check this as well
-
-How does syscall work? Where does it start? How does the transition occur?
-
-- Basically we validate the arguments, push them to the stack and then call INT 30
-
-When a system call is called. The following steps happened:
-
-1. Depending on the call, one of the following function will be called with appropritate args passed in:
-
-- syscall0
-- syscall1
-- syscall1f
-- syscall2
-- syscall3
-
-Each of these functions has a NUMBER which is a specifier for which system call. All of these enums are in syscall-nr.h
-
-These syscall performs assembly instruction that pushes the NUMBER and the arguments onto the user stack, then perform int $0x30, which is essentially a trap to handler system call specifically
-
-When this is called, it saves the CPU state, perform mode transitioning from user to kernel mode, then jump to intr_handler.
-
-When the OS is booted, it has already set up intr_handler via syscall_init, intr_handler is essentially syscall_handler. This syscall_handler is actually the place we will handle all of our system call logic depending the NUMBER.
-
-We already have an example with for calling exit(0).
-
-Right now, we have no checks to validate the arguments to make sure the parameters are not accessing kernel memory.
-
-We will create a function to perform this check in syscal.c file.
-
-Notice that we either have 1, 2, or 3 arguments. We also know which syscall has how many arguments, so we could write a generic code to handle each one accordingly. I don't know how this would look like yet.
-
-What exactly are being passed? Most arguments are either an int, a pointer, or an unsigned number. We have to make sure the pointer is not pointing to kernel.
-
-How do I write my own tests?
+After loading the file successfully, we will execute ```prepare_stack``` to set up ```if_.esp``` appropriately. Below is the function signature of ```prepare_stack```
 
 ```c
-  if (args[0] == SYS_EXIT) {
-    f->eax = args[1];
-    printf("%s: exit(%d)\n", thread_current()->pcb->process_name, args[1]);
-    process_exit();
-  }
+# argc is argument count
+# argv is argment vector
+# esp is the current stack pointer after loading the program
+static bool prepare_stack(int argc, char** argv, void** esp)
 ```
+
+We will return ```false``` if it fails for whatever reason. ```prepare_stack``` performs the following:
+
+* Step 1. Push all the copy of ```argv``` values on the stack (reverse order)
+* Step 2. Align the stack on 16 bytes.
+* Step 3. Push ```NULL``` terminator for argv.
+* Step 4. Push the pointers to each ```argv[]``` in reverse order.
+* Step 5. Push the address of ```argv``` (i.e., ```&argv[0]```)
+* Step 6. Push ```argc```
+* Step 7. Push a fake return address (this is no use but we have to be compliant with calling convention)
+
+After this, we're ready to exectute user program.
+
+We will also need to make sure we free all the allocated resources, especially ```argv```.
+
+## Process Control Syscalls
+
+### Background
+
+In PintOS, every time a syscall is called from the user space, it executes a readily available function located in [syscall.c](../lib/user/syscall.c) file exposed to user program. All of the system calls is a wrapper for one of these functions ```syscall0```, ```syscall1```, ```syscall1f```, ```syscall2```, ```syscall3```. 
+
+These functions then call the ```system_handler``` registered in [syscall.c](../userprog/syscall.c) in kernel space. The goal of this these functions is to help determine the system call number in [syscall-nr.h](../lib/syscall-nr.h) so that the kernel can figure out how to handler each system call appropriately. For example, when ```SYS_EXIT``` is passed in as a system call number, ```system_handler``` in kernel space will use this number to figure out which function to handle this scenario. 
+
+As it stands, we don't have support for any other system calls except for ```SYS_EXIT```. This section will outline our strategy to add support for more system calls.
+
+### Strategy
+
+Currently, ```system_handler``` in ```syscall.c``` is executed in kernel space, we cannot automatically trust the arguments passed in from the user space when a program contains its arguments because they might be malicious, i.e. an argument pointer to kernel space. Therefore, we must validate these arguments to make sure they're valid.
+
+Because all the system call arguments are either a 1) file descriptor 2) pointer to a file or 3) a buffer with a certain size, we will have three separate functions to handler each type of arguments accordingly, namely ```fd_validator```, ```pointer_validator```, ```buffer_validator```. 
+
+Each system call is different and might have different number of arguments, so our validation logic will compose one or more of the validator above. For example, calling ```write``` system call would require us to validate ```fd``` as the first argument and ```buffer``` pointer as the second argument, but for ```open```, we only need to validate ```file``` pointer. To address this, we will implement a function that leverage the system call number passed in as an argument, and compose the validator appropriately to handle each system call. Note that we assume that we will always be a system call number.
+
+We will define a validation dispatcher
 
 ```c
-void syscall_init(void) { intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall"); }
+typedef bool (*validate_func)(void* args);
+
+/* Validation dispatcher table */
+static validate_func syscall_validators[SYS_CALL_COUNT] = {
+    [SYS_HALT] = NULL,                  // No validation needed for halt
+    [SYS_EXIT] = validate_exit,         // Custom validation for exit
+    [SYS_EXEC] = validate_exec,         // Custom validation for exec
+    [SYS_WAIT] = validate_wait,         // Custom validation for wait
+    [SYS_CREATE] = validate_create,     // Custom validation for create
+    [SYS_REMOVE] = validate_remove,     // Custom validation for remove
+    [SYS_OPEN] = validate_open,         // Custom validation for open
+    [SYS_READ] = validate_read,         // Custom validation for read
+    [SYS_WRITE] = validate_write,       // Custom validation for write
+    // Add other syscalls as needed
+};
 ```
 
-```c
-/* Invokes syscall NUMBER, passing argument ARG0, and returns the
-   return value as an `int'. */
-#define syscall1(NUMBER, ARG0)                                                                     \
-  ({                                                                                               \
-    int retval;                                                                                    \
-    asm volatile("pushl %[arg0]; pushl %[number]; int $0x30; addl $8, %%esp"                       \
-                 : "=a"(retval)                                                                    \
-                 : [number] "i"(NUMBER), [arg0] "g"(ARG0)                                          \
-                 : "memory");                                                                      \
-    retval;                                                                                        \
-  })
-```
+Then implement validation for specific syscalls based from the three validators above.
 
-![alt text](image.png)
+To expand further into the validation logic,
+
+| **Validator Name**              | **Checks**                                                                                           |
+|------------------------|-----------------------------------------------------------------------------------------------------|
+| **`fd_validator`**    | - Ensures the file descriptor (FD) is within the valid range.                                        |
+|                        | - Confirms the FD corresponds to an open file in the process's file descriptor table.               |
+| **`pointer_validator`** | - Validates that the pointer is within the user address space.                                      |
+|                        | - Checks that the memory region pointed to is accessible only in user space and aligned.                               |
+| **`buffer_validator`** | - Ensures the buffer is non-null.                                                                   |
+|                        | - Validates that the buffer does not exceed the bounds of user memory.                              |
+|                        | - Confirms proper alignment.                                                          |
+
+#### Process Control Signals
+
+For ```practice``` syscall, we return the result of the integer argument with one added.
+
+For ```halt```, we simple call ```shutdown_power_off```
+
+For ```exit```, we already had the implementation, and it will be extended to support other system calls when necessary.
+
+For ```exec```, beside validating the argument as mentioned above, we need to keep synchronization in mind. Speficically, the parent process **must** wait for the child process it finish loading the program before returning. To ensure this, we will add a semaphore called ```program_loading_sem``` in ```process_execute``` function to help with synchronization. We will create declare and initiate this semaphore and pass down as ```aux```, then ```start_process``` will have access to this semaphore to signal when finished loading. 
+
+This semaphore will be initiated in ```process_execute``` at the start before creating a new thread. ```program_loading_sem.signal()``` will be called at ```start_process``` after successfully loading the program. ```program_loading_sem.wait()``` will be called in process_excecute before returning ```pid_t```. This will ensure that the parent process will wait until the program is loaded succesfull by the child process.
+
+To implement, ```wait``` system call, we rely on the scaffolding function ```process_wait.c``` in ```process.c```. Assuming ```process_wait.c``` is implemented and works properly, we can pass the argument from ```wait``` system call to ```process_wait.c```. Therefore, we need to design ```process_wait.c``` properly.
+
+Below are some of the conditions that we need to validate before we even wait for the child process:
+
+1. check if ```child_pid``` is *invalid*, meaning if it's not corresponding to any processes, or if it's not a child of this current process, then terminate with ```-1```. Currently, there's no way to the parent process to know whether a ```child_pid``` is indeed its child. To track this, when the process was created upon calling ```execute```, we will add the ```child_pid``` into a list of the child processes for the current parent process.
+
+2. check if this ```child_pid``` is alway waited on. If it is, then terminate with ```-1``` immediately as well. To determine whether or not this child has already been waited on, we will add a ```waited_on``` flag to the child process in ```pcb``` data structure as showned above. We also need to be careful about race condition when multiple threads could potentially have access to ```waited_on``` at the same time. To ensure only one thread is allowed to update ```waited_on``` at any given time, a lock is needed to ensure proper synchronization. This lock is also used to ensure no data race when adding new child processes or remove one. 
+
+If all of the above conditions are met, we "wait" for a child process to exit with an ```exit_status``` code. To facilitate this, we will add a semaphore in ```struct child_process``` to notify its parent process when it exits.
+
+One more scenario to consider is when the parent process might exit before all of the child processes ever finish. In user program, a ```wait``` system call might be called, but then unexpectedly exits, i.e. forced termination by sending SIGINT, or a user program might not even call ```wait``` at all but spawn many child processes via ```exec```, but then ```exit``` before the child processes exit. We have to handle these scenarios by cleaning up the child processes if the parent process is already exited. 
+
+The new data structure will look something like below
+
+```C
+/* Represents a single child process. */
+typedef struct child_process {
+    pid_t child_pid;            // Process ID of the child
+    bool waited_on;             // Whether the parent has waited on this child
+    bool parent_exited;         // Whether the parent has exited
+    bool exited;                // Whether the child has exited
+    int exit_status;            // Exit status of the child
+    struct semaphore sem;       // Semaphore to notify the parent of child's exit
+    struct list_elem elem;      // List element for struct list
+} child_process_t;
+
+/* Represents a process control block. */
+struct process {
+    uint32_t* pagedir;          // Page directory
+    char process_name[16];      // Name of the process
+    struct thread* main_thread; // Pointer to the main thread
+    struct list child_processes; // List of child processes
+    struct lock child_lock;     // Lock for synchronizing access to child_processes
+};
+
+```

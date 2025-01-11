@@ -105,7 +105,16 @@ static bool validate_syscall_number(struct intr_frame* f, int syscall_number) {
 /* Validation functions */
 static bool validate_exit(struct intr_frame* f, void* args) { return true; };
 
-static bool validate_exec(struct intr_frame* f, void* args) { return true; };
+static bool validate_exec(struct intr_frame* f, void* args) {
+  uint32_t* syscall_arguments = (uint32_t*)args;
+
+  char* file = syscall_arguments[1];
+  if (!is_valid_file_pointer(file)) {
+    return false;
+  };
+
+  return true;
+};
 static bool validate_create(struct intr_frame* f, void* args) { return true; };
 static bool validate_wait(struct intr_frame* f, void* args) { return true; };
 static bool validate_remove(struct intr_frame* f, void* args) { return true; };
@@ -150,7 +159,15 @@ static void sys_halt_handler(struct intr_frame* f, void* args) { shutdown_power_
 
 static void sys_exec_handler(struct intr_frame* f, void* args) {
   printf("Executing a new process.\n");
-  // Logic for exec syscall
+  uint32_t* syscall_arguments = (uint32_t*)args;
+  char* file_name = syscall_arguments[1];
+  pid_t pid = process_execute(file_name);
+
+  if (pid != TID_ERROR) {
+    f->eax = pid;
+  } else {
+    f->eax = -1;
+  }
 };
 
 static void sys_wait_handler(struct intr_frame* f, void* args) {

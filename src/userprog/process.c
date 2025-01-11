@@ -26,6 +26,11 @@ static thread_func start_pthread NO_RETURN;
 static bool load(const char* file_name, void (**eip)(void), void** esp);
 bool setup_thread(void (**eip)(void), void** esp);
 
+struct program_args {
+  struct semaphore program_loading_sem; /* Use a semicolon to separate members */
+  void* fn_copy;                        /* Use a semicolon for this member too */
+};
+
 /* Get the number of arguments from a file name */
 static int get_argc(const char* file_name_) {
   int argc = 0;
@@ -181,20 +186,23 @@ void userprog_init(void) {
 pid_t process_execute(const char* file_name) {
   char* fn_copy;
   tid_t tid;
+  struct program_args args;
 
   sema_init(&temporary, 0);
-  
+  struct semaphore program_loading_sem;
+  sema_init(&args.program_loading_sem, 0); /* Initialize the semaphore */
+
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page(0);
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy(fn_copy, file_name, PGSIZE);
-
+  args.fn_copy = fn_copy;
   /* Create a new thread to execute FILE_NAME. Note that file_name being
     passed in contains all the arguments. It will be changed later in start_process.
   */
-  tid = thread_create(file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create(file_name, PRI_DEFAULT, start_process, &args);
   if (tid == TID_ERROR)
     palloc_free_page(fn_copy);
   return tid;
@@ -202,7 +210,10 @@ pid_t process_execute(const char* file_name) {
 
 /* A thread function that loads a user process and starts it
    running. */
-static void start_process(void* file_name_) {
+static void start_process(void* args) {
+  struct program_args* process_args = (struct program_args*)args;
+
+  void* file_name_ = process_args.fn_copy;
   char* file_name = (char*)file_name_;
   struct thread* t = thread_current();
   struct intr_frame if_;

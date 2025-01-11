@@ -8,6 +8,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <syscall-nr.h>
+#include "filesys/filesys.h"
 
 typedef bool (*validate_func)(struct intr_frame* f, void* args);
 
@@ -18,15 +19,69 @@ static void syscall_handler(struct intr_frame*);
 void syscall_init(void) { intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall"); }
 
 /* Helper functions */
+static bool is_valid_file_pointer(const void* pointer) {
+  /* Ensure the pointer itself is in user space and mapped */
+  if (pointer == NULL || !is_user_vaddr(pointer) ||
+      pagedir_get_page(thread_current()->pcb->pagedir, pointer) == NULL) {
+    return false;
+  }
 
-static bool is_valid_pointer(void* pointer) { return true; }
-static bool is_valid_fd(void* pointer) { return true; }
+  /* Cast the pointer to a char* for character-level access */
+  const char* temp_pointer = (const char*)pointer;
+  int file_length = 0;
+
+  /* Traverse the string until the null terminator or length limit */
+  while (true) {
+    /* Check if the current address is valid and mapped */
+    if (!is_user_vaddr((void*)temp_pointer) ||
+        pagedir_get_page(thread_current()->pcb->pagedir, (void*)temp_pointer) == NULL) {
+      return false;
+    }
+
+    /* Check if file path length exceeds the limit */
+    if (file_length > MAX_PATH_LENGTH) {
+      printf("Error: File path length exceeds limit of %d characters!\n", MAX_PATH_LENGTH);
+      return false;
+    }
+
+    /* Check for the null terminator */
+    if (*temp_pointer == '\0') {
+      break;
+    }
+
+    /* Move to the next character and increment the length */
+    temp_pointer++;
+    file_length++;
+  }
+
+  return true;
+}
+
+static bool is_valid_fd(int fd) { return true; }
+
 static bool is_valid_buffer(void* buffer, size_t size) {
-  /* First of all, this pointer needs to be in user space */
+  /* Ensure the buffer starts and ends in user space */
+  if (!is_user_vaddr(buffer) || !is_user_vaddr((void*)((char*)buffer + size - 1))) {
+    return false;
+  }
 
-  /* */
+  /* Calculate the start and end of the buffer */
+  char* start = (char*)buffer;
+  char* end = (char*)buffer + size - 1;
 
-  /* The data it points to must also */
+  /* Iterate through all pages spanned by the buffer */
+  for (char* addr = start; addr <= end; addr += PGSIZE) {
+    if (pagedir_get_page(thread_current()->pcb->pagedir, addr) == NULL) {
+      return false;
+    }
+  }
+
+  /* Final check for the last byte of the range */
+  if (pagedir_get_page(thread_current()->pcb->pagedir, end) == NULL) {
+    return false;
+  }
+
+  return true;
 }
 
 // Array of syscall handlers
@@ -48,10 +103,7 @@ static bool validate_syscall_number(struct intr_frame* f, int syscall_number) {
 };
 
 /* Validation functions */
-static bool validate_exit(struct intr_frame* f, void* args) {
-  /* We need to validate the first arguments */
-  return true;
-};
+static bool validate_exit(struct intr_frame* f, void* args) { return true; };
 
 static bool validate_exec(struct intr_frame* f, void* args) { return true; };
 static bool validate_create(struct intr_frame* f, void* args) { return true; };
@@ -81,6 +133,7 @@ static bool validate_write(struct intr_frame* f, void* args) {
 
 static validate_func syscall_validators[SYS_CALL_COUNT] = {
     [SYS_HALT] = NULL,
+    [SYS_PRACTICE] = NULL,
     [SYS_EXIT] = validate_exit,
     [SYS_EXEC] = validate_exec,
     [SYS_CREATE] = validate_create,
@@ -141,6 +194,11 @@ static void sys_write_handler(struct intr_frame* f, void* args) {
   }
 };
 
+static void sys_practice_handler(struct intr_frame* f, void* args) {
+  uint32_t* syscall_arguments = (uint32_t*)args;
+  f->eax = syscall_arguments[1] + 1;
+};
+
 static void sys_exit_handler(struct intr_frame* f, void* args) {
   uint32_t* syscall_arguments = (uint32_t*)args;
   terminate(f, syscall_arguments[1]);
@@ -151,8 +209,7 @@ static handler_func syscall_handlers[SYS_CALL_COUNT] = {
     [SYS_EXEC] = sys_exec_handler,     [SYS_WAIT] = sys_wait_handler,
     [SYS_CREATE] = sys_create_handler, [SYS_REMOVE] = sys_remove_handler,
     [SYS_OPEN] = sys_open_handler,     [SYS_READ] = sys_read_handler,
-    [SYS_WRITE] = sys_write_handler,
-};
+    [SYS_WRITE] = sys_write_handler,   [SYS_PRACTICE] = sys_practice_handler};
 
 static void syscall_handler(struct intr_frame* f) {
   uint32_t* args = ((uint32_t*)f->esp);

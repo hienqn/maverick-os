@@ -42,4 +42,6 @@ enum {
   SYS_INUMBER  /* Returns the inode number for a fd. */
 };
 
+#define SYS_CALL_COUNT (SYS_INUMBER + 1)
+
 #endif /* lib/syscall-nr.h */

@@ -72,6 +72,10 @@ static bool validate_halt(struct intr_frame* f UNUSED, uint32_t* args UNUSED) {
   return true; // No arguments to validate
 }
 
+static bool validate_wait(struct intr_frame* f, uint32_t* args) {
+  return is_valid_pointer(&args[1], sizeof(uint32_t));
+}
+
 static bool validate_practice(struct intr_frame* f, uint32_t* args) {
   return is_valid_pointer(&args[1], sizeof(uint32_t)); // Validate args[1]
 }
@@ -99,6 +103,13 @@ static bool validate_write(struct intr_frame* f, uint32_t* args) {
   return fd >= 0 && is_valid_buffer(buffer, size);
 }
 
+/* Handlers */
+static void sys_wait_handler(struct intr_frame* f, uint32_t* args) {
+  pid_t pid = args[1]; // Retrieve the PID
+  // int status = process_wait(pid); // Wait for the child process
+  f->eax = 0; // Return the exit status
+}
+
 /* System call handlers */
 static void sys_halt_handler(struct intr_frame* f UNUSED, uint32_t* args UNUSED) {
   shutdown_power_off(); // Shutdown the OS
@@ -114,7 +125,12 @@ static void sys_exit_handler(struct intr_frame* f, uint32_t* args) { terminate(f
 static void sys_exec_handler(struct intr_frame* f, uint32_t* args) {
   char* file_name = (char*)args[1];
   pid_t pid = process_execute(file_name);
-  f->eax = (pid != TID_ERROR) ? pid : -1;
+
+  if (pid != TID_ERROR) {
+    f->eax = pid; // Return the exit status
+  } else {
+    f->eax = -1; // Return the exit status
+  }
 }
 
 static void sys_write_handler(struct intr_frame* f, uint32_t* args) {
@@ -132,13 +148,13 @@ static void sys_write_handler(struct intr_frame* f, uint32_t* args) {
 /* Arrays for syscall validators and handlers */
 static validate_func syscall_validators[SYS_CALL_COUNT] = {
     [SYS_HALT] = validate_halt,   [SYS_EXIT] = validate_exit,         [SYS_EXEC] = validate_exec,
-    [SYS_WRITE] = validate_write, [SYS_PRACTICE] = validate_practice,
-};
+    [SYS_WRITE] = validate_write, [SYS_PRACTICE] = validate_practice, [SYS_WAIT] = validate_wait};
 
 static handler_func syscall_handlers[SYS_CALL_COUNT] = {
     [SYS_HALT] = sys_halt_handler,         [SYS_EXIT] = sys_exit_handler,
     [SYS_EXEC] = sys_exec_handler,         [SYS_WRITE] = sys_write_handler,
-    [SYS_PRACTICE] = sys_practice_handler,
+    [SYS_PRACTICE] = sys_practice_handler, [SYS_WAIT] = sys_wait_handler,
+
 };
 
 /* Main syscall handler */

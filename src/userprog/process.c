@@ -26,6 +26,12 @@ static thread_func start_pthread NO_RETURN;
 static bool load(const char* file_name, void (**eip)(void), void** esp);
 bool setup_thread(void (**eip)(void), void** esp);
 
+typedef struct process_args {
+  struct semaphore load_program_sem;
+  bool load_success;
+  void* fn_copy;
+} process_args_t;
+
 /* Get the number of arguments from a file name */
 static int get_argc(const char* file_name_) {
   int argc = 0;
@@ -181,7 +187,9 @@ void userprog_init(void) {
 pid_t process_execute(const char* file_name) {
   char* fn_copy;
   tid_t tid;
+  process_args_t args;
 
+  sema_init(&args.load_program_sem, 0); // Initialize the semaphore
   sema_init(&temporary, 0);
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
@@ -189,11 +197,16 @@ pid_t process_execute(const char* file_name) {
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy(fn_copy, file_name, PGSIZE);
+  args.fn_copy = fn_copy;
+  args.load_success = false;
 
   /* Create a new thread to execute FILE_NAME. Note that file_name being
     passed in contains all the arguments. It will be changed later in start_process.
   */
-  tid = thread_create(file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create(file_name, PRI_DEFAULT, start_process, &args);
+
+  sema_down(&args.load_program_sem);
+
   if (tid == TID_ERROR)
     palloc_free_page(fn_copy);
   return tid;
@@ -201,8 +214,10 @@ pid_t process_execute(const char* file_name) {
 
 /* A thread function that loads a user process and starts it
    running. */
-static void start_process(void* file_name_) {
-  char* file_name = (char*)file_name_;
+static void start_process(void* args) {
+  process_args_t* process_args = (process_args_t*)args;
+
+  char* file_name = (char*)process_args->fn_copy;
   struct thread* t = thread_current();
   struct intr_frame if_;
   bool success, pcb_success, argv_success, argc_success;
@@ -254,6 +269,9 @@ static void start_process(void* file_name_) {
     success = load(argv[0], &if_.eip, &if_.esp);
   }
 
+  process_args->load_success = true;
+  sema_up(&process_args->load_program_sem);
+
   if (success) {
     success = prepare_stack(argc, argv, &if_.esp);
   }
@@ -300,7 +318,7 @@ static void start_process(void* file_name_) {
 int process_wait(pid_t child_pid UNUSED) {
   sema_down(&temporary);
   // have access to the current thread, can get the thread id of the current thread
-  // while current thread != child_pid, spin 
+  // while current thread != child_pid, spin
   // current thread status = THREAD_DYING
   // We will add a exit_status in the PCB, passed that to process_exit
   // so t->pcb->exit_status will give us the exit status
@@ -310,7 +328,7 @@ int process_wait(pid_t child_pid UNUSED) {
   // childId is valid?
 
   // need to record the list child of the current process
-  
+
   // process_wait() has already been successfully called for the given PID
   return 0;
 }

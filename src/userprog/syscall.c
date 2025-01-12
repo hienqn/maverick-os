@@ -33,12 +33,26 @@ static bool is_valid_pointer(void* pointer, size_t size) {
 }
 
 static bool is_valid_file(const char* file) {
-  while (*file != '\0') {
+  // Validate the initial pointer
+  if (file == NULL || !is_user_vaddr(file) ||
+      pagedir_get_page(thread_current()->pcb->pagedir, file) == NULL) {
+    return false;
+  }
+
+  // Traverse the string, validating each character
+  while (true) {
     if (!is_user_vaddr(file) || pagedir_get_page(thread_current()->pcb->pagedir, file) == NULL) {
       return false;
     }
-    file++;
+
+    // Check for the null terminator
+    if (*file == '\0') {
+      break;
+    }
+
+    file++; // Move to the next character
   }
+
   return true;
 }
 
@@ -67,7 +81,14 @@ static bool validate_exit(struct intr_frame* f, uint32_t* args) {
 }
 
 static bool validate_exec(struct intr_frame* f, uint32_t* args) {
+  // Validate args[1] itself as a pointer before using it
+  if (!is_valid_pointer(&args[1], sizeof(char*))) {
+    return false;
+  }
+
   char* file_name = (char*)args[1];
+
+  // Validate the file name string
   return is_valid_file(file_name);
 }
 

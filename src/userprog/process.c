@@ -28,6 +28,7 @@ bool setup_thread(void (**eip)(void), void** esp);
 
 struct program_args {
   struct semaphore program_loading_sem; /* Use a semicolon to separate members */
+  bool load_success;                    // Add this to indicate success or failure
   void* fn_copy;                        /* Use a semicolon for this member too */
 };
 
@@ -188,23 +189,38 @@ pid_t process_execute(const char* file_name) {
   tid_t tid;
   struct program_args args;
 
-  sema_init(&temporary, 0);
-  struct semaphore program_loading_sem;
-  sema_init(&args.program_loading_sem, 0); /* Initialize the semaphore */
+  /* Initialize synchronization structures */
+  sema_init(&args.program_loading_sem, 0); /* Synchronizes with child thread */
+  args.load_success = false;               /* Initialize success flag */
 
-  /* Make a copy of FILE_NAME.
-     Otherwise there's a race between the caller and load(). */
+  /* Make a copy of FILE_NAME to avoid race conditions */
   fn_copy = palloc_get_page(0);
-  if (fn_copy == NULL)
+  if (fn_copy == NULL) {
     return TID_ERROR;
+  }
   strlcpy(fn_copy, file_name, PGSIZE);
   args.fn_copy = fn_copy;
-  /* Create a new thread to execute FILE_NAME. Note that file_name being
-    passed in contains all the arguments. It will be changed later in start_process.
-  */
+
+  /* Create a new thread to execute the process */
   tid = thread_create(file_name, PRI_DEFAULT, start_process, &args);
-  if (tid == TID_ERROR)
+
+  /* Wait for the child thread to signal completion */
+  sema_down(&args.program_loading_sem);
+
+  /* Handle failure */
+  if (!args.load_success) {
+    printf("Error: Process failed to load.\n");
     palloc_free_page(fn_copy);
+    return TID_ERROR;
+  }
+
+  printf("Sucess: Process failed to load.\n");
+
+  /* Clean up in case of thread creation failure */
+  if (tid == TID_ERROR) {
+    palloc_free_page(fn_copy);
+  }
+
   return tid;
 }
 
@@ -213,7 +229,7 @@ pid_t process_execute(const char* file_name) {
 static void start_process(void* args) {
   struct program_args* process_args = (struct program_args*)args;
 
-  void* file_name_ = process_args.fn_copy;
+  void* file_name_ = process_args->fn_copy;
   char* file_name = (char*)file_name_;
   struct thread* t = thread_current();
   struct intr_frame if_;
@@ -252,8 +268,8 @@ static void start_process(void* args) {
 
     // Continue initializing the PCB as normal
     t->pcb->main_thread = t;
-    strlcpy(t->name, argv[0], strlen(argv[0]) + 1);
-    strlcpy(t->pcb->process_name, argv[0], strlen(argv[0]) + 1);
+    strlcpy(t->name, argv[0], sizeof(t->name));
+    strlcpy(t->pcb->process_name, argv[0], sizeof(t->pcb->process_name));
   }
 
   /* Initialize interrupt frame and load executable. */
@@ -270,8 +286,12 @@ static void start_process(void* args) {
     success = prepare_stack(argc, argv, &if_.esp);
   }
 
+  process_args->load_success = success;
+  sema_up(&process_args->program_loading_sem);
+
   /* Free argv under all circumstances because we no longer use it */
-  free(argv);
+  if (argv != NULL)
+    free(argv);
 
   /* Handle failure with succesful PCB malloc. Must free the PCB */
   if (!success && pcb_success) {

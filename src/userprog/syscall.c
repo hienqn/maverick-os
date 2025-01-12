@@ -107,7 +107,6 @@ static bool validate_exit(struct intr_frame* f, void* args) { return true; };
 
 static bool validate_exec(struct intr_frame* f, void* args) {
   uint32_t* syscall_arguments = (uint32_t*)args;
-
   char* file = syscall_arguments[1];
   if (!is_valid_file_pointer(file)) {
     return false;
@@ -115,6 +114,7 @@ static bool validate_exec(struct intr_frame* f, void* args) {
 
   return true;
 };
+
 static bool validate_create(struct intr_frame* f, void* args) { return true; };
 static bool validate_wait(struct intr_frame* f, void* args) { return true; };
 static bool validate_remove(struct intr_frame* f, void* args) { return true; };
@@ -159,16 +159,22 @@ static void sys_halt_handler(struct intr_frame* f, void* args) { shutdown_power_
 
 static void sys_exec_handler(struct intr_frame* f, void* args) {
   printf("Executing a new process.\n");
+
   uint32_t* syscall_arguments = (uint32_t*)args;
-  char* file_name = syscall_arguments[1];
+  char* file_name = (char*)syscall_arguments[1];
+
+  /* Execute the process */
   pid_t pid = process_execute(file_name);
 
+  /* Return the PID or error code */
   if (pid != TID_ERROR) {
+    printf("Process created successfully with PID: %d\n", pid);
     f->eax = pid;
   } else {
+    printf("Error: Failed to execute process: %s\n", file_name);
     f->eax = -1;
   }
-};
+}
 
 static void sys_wait_handler(struct intr_frame* f, void* args) {
   printf("Executing a new process.\n");
@@ -229,28 +235,25 @@ static handler_func syscall_handlers[SYS_CALL_COUNT] = {
     [SYS_WRITE] = sys_write_handler,   [SYS_PRACTICE] = sys_practice_handler};
 
 static void syscall_handler(struct intr_frame* f) {
-  uint32_t* args = ((uint32_t*)f->esp);
+  uint32_t* args = (uint32_t*)f->esp;
 
-  /* We assume that args[0] will always be available for us */
+  /* Validate the syscall number */
   uint32_t syscall_number = args[0];
-
-  /* Make sure the syscall_number is valid */
-  validate_syscall_number(f, syscall_number);
-
-  /* Look up validator table based on syscall_number */
-  if (syscall_validators[syscall_number] != NULL) {
-    bool is_valid = syscall_validators[syscall_number](f, args);
-    if (!is_valid) {
-      // Handle invalid syscall arguments (e.g., terminate process, return error)
-      printf("Syscall %d validation failed!\n", syscall_number);
-      terminate(f, -1);
-    }
+  if (syscall_number >= SYS_CALL_COUNT) {
+    terminate(f, -1);
+    return;
   }
 
-  /* After validation, we call the system call handler */
-  if (syscall_handlers[syscall_number] != NULL) {
-    syscall_handlers[syscall_number](f, args);
+  /* Validate arguments (if validator exists) */
+  if (syscall_validators[syscall_number] != NULL) {
+    bool syscall_validation_success = syscall_validators[syscall_number](f, args);
+    if (!syscall_validation_success) {
+      f->eax = -1;
+      printf("%s: exit(%d)\n", thread_current()->pcb->process_name, -1);
+    } else {
+      syscall_handlers[syscall_number](f, args);
+    }
   } else {
-    printf("Syscall %d not implemented.\n", syscall_number);
+    printf("Syscall %d: No validator found, skipping validation.\n", syscall_number);
   }
 }

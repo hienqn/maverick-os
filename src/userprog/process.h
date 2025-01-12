@@ -17,16 +17,27 @@ typedef tid_t pid_t;
 typedef void (*pthread_fun)(void*);
 typedef void (*stub_fun)(pthread_fun, void*);
 
+typedef struct child_process {
+  pid_t child_pid;       // Process ID of the child
+  bool waited_on;        // Whether the parent has waited on this child
+  bool parent_exited;    // Whether the parent has exited
+  bool exited;           // Whether the child has exited
+  int exit_status;       // Exit status of the child
+  struct semaphore sem;  // Semaphore to notify the parent of child's exit
+  struct list_elem elem; // List element for struct list
+} child_process_t;
+
 /* The process control block for a given process. Since
    there can be multiple threads per process, we need a separate
    PCB from the TCB. All TCBs in a process will have a pointer
    to the PCB, and the PCB will have a pointer to the main thread
    of the process, which is `special`. */
 struct process {
-  /* Owned by process.c. */
-  uint32_t* pagedir;          /* Page directory. */
-  char process_name[16];      /* Name of the main thread */
-  struct thread* main_thread; /* Pointer to main thread */
+  uint32_t* pagedir;           // Page directory
+  char process_name[16];       // Name of the process
+  struct thread* main_thread;  // Pointer to the main thread
+  struct list child_processes; // List of child processes
+  struct lock child_lock;      // Lock for synchronizing access to child_processes
 };
 
 void userprog_init(void);

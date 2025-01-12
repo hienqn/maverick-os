@@ -175,6 +175,8 @@ void userprog_init(void) {
      can come at any time and activate our pagedir */
   t->pcb = calloc(sizeof(struct process), 1);
   success = t->pcb != NULL;
+  list_init(&t->pcb->child_processes);
+  lock_init(&t->pcb->child_lock);
 
   /* Kill the kernel if we did not succeed */
   ASSERT(success);
@@ -209,6 +211,22 @@ pid_t process_execute(const char* file_name) {
 
   if (tid == TID_ERROR)
     palloc_free_page(fn_copy);
+
+  child_process_t* child_process = (child_process_t*)malloc(sizeof(child_process_t));
+
+  if (child_process == NULL) {
+    printf("Failed to allocate memory for child process");
+  };
+
+  /* Add child process to a list of child processes of the current parent */
+  child_process->child_pid = tid;
+  child_process->waited_on = false;
+  child_process->parent_exited = false;
+  child_process->exited = false;
+  child_process->exit_status = -1;
+  sema_init(&child_process->sem, 0);
+  list_push_front(&thread_current()->pcb->child_processes, &child_process->elem);
+
   return tid;
 }
 
@@ -257,6 +275,9 @@ static void start_process(void* args) {
     t->pcb->main_thread = t;
     strlcpy(t->name, argv[0], strlen(argv[0]) + 1);
     strlcpy(t->pcb->process_name, argv[0], strlen(argv[0]) + 1);
+
+    list_init(&t->pcb->child_processes);
+    lock_init(&t->pcb->child_lock);
   }
 
   /* Initialize interrupt frame and load executable. */
@@ -306,6 +327,30 @@ static void start_process(void* args) {
   NOT_REACHED();
 }
 
+static child_process_t* get_child_process(const pid_t child_pid) {
+  struct list* child_processes = &thread_current()->pcb->child_processes;
+
+  if (list_empty(child_processes)) {
+    return NULL;
+  }
+
+  struct list_elem* e;
+
+  for (e = list_begin(child_processes); e != list_end(child_processes); e = list_next(e)) {
+    child_process_t* c_process = list_entry(e, child_process_t, elem);
+    if (c_process->child_pid == child_pid) {
+      return c_process; // Return the matching child process
+    }
+  }
+
+  return NULL; // Return NULL if no matching child is found
+}
+
+static bool validate_child_pid(const pid_t child_pid) {
+  // Use get_child_process to check if the child_pid exists
+  return get_child_process(child_pid) != NULL;
+}
+
 /* Waits for process with PID child_pid to die and returns its exit status.
    If it was terminated by the kernel (i.e. killed due to an
    exception), returns -1.  If child_pid is invalid or if it was not a
@@ -315,21 +360,24 @@ static void start_process(void* args) {
 
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
-int process_wait(pid_t child_pid UNUSED) {
+int process_wait(pid_t child_pid) {
+  lock_acquire(&thread_current()->pcb->child_lock);
   sema_down(&temporary);
-  // have access to the current thread, can get the thread id of the current thread
-  // while current thread != child_pid, spin
-  // current thread status = THREAD_DYING
-  // We will add a exit_status in the PCB, passed that to process_exit
-  // so t->pcb->exit_status will give us the exit status
+  // validate child_pid
+  if (!validate_child_pid(child_pid))
+    return -1;
 
-  // How do I know it was killed due to an exeption? pass in -1 in process_exit
+  child_process_t* c_process = get_child_process(child_pid);
 
-  // childId is valid?
+  if (c_process->waited_on)
+    return -1;
 
-  // need to record the list child of the current process
+  c_process->waited_on = true;
+  // sema_down(&c_process->sem);
 
-  // process_wait() has already been successfully called for the given PID
+  // unlock
+  // return chill_process->exit_status
+  lock_release(&thread_current()->pcb->child_lock);
   return 0;
 }
 
@@ -453,6 +501,8 @@ static bool setup_stack(void** esp);
 static bool validate_segment(const struct Elf32_Phdr*, struct file*);
 static bool load_segment(struct file* file, off_t ofs, uint8_t* upage, uint32_t read_bytes,
                          uint32_t zero_bytes, bool writable);
+static bool validate_child_pid(const pid_t child_pid);
+static child_process_t* get_child_process(const pid_t child_pid);
 
 /* Loads an ELF executable from FILE_NAME into the current thread.
    Stores the executable's entry point into *EIP

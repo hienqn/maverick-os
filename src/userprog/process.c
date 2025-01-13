@@ -28,8 +28,10 @@ bool setup_thread(void (**eip)(void), void** esp);
 
 typedef struct process_args {
   struct semaphore load_program_sem;
+  struct semaphore parent_ready_sem;
   bool load_success;
   void* fn_copy;
+  struct process* parent_process;
 } process_args_t;
 
 /* Get the number of arguments from a file name */
@@ -177,7 +179,7 @@ void userprog_init(void) {
   success = t->pcb != NULL;
   list_init(&t->pcb->child_processes);
   lock_init(&t->pcb->child_lock);
-
+  t->pcb->p_process = NULL;
   /* Kill the kernel if we did not succeed */
   ASSERT(success);
 }
@@ -191,42 +193,66 @@ pid_t process_execute(const char* file_name) {
   tid_t tid;
   process_args_t args;
 
-  sema_init(&args.load_program_sem, 0); // Initialize the semaphore
-  sema_init(&temporary, 0);
-  /* Make a copy of FILE_NAME.
-     Otherwise there's a race between the caller and load(). */
+  sema_init(&args.load_program_sem, 0);
+  sema_init(&args.parent_ready_sem, 0);
+
   fn_copy = palloc_get_page(0);
-  if (fn_copy == NULL)
+  if (fn_copy == NULL) {
+    printf("[DEBUG] Failed to allocate memory for file name copy.\n");
     return TID_ERROR;
+  }
   strlcpy(fn_copy, file_name, PGSIZE);
   args.fn_copy = fn_copy;
   args.load_success = false;
+  args.parent_process = thread_current()->pcb;
 
-  /* Create a new thread to execute FILE_NAME. Note that file_name being
-    passed in contains all the arguments. It will be changed later in start_process.
-  */
+  printf("[DEBUG] Starting process_execute for file: %s\n", file_name);
+
   tid = thread_create(file_name, PRI_DEFAULT, start_process, &args);
 
-  sema_down(&args.load_program_sem);
-
-  if (tid == TID_ERROR)
+  // If thread creation failed, clean up and return error
+  if (tid == TID_ERROR) {
+    printf("[DEBUG] Thread creation failed for file: %s\n", file_name);
     palloc_free_page(fn_copy);
+    return TID_ERROR;
+  }
 
+  // Allocate memory for the child process metadata
   child_process_t* child_process = (child_process_t*)malloc(sizeof(child_process_t));
-
   if (child_process == NULL) {
-    printf("Failed to allocate memory for child process");
-  };
+    printf("[DEBUG] Failed to allocate memory for child process metadata.\n");
+    palloc_free_page(fn_copy);
+    return TID_ERROR;
+  }
 
-  /* Add child process to a list of child processes of the current parent */
+  /* Initialize child process metadata */
   child_process->child_pid = tid;
   child_process->waited_on = false;
   child_process->parent_exited = false;
   child_process->exited = false;
   child_process->exit_status = -1;
   sema_init(&child_process->sem, 0);
-  list_push_front(&thread_current()->pcb->child_processes, &child_process->elem);
 
+  printf("[DEBUG] Before adding child process PID: %d to parent's child list.\n", tid);
+  list_push_front(&thread_current()->pcb->child_processes, &child_process->elem);
+  printf("[DEBUG] After adding child process PID: %d. Parent's child list size: %d\n", tid,
+         list_size(&thread_current()->pcb->child_processes));
+
+  // Signal the child that the parent has finished its setup
+  printf("[DEBUG] Signaling child that parent setup is complete.\n");
+  sema_up(&args.parent_ready_sem);
+
+  // Wait for the child process to load
+  printf("[DEBUG] Waiting for child process to load.\n");
+  sema_down(&args.load_program_sem);
+
+  if (!args.load_success) {
+    printf("[DEBUG] Failed to load program: %s\n", file_name);
+    palloc_free_page(fn_copy);
+    return TID_ERROR;
+  }
+
+  printf("[DEBUG] Process_execute: Successfully created child process with TID %d\n", tid);
   return tid;
 }
 
@@ -235,7 +261,13 @@ pid_t process_execute(const char* file_name) {
 static void start_process(void* args) {
   process_args_t* process_args = (process_args_t*)args;
 
+  // Wait until the parent has added this process to its list
+  printf("[DEBUG] Waiting for parent to complete setup.\n");
+  sema_down(&process_args->parent_ready_sem); // Ensure the parent has finished setup
+  printf("[DEBUG] Parent setup complete. Continuing child initialization.\n");
+
   char* file_name = (char*)process_args->fn_copy;
+  struct process* parent_process = (struct process*)process_args->parent_process;
   struct thread* t = thread_current();
   struct intr_frame if_;
   bool success, pcb_success, argv_success, argc_success;
@@ -269,7 +301,18 @@ static void start_process(void* args) {
     // Ensure that timer_interrupt() -> schedule() -> process_activate()
     // does not try to activate our uninitialized pagedir
     new_pcb->pagedir = NULL;
+    printf("[DEBUG] Initialized new PCB for thread TID: %d\n", t->tid);
+
     t->pcb = new_pcb;
+    printf("[DEBUG] Assigned new PCB to thread TID: %d\n", t->tid);
+
+    t->pcb->p_process = parent_process;
+    if (parent_process != NULL) {
+      printf("[DEBUG] Linked child process TID: %d to parent process TID: %s\n", t->tid,
+             parent_process->process_name);
+    } else {
+      printf("[DEBUG] Parent process is NULL for child process TID: %d\n", t->tid);
+    }
 
     // Continue initializing the PCB as normal
     t->pcb->main_thread = t;
@@ -290,8 +333,10 @@ static void start_process(void* args) {
     success = load(argv[0], &if_.eip, &if_.esp);
   }
 
-  process_args->load_success = true;
+  // Notify the parent that the load process is complete
+  process_args->load_success = success;
   sema_up(&process_args->load_program_sem);
+  printf("[DEBUG] Notified parent about load status. Success: %d\n", success);
 
   if (success) {
     success = prepare_stack(argc, argv, &if_.esp);
@@ -300,10 +345,10 @@ static void start_process(void* args) {
   /* Free argv under all circumstances because we no longer use it */
   free(argv);
 
-  /* Handle failure with succesful PCB malloc. Must free the PCB */
+  /* Handle failure with successful PCB malloc. Must free the PCB */
   if (!success && pcb_success) {
     // Avoid race where PCB is freed before t->pcb is set to NULL
-    // If this happens, then an unfortuantely timed timer interrupt
+    // If this happens, then an unfortunately timed timer interrupt
     // can try to activate the pagedir, but it is now freed memory
     struct process* pcb_to_free = t->pcb;
     t->pcb = NULL;
@@ -313,7 +358,8 @@ static void start_process(void* args) {
   /* Clean up. Exit on failure or jump to userspace */
   palloc_free_page(file_name);
   if (!success) {
-    sema_up(&temporary);
+    sema_up(&temporary); // Ensure any waiting parent is unblocked
+    printf("[DEBUG] Child process TID: %d failed to initialize. Exiting.\n", t->tid);
     thread_exit();
   }
 
@@ -323,32 +369,41 @@ static void start_process(void* args) {
      arguments on the stack in the form of a `struct intr_frame',
      we just point the stack pointer (%esp) to our stack frame
      and jump to it. */
+  printf("[DEBUG] Child process TID: %d successfully initialized. Jumping to user process.\n",
+         t->tid);
   asm volatile("movl %0, %%esp; jmp intr_exit" : : "g"(&if_) : "memory");
   NOT_REACHED();
 }
 
-static child_process_t* get_child_process(const pid_t child_pid) {
-  struct list* child_processes = &thread_current()->pcb->child_processes;
-
+static child_process_t* get_child_process(struct list* child_processes, const pid_t child_pid) {
+  // Check if the list is empty
   if (list_empty(child_processes)) {
+    printf("[DEBUG] Child process list is empty. No process found for PID: %d\n", child_pid);
     return NULL;
   }
 
+  // Iterate through the list to find the matching child process
   struct list_elem* e;
-
   for (e = list_begin(child_processes); e != list_end(child_processes); e = list_next(e)) {
     child_process_t* c_process = list_entry(e, child_process_t, elem);
+    printf("[DEBUG] Checking child process PID: %d (Looking for PID: %d)\n", c_process->child_pid,
+           child_pid);
+
+    // Check if the current child process matches the given PID
     if (c_process->child_pid == child_pid) {
+      printf("[DEBUG] Found matching child process for PID: %d\n", child_pid);
       return c_process; // Return the matching child process
     }
   }
 
-  return NULL; // Return NULL if no matching child is found
+  // If no match is found, log the failure
+  printf("[DEBUG] No matching child process found for PID: %d\n", child_pid);
+  return NULL;
 }
 
 static bool validate_child_pid(const pid_t child_pid) {
   // Use get_child_process to check if the child_pid exists
-  return get_child_process(child_pid) != NULL;
+  return get_child_process(&thread_current()->pcb->child_processes, child_pid) != NULL;
 }
 
 /* Waits for process with PID child_pid to die and returns its exit status.
@@ -361,62 +416,113 @@ static bool validate_child_pid(const pid_t child_pid) {
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int process_wait(pid_t child_pid) {
-  lock_acquire(&thread_current()->pcb->child_lock);
-  sema_down(&temporary);
-  // validate child_pid
-  if (!validate_child_pid(child_pid))
+  struct process* pcb = thread_current()->pcb;
+
+  printf("[DEBUG] Parent process '%s' (TID: %d) is calling process_wait for child PID: %d.\n",
+         pcb->process_name, thread_current()->tid, child_pid);
+
+  // Acquire the lock to ensure safe access to child_processes list
+  printf("[DEBUG] Acquiring lock for child process list.\n");
+  lock_acquire(&pcb->child_lock);
+
+  // Validate child_pid and retrieve the child process entry
+  child_process_t* c_process = get_child_process(&pcb->child_processes, child_pid);
+  if (c_process == NULL) {
+    printf("[DEBUG] Child process with PID %d not found. Possible reasons: invalid PID or not a "
+           "child of this process.\n",
+           child_pid);
+    lock_release(&pcb->child_lock);
     return -1;
+  }
 
-  child_process_t* c_process = get_child_process(child_pid);
-
-  if (c_process->waited_on)
+  if (c_process->waited_on) {
+    printf("[DEBUG] Child process with PID %d has already been waited on.\n", child_pid);
+    lock_release(&pcb->child_lock);
     return -1;
+  }
 
+  printf("[DEBUG] Child process with PID %d found. Marking as waited on.\n", child_pid);
+  // Mark the child as waited on
   c_process->waited_on = true;
-  // sema_down(&c_process->sem);
 
-  // unlock
-  // return chill_process->exit_status
-  lock_release(&thread_current()->pcb->child_lock);
-  return 0;
+  // Release the lock before waiting
+  printf("[DEBUG] Releasing lock before waiting for child process to exit.\n");
+  lock_release(&pcb->child_lock);
+
+  // Wait for the child to exit
+  printf("[DEBUG] Waiting on semaphore for child process with PID %d.\n", child_pid);
+  sema_down(&c_process->sem);
+  printf("[DEBUG] Child process with PID %d has exited. Resuming execution.\n", child_pid);
+
+  // Retrieve the exit status (already set by process_exit)
+  int exit_status = c_process->exit_status;
+  printf("[DEBUG] Retrieved exit status (%d) for child process with PID %d.\n", exit_status,
+         child_pid);
+
+  // No manual cleanup of c_process; process_exit handles it
+  printf("[DEBUG] process_wait successfully completed for child PID %d with exit status %d.\n",
+         child_pid, exit_status);
+
+  return exit_status;
 }
 
 /* Free the current process's resources. */
 void process_exit(const int exit_status) {
-  struct thread* cur = thread_current();
-  uint32_t* pd;
+  // Log the exit status of the process
+  printf("[DEBUG] Process exiting with status: %d\n", exit_status);
 
-  /* If this thread does not have a PCB, don't worry */
+  struct thread* cur = thread_current();
   if (cur->pcb == NULL) {
+    printf("[DEBUG] Current thread has no PCB. Exiting thread.\n");
     thread_exit();
     NOT_REACHED();
   }
 
-  /* Destroy the current process's page directory and switch back
-     to the kernel-only page directory. */
-  pd = cur->pcb->pagedir;
-  if (pd != NULL) {
-    /* Correct ordering here is crucial.  We must set
-         cur->pcb->pagedir to NULL before switching page directories,
-         so that a timer interrupt can't switch back to the
-         process page directory.  We must activate the base page
-         directory before destroying the process's page
-         directory, or our active page directory will be one
-         that's been freed (and cleared). */
-    cur->pcb->pagedir = NULL;
-    pagedir_activate(NULL);
-    pagedir_destroy(pd);
+  // Log the current process's thread ID and name
+  printf("[DEBUG] Current process TID: %d\n", cur->pcb->main_thread->tid);
+  printf("[DEBUG] Current process name: %s\n", cur->pcb->process_name);
+
+  struct process* p_process = cur->pcb->p_process;
+
+  // Log the parent's ID (if parent exists)
+  if (p_process) {
+    lock_acquire(&p_process->child_lock);
+    printf("[DEBUG] Acquired lock on parent's child list.\n");
+
+    // Get the child process entry in the parent's list
+    child_process_t* c_process = get_child_process(&p_process->child_processes, cur->tid);
+    if (c_process) {
+      printf("[DEBUG] Found child process entry for TID: %d\n", cur->pcb->main_thread->tid);
+      printf("[DEBUG] Child process PID: %d\n", c_process->child_pid);
+
+      // Set exit status and signal the parent
+      c_process->exit_status = exit_status;
+      c_process->exited = true;
+      printf("[DEBUG] Marked process as exited with status: %d\n", exit_status);
+
+      sema_up(&c_process->sem);
+      printf("[DEBUG] Signaled parent process that child process has exited.\n");
+    } else {
+      printf("[DEBUG] No child process entry found for TID: %d\n", cur->pcb->main_thread->tid);
+    }
+
+    lock_release(&p_process->child_lock);
+    printf("[DEBUG] Released lock on parent's child list.\n");
+  } else {
+    printf("[DEBUG] No parent process found for current process.\n");
   }
 
-  /* Free the PCB of this process and kill this thread
-     Avoid race where PCB is freed before t->pcb is set to NULL
-     If this happens, then an unfortuantely timed timer interrupt
-     can try to activate the pagedir, but it is now freed memory */
+  // Free current process's resources
   struct process* pcb_to_free = cur->pcb;
-  cur->pcb = NULL;
-  free(pcb_to_free);
+  if (pcb_to_free) {
+    printf("[DEBUG] Freeing current process's PCB resources.\n");
+    cur->pcb = NULL;
+    free(pcb_to_free);
+  } else {
+    printf("[DEBUG] No PCB resources to free.\n");
+  }
 
-  sema_up(&temporary);
+  printf("[DEBUG] Thread exiting.\n");
   thread_exit();
 }
 
@@ -502,7 +608,7 @@ static bool validate_segment(const struct Elf32_Phdr*, struct file*);
 static bool load_segment(struct file* file, off_t ofs, uint8_t* upage, uint32_t read_bytes,
                          uint32_t zero_bytes, bool writable);
 static bool validate_child_pid(const pid_t child_pid);
-static child_process_t* get_child_process(const pid_t child_pid);
+static child_process_t* get_child_process(struct list* child_processes, const pid_t child_pid);
 
 /* Loads an ELF executable from FILE_NAME into the current thread.
    Stores the executable's entry point into *EIP

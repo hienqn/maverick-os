@@ -24,7 +24,7 @@ typedef struct child_process {
   bool exited;           // Whether the child has exited
   int exit_status;       // Exit status of the child
   struct semaphore sem;  // Semaphore to notify the parent of child's exit
-  struct list_elem elem; // List element for struct list
+  struct list_elem elem; // List element for struct lists
 } child_process_t;
 
 /* The process control block for a given process. Since
@@ -38,6 +38,7 @@ struct process {
   struct thread* main_thread;  // Pointer to the main thread
   struct list child_processes; // List of child processes
   struct lock child_lock;      // Lock for synchronizing access to child_processes
+  struct process* p_process;
 };
 
 void userprog_init(void);

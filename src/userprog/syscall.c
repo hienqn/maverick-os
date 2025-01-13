@@ -20,7 +20,7 @@ void syscall_init(void) { intr_register_int(0x30, 3, INTR_ON, syscall_handler, "
 static void terminate(struct intr_frame* f, int status) {
   f->eax = status;
   printf("%s: exit(%d)\n", thread_current()->pcb->process_name, status);
-  process_exit(-1);
+  process_exit(status);
 }
 
 static bool is_valid_pointer(void* pointer, size_t size) {
@@ -106,8 +106,27 @@ static bool validate_write(struct intr_frame* f, uint32_t* args) {
 /* Handlers */
 static void sys_wait_handler(struct intr_frame* f, uint32_t* args) {
   pid_t pid = args[1]; // Retrieve the PID
-  // int status = process_wait(pid); // Wait for the child process
-  f->eax = 0; // Return the exit status
+
+  printf("[DEBUG] sys_wait_handler: Called by process '%s' (TID: %d) for PID: %d.\n",
+         thread_current()->pcb->process_name, thread_current()->tid, pid);
+
+  // Call process_wait and capture the return value
+  int status = process_wait(pid);
+
+  // Log the return status from process_wait
+  if (status == -1) {
+    printf("[DEBUG] sys_wait_handler: process_wait returned -1 for PID: %d. "
+           "This could be due to:\n"
+           "  - PID is not a valid child of the calling process,\n"
+           "  - PID has already been waited on,\n"
+           "  - Or the child process does not exist.\n",
+           pid);
+  } else {
+    printf("[DEBUG] sys_wait_handler: process_wait returned status: %d for PID: %d.\n", status,
+           pid);
+  }
+
+  f->eax = status; // Return the exit status
 }
 
 /* System call handlers */

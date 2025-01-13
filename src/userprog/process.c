@@ -236,10 +236,9 @@ pid_t process_execute(const char* file_name) {
   // Wait for the child process to load
   sema_down(&args.load_program_sem);
 
-  if (!args.load_success) {
-    palloc_free_page(fn_copy);
-    return TID_ERROR;
-  }
+  if (args.load_success == false) {
+    return -1;
+  };
 
   return tid;
 }
@@ -333,7 +332,6 @@ static void start_process(void* args) {
   /* Clean up. Exit on failure or jump to userspace */
   palloc_free_page(file_name);
   if (!success) {
-    sema_up(&temporary); // Ensure any waiting parent is unblocked
     thread_exit();
   }
 

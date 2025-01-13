@@ -424,43 +424,27 @@ void process_exit(const int exit_status) {
 
   struct process* p_process = cur->pcb->p_process;
 
-  // Log the parent's ID (if parent exists)
   if (p_process) {
     lock_acquire(&p_process->child_lock);
     // Get the child process entry in the parent's list
     child_process_t* c_process = get_child_process(&p_process->child_processes, cur->tid);
     if (c_process) {
-      // printf("[DEBUG] Found child process entry for TID: %d\n", cur->pcb->main_thread->tid);
-      // printf("[DEBUG] Child process PID: %d\n", c_process->child_pid);
-
       // Set exit status and signal the parent
       c_process->exit_status = exit_status;
       c_process->exited = true;
-      // printf("[DEBUG] Marked process as exited with status: %d\n", exit_status);
-
       sema_up(&c_process->sem);
-      // printf("[DEBUG] Signaled parent process that child process has exited.\n");
-    } else {
-      // printf("[DEBUG] No child process entry found for TID: %d\n", cur->pcb->main_thread->tid);
     }
 
     lock_release(&p_process->child_lock);
-    // printf("[DEBUG] Released lock on parent's child list.\n");
-  } else {
-    // printf("[DEBUG] No parent process found for current process.\n");
   }
 
   // Free current process's resources
   struct process* pcb_to_free = cur->pcb;
   if (pcb_to_free) {
-    // printf("[DEBUG] Freeing current process's PCB resources.\n");
     cur->pcb = NULL;
     free(pcb_to_free);
-  } else {
-    // printf("[DEBUG] No PCB resources to free.\n");
   }
 
-  // printf("[DEBUG] Thread exiting.\n");
   thread_exit();
 }
 

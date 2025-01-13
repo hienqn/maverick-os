@@ -72,19 +72,19 @@ static bool validate_halt(struct intr_frame* f UNUSED, uint32_t* args UNUSED) {
   return true; // No arguments to validate
 }
 
-static bool validate_wait(struct intr_frame* f, uint32_t* args) {
+static bool validate_wait(struct intr_frame* f UNUSED, uint32_t* args UNUSED) {
   return is_valid_pointer(&args[1], sizeof(uint32_t));
 }
 
-static bool validate_practice(struct intr_frame* f, uint32_t* args) {
+static bool validate_practice(struct intr_frame* f UNUSED, uint32_t* args) {
   return is_valid_pointer(&args[1], sizeof(uint32_t)); // Validate args[1]
 }
 
-static bool validate_exit(struct intr_frame* f, uint32_t* args) {
+static bool validate_exit(struct intr_frame* f UNUSED, uint32_t* args UNUSED) {
   return true; // No validation needed for `SYS_EXIT`
 }
 
-static bool validate_exec(struct intr_frame* f, uint32_t* args) {
+static bool validate_exec(struct intr_frame* f UNUSED, uint32_t* args) {
   // Validate args[1] itself as a pointer before using it
   if (!is_valid_pointer(&args[1], sizeof(char*))) {
     return false;
@@ -96,7 +96,7 @@ static bool validate_exec(struct intr_frame* f, uint32_t* args) {
   return is_valid_file(file_name);
 }
 
-static bool validate_write(struct intr_frame* f, uint32_t* args) {
+static bool validate_write(struct intr_frame* f UNUSED, uint32_t* args) {
   int fd = args[1];
   void* buffer = (void*)args[2];
   unsigned size = args[3];

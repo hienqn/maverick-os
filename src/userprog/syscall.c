@@ -124,12 +124,13 @@ static void sys_exit_handler(struct intr_frame* f, uint32_t* args) { terminate(f
 
 static void sys_exec_handler(struct intr_frame* f, uint32_t* args) {
   char* file_name = (char*)args[1];
+  // Note: in case failing to load the file, pid will be -1.
   pid_t pid = process_execute(file_name);
 
   if (pid != TID_ERROR) {
-    f->eax = pid; // Return the exit status
+    f->eax = pid;
   } else {
-    f->eax = -1; // Return the exit status
+    f->eax = -1;
   }
 }
 

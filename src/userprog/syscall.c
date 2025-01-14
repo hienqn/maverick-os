@@ -12,10 +12,6 @@
 #include <syscall-nr.h>
 #include "filesys/filesys.h"
 
-typedef bool (*validate_func)(struct intr_frame* f, void* args);
-
-typedef void (*handler_func)(struct intr_frame* f, void* args);
-
 typedef bool (*validate_func)(struct intr_frame* f, uint32_t* args);
 typedef void (*handler_func)(struct intr_frame* f, uint32_t* args);
 
@@ -68,8 +64,6 @@ static bool is_valid_buffer(void* buffer, size_t size) {
     if (!pagedir_get_page(thread_current()->pcb->pagedir, addr)) {
       return false;
     }
-  } else {
-    printf("Syscall %d: No validator found, skipping validation.\n", syscall_number);
   }
   return true;
 }

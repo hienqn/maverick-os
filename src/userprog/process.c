@@ -25,13 +25,6 @@ static thread_func start_pthread NO_RETURN;
 static bool load(const char* file_name, void (**eip)(void), void** esp);
 bool setup_thread(void (**eip)(void), void** esp);
 
-<<<<<<< HEAD
-struct program_args {
-  struct semaphore program_loading_sem; /* Use a semicolon to separate members */
-  bool load_success;                    // Add this to indicate success or failure
-  void* fn_copy;                        /* Use a semicolon for this member too */
-};
-=======
 typedef struct process_args {
   struct semaphore load_program_sem;
   struct semaphore parent_ready_sem;
@@ -39,7 +32,6 @@ typedef struct process_args {
   void* fn_copy;
   struct process* parent_process;
 } process_args_t;
->>>>>>> fix/fixExit
 
 /* Get the number of arguments from a file name */
 static int get_argc(const char* file_name_) {
@@ -324,7 +316,7 @@ static void start_process(void* args) {
   }
 
   process_args->load_success = success;
-  sema_up(&process_args->program_loading_sem);
+  sema_up(&process_args->load_program_sem);
 
   /* Free argv under all circumstances because we no longer use it */
   if (argv != NULL)

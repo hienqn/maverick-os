@@ -68,16 +68,21 @@ static bool is_valid_buffer(void* buffer, size_t size) {
   return true;
 }
 
-/* Validation functions */
+static bool validate_read(struct intr_frame* f UNUSED, uint32_t* args) {
+  int fd = args[1];
+  void* buffer = (void*)args[2];
+  unsigned size = args[3];
+  return fd >= 0 && is_valid_buffer(buffer, size);
+}
+
 static bool validate_filesize(struct intr_frame* f UNUSED, uint32_t* args) {
   // Validate args[1] itself as a pointer before using it
   int fd = args[1];
 
   // Validate the file name string
-  return fd > 3 ? true : false;
+  return fd >= 0 ? true : false;
 }
 
-/* Validation functions */
 static bool validate_open(struct intr_frame* f UNUSED, uint32_t* args) {
   // Validate args[1] itself as a pointer before using it
   if (!is_valid_pointer(&args[1], sizeof(char*))) {
@@ -90,7 +95,6 @@ static bool validate_open(struct intr_frame* f UNUSED, uint32_t* args) {
   return is_valid_file(file_name);
 }
 
-/* Validation functions */
 static bool validate_remove(struct intr_frame* f UNUSED, uint32_t* args) {
   // Validate args[1] itself as a pointer before using it
   if (!is_valid_pointer(&args[1], sizeof(char*))) {
@@ -150,6 +154,33 @@ static bool validate_write(struct intr_frame* f UNUSED, uint32_t* args) {
   void* buffer = (void*)args[2];
   unsigned size = args[3];
   return fd >= 0 && is_valid_buffer(buffer, size);
+}
+
+/* Syscall handlers below */
+
+static void sys_read_handler(struct intr_frame* f, uint32_t* args) {
+  int fd = args[1];
+  const void* buffer = (void*)args[2];
+  unsigned size = args[3];
+
+  if (fd == STDIN_FILENO) {
+    putbuf(buffer, size);
+    f->eax = size;
+  }
+
+  if (fd == STDOUT_FILENO) {
+    putbuf(buffer, size);
+    f->eax = size;
+  }
+
+  if (fd == STDERR_FILENO) {
+    putbuf(buffer, size);
+    f->eax = size;
+  }
+
+  struct file* open_file = process_get_file(fd);
+
+  f->eax = -1; // Not implemented yet
 }
 
 static void sys_filesize_handler(struct intr_frame* f, uint32_t* args) {

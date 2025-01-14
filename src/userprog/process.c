@@ -513,6 +513,21 @@ int process_get_filesize(int fd) {
   return -1;
 }
 
+/* Get file from fd */
+struct file* process_get_file(int fd) {
+  struct process* process = thread_current()->pcb;
+
+  if (!process) {
+    return NULL;
+  }
+
+  if (process->fd_table[fd] != NULL) {
+    return process->fd_table[fd];
+  };
+
+  return NULL;
+}
+
 /* We load ELF binaries.  The following definitions are taken
    from the ELF specification, [ELF1], more-or-less verbatim.  */
 

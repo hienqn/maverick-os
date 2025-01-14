@@ -1,4 +1,6 @@
 
+NOTE: filesize is missing some test suite
+
 # **Project 1: User Programs Design Documentation**
 
 This project involves the following tasks:

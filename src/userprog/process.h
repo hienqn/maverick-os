@@ -8,11 +8,12 @@
 // These defines will be used in Project 2: Multithreading
 #define MAX_STACK_PAGES (1 << 11)
 #define MAX_THREADS 127
+#define MAX_FD 100
 
+typedef int fd;
 /* PIDs and TIDs are the same type. PID should be
    the TID of the main thread of the process */
 typedef tid_t pid_t;
-
 
 /* Thread functions (Project 2: Multithreading) */
 typedef void (*pthread_fun)(void*);
@@ -40,6 +41,7 @@ struct process {
   struct list child_processes; // List of child processes
   struct lock child_lock;      // Lock for synchronizing access to child_processes
   struct process* p_process;
+  struct file* fd_table[MAX_FD];
 };
 
 void userprog_init(void);
@@ -48,6 +50,8 @@ pid_t process_execute(const char* file_name);
 int process_wait(pid_t);
 void process_exit(const int exit_status);
 void process_activate(void);
+int process_allocate_fd(struct file* file);
+int process_get_filesize(int fd);
 
 bool is_main_thread(struct thread*, struct process*);
 pid_t get_pid(struct process*);

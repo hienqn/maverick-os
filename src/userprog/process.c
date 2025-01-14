@@ -179,6 +179,10 @@ void userprog_init(void) {
   list_init(&t->pcb->child_processes);
   lock_init(&t->pcb->child_lock);
   t->pcb->p_process = NULL;
+  t->pcb->fd_table[STDIN_FILENO] = NULL;
+  t->pcb->fd_table[STDOUT_FILENO] = NULL;
+  t->pcb->fd_table[STDERR_FILENO] = NULL;
+
   /* Kill the kernel if we did not succeed */
   ASSERT(success);
 }
@@ -288,6 +292,9 @@ static void start_process(void* args) {
     t->pcb = new_pcb;
     t->pcb->p_process = parent_process;
 
+    t->pcb->fd_table[STDIN_FILENO] = NULL;
+    t->pcb->fd_table[STDOUT_FILENO] = NULL;
+    t->pcb->fd_table[STDERR_FILENO] = NULL;
     // Continue initializing the PCB as normal
     t->pcb->main_thread = t;
     strlcpy(t->name, argv[0], strlen(argv[0]) + 1);
@@ -305,6 +312,16 @@ static void start_process(void* args) {
     if_.eflags = FLAG_IF | FLAG_MBS;
 
     success = load(argv[0], &if_.eip, &if_.esp);
+
+    if (success) {
+      struct file* file = filesys_open(argv[0]);
+      if (file == NULL) {
+        printf("load: %s: open failed\n", argv[0]);
+      }
+      file_deny_write(file);
+      /* We assign the 3rd index to the currently open file */
+      t->pcb->fd_table[DENY_EXECUTABLE] = file;
+    }
   }
 
   // Notify the parent that the load process is complete
@@ -361,11 +378,6 @@ static child_process_t* get_child_process(struct list* child_processes, const pi
   }
 
   return NULL;
-}
-
-static bool validate_child_pid(const pid_t child_pid) {
-  // Use get_child_process to check if the child_pid exists
-  return get_child_process(&thread_current()->pcb->child_processes, child_pid) != NULL;
 }
 
 /* Waits for process with PID child_pid to die and returns its exit status.
@@ -429,6 +441,9 @@ void process_exit(const int exit_status) {
       // Set exit status and signal the parent
       c_process->exit_status = exit_status;
       c_process->exited = true;
+      if (cur->pcb->fd_table[DENY_EXECUTABLE] != NULL) {
+        file_close(cur->pcb->fd_table[DENY_EXECUTABLE]);
+      };
       sema_up(&c_process->sem);
     }
 
@@ -459,6 +474,43 @@ void process_activate(void) {
   /* Set thread's kernel stack for use in processing interrupts.
      This does nothing if this is not a user process. */
   tss_update();
+}
+
+/* Allocates a file descriptor for the process. struct file* is a 
+  kernel concept, we can't expose this because this would leak abstraction
+*/
+int process_allocate_fd(struct file* file) {
+  struct process* process = thread_current()->pcb;
+
+  if (!process) {
+    return -1;
+  }
+
+  /* Must start at 4 because we specify 0 for stdin, 1 for stdout, 2 for stderr, 
+  3 for the current executable file to be close after*/
+  for (int fd = 4; fd < MAX_FD; fd++) {
+    if (process->fd_table[fd] != NULL) {
+      process->fd_table[fd] = file;
+      return fd;
+    }
+  }
+  return -1;
+}
+
+/* Get file size of a file descriptor in the fd_table
+*/
+int process_get_filesize(int fd) {
+  struct process* process = thread_current()->pcb;
+
+  if (!process) {
+    return -1;
+  }
+
+  if (process->fd_table[fd] != NULL) {
+    return file_length(process->fd_table[fd]);
+  };
+
+  return -1;
 }
 
 /* We load ELF binaries.  The following definitions are taken
@@ -526,7 +578,6 @@ static bool setup_stack(void** esp);
 static bool validate_segment(const struct Elf32_Phdr*, struct file*);
 static bool load_segment(struct file* file, off_t ofs, uint8_t* upage, uint32_t read_bytes,
                          uint32_t zero_bytes, bool writable);
-static bool validate_child_pid(const pid_t child_pid);
 static child_process_t* get_child_process(struct list* child_processes, const pid_t child_pid);
 
 /* Loads an ELF executable from FILE_NAME into the current thread.

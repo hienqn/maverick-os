@@ -7,7 +7,9 @@
 #include <stdio.h>
 #include <syscall-nr.h>
 #include <string.h>
+#include "filesys/filesys.h"
 
+void syscall_init(void);
 typedef bool (*validate_func)(struct intr_frame* f, uint32_t* args);
 typedef void (*handler_func)(struct intr_frame* f, uint32_t* args);
 
@@ -67,7 +69,42 @@ static bool is_valid_buffer(void* buffer, size_t size) {
 }
 
 /* Validation functions */
-static bool validate_create(struct intr_frame* f, uint32_t* args) {
+static bool validate_filesize(struct intr_frame* f UNUSED, uint32_t* args) {
+  // Validate args[1] itself as a pointer before using it
+  int fd = args[1];
+
+  // Validate the file name string
+  return fd > 3 ? true : false;
+}
+
+/* Validation functions */
+static bool validate_open(struct intr_frame* f UNUSED, uint32_t* args) {
+  // Validate args[1] itself as a pointer before using it
+  if (!is_valid_pointer(&args[1], sizeof(char*))) {
+    return false;
+  }
+
+  char* file_name = (char*)args[1];
+
+  // Validate the file name string
+  return is_valid_file(file_name);
+}
+
+/* Validation functions */
+static bool validate_remove(struct intr_frame* f UNUSED, uint32_t* args) {
+  // Validate args[1] itself as a pointer before using it
+  if (!is_valid_pointer(&args[1], sizeof(char*))) {
+    return false;
+  }
+
+  char* file_name = (char*)args[1];
+
+  // Validate the file name string
+  return is_valid_file(file_name);
+}
+
+/* Validation functions */
+static bool validate_create(struct intr_frame* f UNUSED, uint32_t* args) {
   // Validate args[1] itself as a pointer before using it
   if (!is_valid_pointer(&args[1], sizeof(char*))) {
     return false;
@@ -115,7 +152,28 @@ static bool validate_write(struct intr_frame* f UNUSED, uint32_t* args) {
   return fd >= 0 && is_valid_buffer(buffer, size);
 }
 
-/* Handlers */
+static void sys_filesize_handler(struct intr_frame* f, uint32_t* args) {
+  int fd = args[1];
+  f->eax = process_get_filesize(fd);
+}
+
+static void sys_open_handler(struct intr_frame* f, uint32_t* args) {
+  char* file_name = (char*)args[1];
+  struct file* open_file = filesys_open(file_name);
+  int return_fd = process_allocate_fd(open_file);
+
+  f->eax = return_fd;
+}
+
+static void sys_remove_handler(struct intr_frame* f, uint32_t* args) {
+  char* file_name = (char*)args[1];
+  if (filesys_remove(file_name)) {
+    f->eax = 1;
+  } else {
+    f->eax = 0;
+  }
+}
+
 static void sys_create_handler(struct intr_frame* f, uint32_t* args) {
   char* file_name = (char*)args[1];
   unsigned initial_size = args[2];
@@ -171,15 +229,20 @@ static void sys_write_handler(struct intr_frame* f, uint32_t* args) {
 
 /* Arrays for syscall validators and handlers */
 static validate_func syscall_validators[SYS_CALL_COUNT] = {
-    [SYS_HALT] = validate_halt,    [SYS_EXIT] = validate_exit,         [SYS_EXEC] = validate_exec,
-    [SYS_WRITE] = validate_write,  [SYS_PRACTICE] = validate_practice, [SYS_WAIT] = validate_wait,
-    [SYS_CREATE] = validate_create};
+    [SYS_HALT] = validate_halt,         [SYS_EXIT] = validate_exit,
+    [SYS_EXEC] = validate_exec,         [SYS_WRITE] = validate_write,
+    [SYS_PRACTICE] = validate_practice, [SYS_WAIT] = validate_wait,
+    [SYS_CREATE] = validate_create,     [SYS_REMOVE] = validate_remove,
+    [SYS_OPEN] = validate_open,         [SYS_FILESIZE] = validate_filesize,
+};
 
 static handler_func syscall_handlers[SYS_CALL_COUNT] = {
     [SYS_HALT] = sys_halt_handler,         [SYS_EXIT] = sys_exit_handler,
     [SYS_EXEC] = sys_exec_handler,         [SYS_WRITE] = sys_write_handler,
     [SYS_PRACTICE] = sys_practice_handler, [SYS_WAIT] = sys_wait_handler,
-    [SYS_CREATE] = sys_create_handler};
+    [SYS_CREATE] = sys_create_handler,     [SYS_REMOVE] = sys_remove_handler,
+    [SYS_OPEN] = sys_open_handler,         [SYS_FILESIZE] = sys_filesize_handler,
+};
 
 /* Main syscall handler */
 static void syscall_handler(struct intr_frame* f) {

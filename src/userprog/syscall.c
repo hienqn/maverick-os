@@ -1,4 +1,3 @@
-#include "userprog/syscall.h"
 #include "userprog/pagedir.h"
 #include "userprog/process.h"
 #include "threads/interrupt.h"
@@ -68,6 +67,19 @@ static bool is_valid_buffer(void* buffer, size_t size) {
 }
 
 /* Validation functions */
+static bool validate_create(struct intr_frame* f, uint32_t* args) {
+  // Validate args[1] itself as a pointer before using it
+  if (!is_valid_pointer(&args[1], sizeof(char*))) {
+    return false;
+  }
+
+  char* file_name = (char*)args[1];
+
+  // Validate the file name string
+  return is_valid_file(file_name);
+}
+
+/* Validation functions */
 static bool validate_halt(struct intr_frame* f UNUSED, uint32_t* args UNUSED) {
   return true; // No arguments to validate
 }
@@ -101,6 +113,17 @@ static bool validate_write(struct intr_frame* f UNUSED, uint32_t* args) {
   void* buffer = (void*)args[2];
   unsigned size = args[3];
   return fd >= 0 && is_valid_buffer(buffer, size);
+}
+
+/* Handlers */
+static void sys_create_handler(struct intr_frame* f, uint32_t* args) {
+  char* file_name = (char*)args[1];
+  unsigned initial_size = args[2];
+  if (filesys_create(file_name, initial_size)) {
+    f->eax = 1;
+  } else {
+    f->eax = 0;
+  }
 }
 
 /* Handlers */
@@ -148,15 +171,15 @@ static void sys_write_handler(struct intr_frame* f, uint32_t* args) {
 
 /* Arrays for syscall validators and handlers */
 static validate_func syscall_validators[SYS_CALL_COUNT] = {
-    [SYS_HALT] = validate_halt,   [SYS_EXIT] = validate_exit,         [SYS_EXEC] = validate_exec,
-    [SYS_WRITE] = validate_write, [SYS_PRACTICE] = validate_practice, [SYS_WAIT] = validate_wait};
+    [SYS_HALT] = validate_halt,    [SYS_EXIT] = validate_exit,         [SYS_EXEC] = validate_exec,
+    [SYS_WRITE] = validate_write,  [SYS_PRACTICE] = validate_practice, [SYS_WAIT] = validate_wait,
+    [SYS_CREATE] = validate_create};
 
 static handler_func syscall_handlers[SYS_CALL_COUNT] = {
     [SYS_HALT] = sys_halt_handler,         [SYS_EXIT] = sys_exit_handler,
     [SYS_EXEC] = sys_exec_handler,         [SYS_WRITE] = sys_write_handler,
     [SYS_PRACTICE] = sys_practice_handler, [SYS_WAIT] = sys_wait_handler,
-
-};
+    [SYS_CREATE] = sys_create_handler};
 
 /* Main syscall handler */
 static void syscall_handler(struct intr_frame* f) {

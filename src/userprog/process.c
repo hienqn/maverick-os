@@ -315,12 +315,8 @@ static void start_process(void* args) {
     success = prepare_stack(argc, argv, &if_.esp);
   }
 
-  process_args->load_success = success;
-  sema_up(&process_args->load_program_sem);
-
   /* Free argv under all circumstances because we no longer use it */
-  if (argv != NULL)
-    free(argv);
+  free(argv);
 
   /* Handle failure with successful PCB malloc. Must free the PCB */
   if (!success && pcb_success) {

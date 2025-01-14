@@ -8,9 +8,6 @@
 #include <stdio.h>
 #include <syscall-nr.h>
 #include <string.h>
-#include <stdio.h>
-#include <syscall-nr.h>
-#include "filesys/filesys.h"
 
 typedef bool (*validate_func)(struct intr_frame* f, uint32_t* args);
 typedef void (*handler_func)(struct intr_frame* f, uint32_t* args);
@@ -33,7 +30,7 @@ static bool is_valid_pointer(void* pointer, size_t size) {
     return false;
   }
   return true;
-};
+}
 
 static bool is_valid_file(const char* file) {
   // Validate the initial pointer
@@ -55,6 +52,8 @@ static bool is_valid_file(const char* file) {
 
     file++; // Move to the next character
   }
+
+  return true;
 }
 
 static bool is_valid_buffer(void* buffer, size_t size) {

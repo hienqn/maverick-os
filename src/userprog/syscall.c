@@ -213,7 +213,23 @@ static bool validate_write(struct intr_frame* f UNUSED, uint32_t* args) {
   int fd = args[1];
   void* buffer = (void*)args[2];
   unsigned size = args[3];
-  return fd >= 0 && is_valid_buffer(buffer, size);
+
+  // Check if the file descriptor is valid
+  if (fd < 0 || fd >= MAX_FD) {
+    return false;
+  }
+
+  // Check if the buffer pointer is valid
+  if (!is_valid_pointer(buffer, sizeof(char*))) {
+    return false;
+  }
+
+  // Check if the buffer range is valid
+  if (!is_valid_buffer(buffer, size)) {
+    return false;
+  }
+
+  return true;
 }
 
 static void sys_tell_handler(struct intr_frame* f, uint32_t* args) {

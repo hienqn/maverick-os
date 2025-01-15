@@ -11,12 +11,16 @@
 #include "filesys/file.h"
 
 void syscall_init(void);
+struct lock global_lock;
 typedef bool (*validate_func)(struct intr_frame* f, uint32_t* args);
 typedef void (*handler_func)(struct intr_frame* f, uint32_t* args);
 
 static void syscall_handler(struct intr_frame*);
 
-void syscall_init(void) { intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall"); }
+void syscall_init(void) {
+  lock_init(&global_lock);
+  intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall");
+}
 
 /* Helper functions */
 static void terminate(struct intr_frame* f, int status) {
@@ -26,11 +30,25 @@ static void terminate(struct intr_frame* f, int status) {
 }
 
 static bool is_valid_pointer(void* pointer, size_t size) {
-  if (!is_user_vaddr(pointer) || !is_user_vaddr((char*)pointer + size) ||
-      pagedir_get_page(thread_current()->pcb->pagedir, pointer) == NULL ||
-      pagedir_get_page(thread_current()->pcb->pagedir, (char*)pointer + size) == NULL) {
+  uintptr_t start = (uintptr_t)pointer;
+  uintptr_t end = start + size;
+
+  // Check for pointer overflow
+  if (end < start) {
     return false;
   }
+
+  // Check that start and end are within user address space
+  if (!is_user_vaddr((void*)start) || !is_user_vaddr((void*)end)) {
+    return false;
+  }
+
+  // Check that both start and end are mapped
+  if (pagedir_get_page(thread_current()->pcb->pagedir, (void*)start) == NULL ||
+      pagedir_get_page(thread_current()->pcb->pagedir, (void*)end) == NULL) {
+    return false;
+  }
+
   return true;
 }
 
@@ -69,19 +87,52 @@ static bool is_valid_buffer(void* buffer, size_t size) {
   return true;
 }
 
+static bool validate_seek(struct intr_frame* f UNUSED, uint32_t* args) {
+  // Validate args[1] itself as a pointer before using it
+  int fd = args[1];
+  int position = args[2];
+
+  // Validate the file name string
+  return fd >= 0 && fd < MAX_FD ? true : false;
+}
+
+static bool validate_tell(struct intr_frame* f UNUSED, uint32_t* args) {
+  // Validate args[1] itself as a pointer before using it
+  int fd = args[1];
+
+  // Validate the file name string
+  return fd >= 0 && fd < MAX_FD && fd < MAX_FD ? true : false;
+}
+
 static bool validate_close(struct intr_frame* f UNUSED, uint32_t* args) {
   // Validate args[1] itself as a pointer before using it
   int fd = args[1];
 
   // Validate the file name string
-  return fd >= 0 ? true : false;
+  return fd >= 0 && fd < MAX_FD ? true : false;
 }
 
 static bool validate_read(struct intr_frame* f UNUSED, uint32_t* args) {
   int fd = args[1];
   void* buffer = (void*)args[2];
   unsigned size = args[3];
-  return fd >= 0 && is_valid_buffer(buffer, size);
+
+  // Check if the file descriptor is valid
+  if (fd < 0 || fd >= MAX_FD) {
+    return false;
+  }
+
+  // Check if the buffer pointer is valid
+  if (!is_valid_pointer(buffer, sizeof(char*))) {
+    return false;
+  }
+
+  // Check if the buffer range is valid
+  if (!is_valid_buffer(buffer, size)) {
+    return false;
+  }
+
+  return true;
 }
 
 static bool validate_filesize(struct intr_frame* f UNUSED, uint32_t* args) {
@@ -89,7 +140,7 @@ static bool validate_filesize(struct intr_frame* f UNUSED, uint32_t* args) {
   int fd = args[1];
 
   // Validate the file name string
-  return fd >= 0 ? true : false;
+  return fd >= 0 && fd < MAX_FD ? true : false;
 }
 
 static bool validate_open(struct intr_frame* f UNUSED, uint32_t* args) {
@@ -165,7 +216,33 @@ static bool validate_write(struct intr_frame* f UNUSED, uint32_t* args) {
   return fd >= 0 && is_valid_buffer(buffer, size);
 }
 
+static void sys_tell_handler(struct intr_frame* f, uint32_t* args) {
+  int fd = args[1];
+
+  struct file* open_file = process_get_file(fd);
+  if (open_file != NULL) {
+    off_t pos = file_tell(open_file);
+    f->eax = pos;
+  } else {
+    f->eax = -1;
+  }
+}
+
+static void sys_seek_handler(struct intr_frame* f, uint32_t* args) {
+  int fd = args[1];
+  unsigned position = args[2];
+
+  struct file* open_file = process_get_file(fd);
+  if (open_file != NULL) {
+    file_seek(open_file, position);
+    f->eax = 0;
+  } else {
+    f->eax = -1;
+  }
+}
+
 static void sys_close_handler(struct intr_frame* f, uint32_t* args) {
+  lock_acquire(&global_lock);
   int fd = args[1];
 
   struct file* open_file = process_get_file(fd);
@@ -176,6 +253,7 @@ static void sys_close_handler(struct intr_frame* f, uint32_t* args) {
   } else {
     f->eax = -1;
   }
+  lock_release(&global_lock);
 }
 
 /* Will handle stdin later */
@@ -193,10 +271,12 @@ static int read_helper(void* buffer, int size) {
 }
 
 static void sys_read_handler(struct intr_frame* f, uint32_t* args) {
+  lock_acquire(&global_lock);
   int fd = args[1];
   void* buffer = (void*)args[2];
   int size = args[3];
 
+  /* Missing stdin tests */
   if (fd == STDIN_FILENO) {
     // read size character from input_getc
     int byte_size = read_helper(buffer, size);
@@ -204,12 +284,14 @@ static void sys_read_handler(struct intr_frame* f, uint32_t* args) {
   }
 
   struct file* open_file = process_get_file(fd);
+
   if (open_file != NULL) {
     off_t byte_read = file_read(open_file, buffer, size);
-    f->eax = byte_read; // Not implemented yet
+    f->eax = byte_read;
   } else {
     f->eax = -1;
   }
+  lock_release(&global_lock);
 }
 
 static void sys_filesize_handler(struct intr_frame* f, uint32_t* args) {
@@ -218,23 +300,34 @@ static void sys_filesize_handler(struct intr_frame* f, uint32_t* args) {
 }
 
 static void sys_open_handler(struct intr_frame* f, uint32_t* args) {
+  lock_acquire(&global_lock);
+
   char* file_name = (char*)args[1];
   struct file* open_file = filesys_open(file_name);
-  int return_fd = process_allocate_fd(open_file);
 
-  f->eax = return_fd;
+  if (open_file) {
+    int fd = process_allocate_fd(open_file);
+    f->eax = fd;
+  } else {
+    f->eax = -1;
+  }
+
+  lock_release(&global_lock);
 }
 
 static void sys_remove_handler(struct intr_frame* f, uint32_t* args) {
+  lock_acquire(&global_lock);
   char* file_name = (char*)args[1];
   if (filesys_remove(file_name)) {
     f->eax = 1;
   } else {
     f->eax = 0;
   }
+  lock_release(&global_lock);
 }
 
 static void sys_create_handler(struct intr_frame* f, uint32_t* args) {
+  lock_acquire(&global_lock);
   char* file_name = (char*)args[1];
   unsigned initial_size = args[2];
   if (filesys_create(file_name, initial_size)) {
@@ -242,6 +335,7 @@ static void sys_create_handler(struct intr_frame* f, uint32_t* args) {
   } else {
     f->eax = 0;
   }
+  lock_release(&global_lock);
 }
 
 /* Handlers */
@@ -276,6 +370,7 @@ static void sys_exec_handler(struct intr_frame* f, uint32_t* args) {
 }
 
 static void sys_write_handler(struct intr_frame* f, uint32_t* args) {
+  lock_acquire(&global_lock);
   int fd = args[1];
   const void* buffer = (void*)args[2];
   off_t size = args[3];
@@ -291,6 +386,7 @@ static void sys_write_handler(struct intr_frame* f, uint32_t* args) {
       f->eax = -1;
     }
   }
+  lock_release(&global_lock);
 }
 
 /* Arrays for syscall validators and handlers */
@@ -300,7 +396,8 @@ static validate_func syscall_validators[SYS_CALL_COUNT] = {
     [SYS_PRACTICE] = validate_practice, [SYS_WAIT] = validate_wait,
     [SYS_CREATE] = validate_create,     [SYS_REMOVE] = validate_remove,
     [SYS_OPEN] = validate_open,         [SYS_FILESIZE] = validate_filesize,
-    [SYS_READ] = validate_read,         [SYS_CLOSE] = validate_close};
+    [SYS_READ] = validate_read,         [SYS_CLOSE] = validate_close,
+    [SYS_SEEK] = validate_seek,         [SYS_TELL] = validate_tell};
 
 static handler_func syscall_handlers[SYS_CALL_COUNT] = {
     [SYS_HALT] = sys_halt_handler,         [SYS_EXIT] = sys_exit_handler,
@@ -308,7 +405,9 @@ static handler_func syscall_handlers[SYS_CALL_COUNT] = {
     [SYS_PRACTICE] = sys_practice_handler, [SYS_WAIT] = sys_wait_handler,
     [SYS_CREATE] = sys_create_handler,     [SYS_REMOVE] = sys_remove_handler,
     [SYS_OPEN] = sys_open_handler,         [SYS_FILESIZE] = sys_filesize_handler,
-    [SYS_READ] = sys_read_handler,         [SYS_CLOSE] = sys_close_handler};
+    [SYS_READ] = sys_read_handler,         [SYS_CLOSE] = sys_close_handler,
+    [SYS_SEEK] = sys_seek_handler,         [SYS_TELL] = sys_tell_handler,
+};
 
 /* Main syscall handler */
 static void syscall_handler(struct intr_frame* f) {

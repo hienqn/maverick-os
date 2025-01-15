@@ -497,7 +497,7 @@ int process_allocate_fd(struct file* file) {
   /* Must start at 4 because we specify 0 for stdin, 1 for stdout, 2 for stderr, 
   3 for the current executable file to be close after*/
   for (int fd = 4; fd < MAX_FD; fd++) {
-    if (process->fd_table[fd] != NULL) {
+    if (process->fd_table[fd] == NULL) {
       process->fd_table[fd] = file;
       return fd;
     }

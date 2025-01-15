@@ -52,6 +52,8 @@ void process_exit(const int exit_status);
 void process_activate(void);
 int process_allocate_fd(struct file* file);
 int process_get_filesize(int fd);
+struct file* process_get_file(int fd);
+void process_close_file(int fd);
 
 bool is_main_thread(struct thread*, struct process*);
 pid_t get_pid(struct process*);

@@ -179,6 +179,9 @@ void userprog_init(void) {
   list_init(&t->pcb->child_processes);
   lock_init(&t->pcb->child_lock);
   t->pcb->p_process = NULL;
+  for (int i = 0; i < MAX_FD; i++) {
+    t->pcb->fd_table[i] = NULL;
+  }
   t->pcb->fd_table[STDIN_FILENO] = NULL;
   t->pcb->fd_table[STDOUT_FILENO] = NULL;
   t->pcb->fd_table[STDERR_FILENO] = NULL;
@@ -291,6 +294,10 @@ static void start_process(void* args) {
     new_pcb->pagedir = NULL;
     t->pcb = new_pcb;
     t->pcb->p_process = parent_process;
+
+    for (int i = 0; i < MAX_FD; i++) {
+      t->pcb->fd_table[i] = NULL;
+    }
 
     t->pcb->fd_table[STDIN_FILENO] = NULL;
     t->pcb->fd_table[STDOUT_FILENO] = NULL;
@@ -433,6 +440,10 @@ void process_exit(const int exit_status) {
 
   struct process* p_process = cur->pcb->p_process;
 
+  for (int fd = 4; fd < MAX_FD; fd++) {
+    file_close(cur->pcb->fd_table[fd]);
+  }
+
   if (p_process) {
     lock_acquire(&p_process->child_lock);
     // Get the child process entry in the parent's list
@@ -441,9 +452,6 @@ void process_exit(const int exit_status) {
       // Set exit status and signal the parent
       c_process->exit_status = exit_status;
       c_process->exited = true;
-      if (cur->pcb->fd_table[DENY_EXECUTABLE] != NULL) {
-        file_close(cur->pcb->fd_table[DENY_EXECUTABLE]);
-      };
       sema_up(&c_process->sem);
     }
 
@@ -526,6 +534,19 @@ struct file* process_get_file(int fd) {
   };
 
   return NULL;
+}
+
+/* Get file from fd */
+void process_close_file(int fd) {
+  struct process* process = thread_current()->pcb;
+
+  if (!process) {
+    return;
+  }
+
+  if (process->fd_table[fd] != NULL) {
+    process->fd_table[fd] = NULL;
+  };
 }
 
 /* We load ELF binaries.  The following definitions are taken

@@ -8,6 +8,7 @@
 #include <syscall-nr.h>
 #include <string.h>
 #include "filesys/filesys.h"
+#include "filesys/file.h"
 
 void syscall_init(void);
 typedef bool (*validate_func)(struct intr_frame* f, uint32_t* args);
@@ -66,6 +67,14 @@ static bool is_valid_buffer(void* buffer, size_t size) {
     }
   }
   return true;
+}
+
+static bool validate_close(struct intr_frame* f UNUSED, uint32_t* args) {
+  // Validate args[1] itself as a pointer before using it
+  int fd = args[1];
+
+  // Validate the file name string
+  return fd >= 0 ? true : false;
 }
 
 static bool validate_read(struct intr_frame* f UNUSED, uint32_t* args) {
@@ -156,31 +165,51 @@ static bool validate_write(struct intr_frame* f UNUSED, uint32_t* args) {
   return fd >= 0 && is_valid_buffer(buffer, size);
 }
 
-/* Syscall handlers below */
+static void sys_close_handler(struct intr_frame* f, uint32_t* args) {
+  int fd = args[1];
+
+  struct file* open_file = process_get_file(fd);
+  if (open_file != NULL) {
+    file_close(open_file);
+    process_close_file(fd);
+    f->eax = 0;
+  } else {
+    f->eax = -1;
+  }
+}
+
+/* Will handle stdin later */
+static int read_helper(void* buffer, int size) {
+  int byte_size = 0;
+  uint8_t* buf = (uint8_t*)buffer;
+
+  while (byte_size < size) {
+    *(buf + byte_size) = input_getc();
+    byte_size++;
+  };
+
+  *(buf + byte_size) = '\0';
+  return byte_size;
+}
 
 static void sys_read_handler(struct intr_frame* f, uint32_t* args) {
   int fd = args[1];
-  const void* buffer = (void*)args[2];
-  unsigned size = args[3];
+  void* buffer = (void*)args[2];
+  int size = args[3];
 
   if (fd == STDIN_FILENO) {
-    putbuf(buffer, size);
-    f->eax = size;
-  }
-
-  if (fd == STDOUT_FILENO) {
-    putbuf(buffer, size);
-    f->eax = size;
-  }
-
-  if (fd == STDERR_FILENO) {
-    putbuf(buffer, size);
-    f->eax = size;
+    // read size character from input_getc
+    int byte_size = read_helper(buffer, size);
+    f->eax = byte_size;
   }
 
   struct file* open_file = process_get_file(fd);
-
-  f->eax = -1; // Not implemented yet
+  if (open_file != NULL) {
+    off_t byte_read = file_read(open_file, buffer, size);
+    f->eax = byte_read; // Not implemented yet
+  } else {
+    f->eax = -1;
+  }
 }
 
 static void sys_filesize_handler(struct intr_frame* f, uint32_t* args) {
@@ -249,12 +278,18 @@ static void sys_exec_handler(struct intr_frame* f, uint32_t* args) {
 static void sys_write_handler(struct intr_frame* f, uint32_t* args) {
   int fd = args[1];
   const void* buffer = (void*)args[2];
-  unsigned size = args[3];
+  off_t size = args[3];
   if (fd == STDOUT_FILENO) {
     putbuf(buffer, size);
     f->eax = size;
   } else {
-    f->eax = -1; // Not implemented yet
+    struct file* open_file = process_get_file(fd);
+    if (open_file != NULL) {
+      off_t byte_write = file_write(open_file, buffer, size);
+      f->eax = byte_write;
+    } else {
+      f->eax = -1;
+    }
   }
 }
 
@@ -265,7 +300,7 @@ static validate_func syscall_validators[SYS_CALL_COUNT] = {
     [SYS_PRACTICE] = validate_practice, [SYS_WAIT] = validate_wait,
     [SYS_CREATE] = validate_create,     [SYS_REMOVE] = validate_remove,
     [SYS_OPEN] = validate_open,         [SYS_FILESIZE] = validate_filesize,
-};
+    [SYS_READ] = validate_read,         [SYS_CLOSE] = validate_close};
 
 static handler_func syscall_handlers[SYS_CALL_COUNT] = {
     [SYS_HALT] = sys_halt_handler,         [SYS_EXIT] = sys_exit_handler,
@@ -273,7 +308,7 @@ static handler_func syscall_handlers[SYS_CALL_COUNT] = {
     [SYS_PRACTICE] = sys_practice_handler, [SYS_WAIT] = sys_wait_handler,
     [SYS_CREATE] = sys_create_handler,     [SYS_REMOVE] = sys_remove_handler,
     [SYS_OPEN] = sys_open_handler,         [SYS_FILESIZE] = sys_filesize_handler,
-};
+    [SYS_READ] = sys_read_handler,         [SYS_CLOSE] = sys_close_handler};
 
 /* Main syscall handler */
 static void syscall_handler(struct intr_frame* f) {

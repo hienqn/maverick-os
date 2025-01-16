@@ -85,7 +85,6 @@ bool create(const char* file, unsigned initial_size) {
 }
 
 bool remove(const char* file) { return syscall1(SYS_REMOVE, file); }
-
 int open(const char* file) { return syscall1(SYS_OPEN, file); }
 
 int filesize(int fd) { return syscall1(SYS_FILESIZE, fd); }

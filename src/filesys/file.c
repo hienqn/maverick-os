@@ -132,3 +132,11 @@ off_t file_tell(struct file* file) {
   ASSERT(file != NULL);
   return file->pos;
 }
+
+/* Returns true if the file is writable, false otherwise. */
+bool file_is_writable(struct file* file) {
+  ASSERT(file != NULL);
+
+  // A file is writable if `deny_write` is false.
+  return !file->deny_write;
+}

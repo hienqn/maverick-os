@@ -8,7 +8,7 @@
 // These defines will be used in Project 2: Multithreading
 #define MAX_STACK_PAGES (1 << 11)
 #define MAX_THREADS 127
-#define MAX_FD 100
+#define MAX_FD 150
 
 typedef int fd;
 /* PIDs and TIDs are the same type. PID should be

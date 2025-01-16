@@ -376,14 +376,7 @@ static void sys_practice_handler(struct intr_frame* f, uint32_t* args) {
 static void sys_exit_handler(struct intr_frame* f, uint32_t* args) { terminate(f, args[1]); }
 
 static void sys_exec_handler(struct intr_frame* f, uint32_t* args) {
-  lock_acquire(&global_lock);
-
   char* file_name = (char*)args[1];
-  struct file* open_file = filesys_open(file_name);
-  if (open_file) {
-    file_deny_write(open_file);
-  };
-
   // Note: in case failing to load the file, pid will be -1.
   pid_t pid = process_execute(file_name);
 
@@ -392,7 +385,6 @@ static void sys_exec_handler(struct intr_frame* f, uint32_t* args) {
   } else {
     f->eax = -1;
   }
-  lock_release(&global_lock);
 }
 
 static void sys_write_handler(struct intr_frame* f, uint32_t* args) {

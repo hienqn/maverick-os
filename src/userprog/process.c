@@ -443,6 +443,7 @@ void process_exit(const int exit_status) {
     struct file* file = cur->pcb->fd_table[fd];
     if (file != NULL) {
       file_close(cur->pcb->fd_table[fd]);
+      cur->pcb->fd_table[fd] = NULL; // Clear entry.
     }
   }
 
@@ -463,10 +464,43 @@ void process_exit(const int exit_status) {
   // Free current process's resources
   struct process* pcb_to_free = cur->pcb;
   if (pcb_to_free) {
+    // Clear the thread's reference to the PCB.
     cur->pcb = NULL;
+
+    // Free file descriptors.
+    for (int fd = 3; fd < MAX_FD; fd++) {
+      if (pcb_to_free->fd_table[fd] != NULL) {
+        file_close(pcb_to_free->fd_table[fd]);
+        pcb_to_free->fd_table[fd] = NULL;
+      }
+    }
+
+    // Free child process entries.
+    while (!list_empty(&pcb_to_free->child_processes)) {
+      struct list_elem* e = list_pop_front(&pcb_to_free->child_processes);
+      child_process_t* cp = list_entry(e, child_process_t, elem);
+      free(cp); // Free the child process structure.
+    }
+
+    // Invalidate the page directory if active.
+    if (active_pd() == pcb_to_free->pagedir) {
+      // printf("[DEBUG] Invalidating active page directory at %p for process '%s'\n",
+      //        pcb_to_free->pagedir, pcb_to_free->process_name);
+      pagedir_activate(init_page_dir); // Switch to a safe global page directory.
+      // printf("[DEBUG] Page directory invalidated for process '%s'\n", pcb_to_free->process_name);
+    }
+    // // Destroy the page directory, if applicable.
+    if (pcb_to_free->pagedir != NULL) {
+      // printf("[DEBUG] Destroying page directory at %p for process '%s'\n", pcb_to_free->pagedir,
+      //        pcb_to_free->process_name);
+      pagedir_destroy(pcb_to_free->pagedir); // Frees page directory and associated resources.
+      pcb_to_free->pagedir = NULL;           // Prevent dangling pointer.
+      // printf("[DEBUG] Page directory destroyed for process '%s'\n", pcb_to_free->process_name);
+    }
+
+    // Finally, free the process control block itself.
     free(pcb_to_free);
   }
-
   thread_exit();
 }
 
@@ -632,8 +666,9 @@ bool load(const char* file_name, void (**eip)(void), void** esp) {
 
   /* Allocate and activate page directory. */
   t->pcb->pagedir = pagedir_create();
-  if (t->pcb->pagedir == NULL)
+  if (t->pcb->pagedir == NULL) {
     goto done;
+  }
   process_activate();
 
   /* Open executable file. */
@@ -693,8 +728,9 @@ bool load(const char* file_name, void (**eip)(void), void** esp) {
             read_bytes = 0;
             zero_bytes = ROUND_UP(page_offset + phdr.p_memsz, PGSIZE);
           }
-          if (!load_segment(file, file_page, (void*)mem_page, read_bytes, zero_bytes, writable))
+          if (!load_segment(file, file_page, (void*)mem_page, read_bytes, zero_bytes, writable)) {
             goto done;
+          }
         } else
           goto done;
         break;
@@ -793,8 +829,9 @@ static bool load_segment(struct file* file, off_t ofs, uint8_t* upage, uint32_t 
 
     /* Get a page of memory. */
     uint8_t* kpage = palloc_get_page(PAL_USER);
-    if (kpage == NULL)
+    if (kpage == NULL) {
       return false;
+    }
 
     /* Load this page. */
     if (file_read(file, kpage, page_read_bytes) != (int)page_read_bytes) {

@@ -429,7 +429,6 @@ int process_wait(pid_t child_pid) {
   return exit_status;
 }
 
-/* Free the current process's resources. */
 void process_exit(const int exit_status) {
   // Log the exit status of the process
   struct thread* cur = thread_current();
@@ -440,8 +439,11 @@ void process_exit(const int exit_status) {
 
   struct process* p_process = cur->pcb->p_process;
 
-  for (int fd = 4; fd < MAX_FD; fd++) {
-    file_close(cur->pcb->fd_table[fd]);
+  for (int fd = 3; fd < MAX_FD; fd++) {
+    struct file* file = cur->pcb->fd_table[fd];
+    if (file != NULL) {
+      file_close(cur->pcb->fd_table[fd]);
+    }
   }
 
   if (p_process) {

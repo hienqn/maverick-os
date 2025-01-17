@@ -18,7 +18,7 @@ enum thread_status {
 /* Thread identifier type.
    You can redefine this to whatever type you like. */
 typedef int tid_t;
-#define TID_ERROR ((tid_t) - 1) /* Error value for tid_t. */
+#define TID_ERROR ((tid_t)-1) /* Error value for tid_t. */
 
 /* Thread priorities. */
 #define PRI_MIN 0      /* Lowest priority. */
@@ -89,6 +89,9 @@ struct thread {
   uint8_t* stack;            /* Saved stack pointer. */
   int priority;              /* Priority. */
   struct list_elem allelem;  /* List element for all threads list. */
+
+  uint8_t fpu_state[108] __attribute__((aligned(4)));
+  /* FPU state. Size depends on architecture
 
   /* Shared between thread.c and synch.c. */
   struct list_elem elem; /* List element. */

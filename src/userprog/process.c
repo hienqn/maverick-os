@@ -484,10 +484,7 @@ void process_exit(const int exit_status) {
 
     // Invalidate the page directory if active.
     if (active_pd() == pcb_to_free->pagedir) {
-      // printf("[DEBUG] Invalidating active page directory at %p for process '%s'\n",
-      //        pcb_to_free->pagedir, pcb_to_free->process_name);
-      pagedir_activate(init_page_dir); // Switch to a safe global page directory.
-      // printf("[DEBUG] Page directory invalidated for process '%s'\n", pcb_to_free->process_name);
+      pagedir_activate(init_page_dir);
     }
     // // Destroy the page directory, if applicable.
     if (pcb_to_free->pagedir != NULL) {

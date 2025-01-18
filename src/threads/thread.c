@@ -115,6 +115,10 @@ void thread_init(void) {
   init_thread(initial_thread, "main", PRI_DEFAULT);
   initial_thread->status = THREAD_RUNNING;
   initial_thread->tid = allocate_tid();
+
+  /* Initialize FP */
+  asm volatile("finit");
+  asm volatile("fnsave %0" : "=m"(initial_thread->fpu_state));
 }
 
 /* Starts preemptive thread scheduling by enabling interrupts.
@@ -179,8 +183,15 @@ tid_t thread_create(const char* name, int priority, thread_func* function, void*
   struct switch_entry_frame* ef;
   struct switch_threads_frame* sf;
   tid_t tid;
+  char temp_fpu_state[108];
 
   ASSERT(function != NULL);
+
+  /* Save the current thread's FPU state to a temporary location */
+  asm volatile("fnsave %0" : "=m"(temp_fpu_state));
+
+  /* Initialize a clean FPU state */
+  asm volatile("fninit");
 
   /* Allocate thread. */
   t = palloc_get_page(PAL_ZERO);
@@ -205,6 +216,12 @@ tid_t thread_create(const char* name, int priority, thread_func* function, void*
   sf = alloc_frame(t, sizeof *sf);
   sf->eip = switch_entry;
   sf->ebp = 0;
+
+  /* Save the clean FPU state to the new thread's fpu_state */
+  asm volatile("fnsave %0" : "=m"(t->fpu_state));
+
+  /* Restore the original FPU state from the temporary location */
+  asm volatile("frstor %0" : : "m"(temp_fpu_state));
 
   /* Add to run queue. */
   thread_unblock(t);

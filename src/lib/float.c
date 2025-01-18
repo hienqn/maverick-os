@@ -35,5 +35,6 @@ int sys_sum_to_e(int n) {
   int ret_val;
   ASSERT(sizeof(float) == sizeof(int));
   memcpy(&ret_val, &conv_res, sizeof(float));
+
   return ret_val;
 }

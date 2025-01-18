@@ -319,11 +319,11 @@ static inline bool is_trap_from_userspace(struct intr_frame* frame) {
 void intr_handler(struct intr_frame* frame) {
   bool external;
   intr_handler_func* handler;
-  struct thread *cur = thread_current();
+  struct thread* cur = thread_current();
 
   // Save FPU state if the interrupt occurred in user mode
-  if (frame->cs == SEL_UCSEG) {  // Check if the code segment is user mode
-    asm volatile("fnsave %0" : "=m" (cur->fpu_state));
+  if (frame->cs == SEL_UCSEG) { // Check if the code segment is user mode
+    asm volatile("fnsave %0" : "=m"(cur->fpu_state));
   }
 
   /* External interrupts are special.
@@ -362,8 +362,8 @@ void intr_handler(struct intr_frame* frame) {
       thread_yield();
   }
 
-  if (frame->cs == SEL_UCSEG) {  // Check if the code segment is user mode
-    asm volatile("fnsave %0" : "=m" (cur->fpu_state));
+  if (frame->cs == SEL_UCSEG) { // Check if the code segment is user mode
+    asm volatile("frstor %0" : "=m"(cur->fpu_state));
   }
 }
 

@@ -9,6 +9,7 @@
 #include <string.h>
 #include "filesys/filesys.h"
 #include "filesys/file.h"
+#include "lib/float.h"
 
 void syscall_init(void);
 struct lock global_lock;
@@ -86,6 +87,8 @@ static bool is_valid_buffer(void* buffer, size_t size) {
   }
   return true;
 }
+
+static bool validate_compute_e(struct intr_frame* f UNUSED, uint32_t* args) { return true; }
 
 static bool validate_seek(struct intr_frame* f UNUSED, uint32_t* args) {
   // Validate args[1] itself as a pointer before using it
@@ -242,6 +245,17 @@ static void sys_tell_handler(struct intr_frame* f, uint32_t* args) {
   } else {
     f->eax = -1;
   }
+}
+
+static void sys_compute_e_handler(struct intr_frame* f, uint32_t* args) {
+  if (args == NULL) {
+    printf("Error: Invalid arguments\n");
+    return;
+  }
+
+  int number = args[1];
+  double result = sys_sum_to_e(number); // Use a function that returns double
+  f->eax = result;
 }
 
 static void sys_seek_handler(struct intr_frame* f, uint32_t* args) {
@@ -410,22 +424,25 @@ static void sys_write_handler(struct intr_frame* f, uint32_t* args) {
 
 /* Arrays for syscall validators and handlers */
 static validate_func syscall_validators[SYS_CALL_COUNT] = {
-    [SYS_HALT] = validate_halt,         [SYS_EXIT] = validate_exit,
-    [SYS_EXEC] = validate_exec,         [SYS_WRITE] = validate_write,
-    [SYS_PRACTICE] = validate_practice, [SYS_WAIT] = validate_wait,
-    [SYS_CREATE] = validate_create,     [SYS_REMOVE] = validate_remove,
-    [SYS_OPEN] = validate_open,         [SYS_FILESIZE] = validate_filesize,
-    [SYS_READ] = validate_read,         [SYS_CLOSE] = validate_close,
-    [SYS_SEEK] = validate_seek,         [SYS_TELL] = validate_tell};
+    [SYS_HALT] = validate_halt,           [SYS_EXIT] = validate_exit,
+    [SYS_EXEC] = validate_exec,           [SYS_WRITE] = validate_write,
+    [SYS_PRACTICE] = validate_practice,   [SYS_WAIT] = validate_wait,
+    [SYS_CREATE] = validate_create,       [SYS_REMOVE] = validate_remove,
+    [SYS_OPEN] = validate_open,           [SYS_FILESIZE] = validate_filesize,
+    [SYS_READ] = validate_read,           [SYS_CLOSE] = validate_close,
+    [SYS_SEEK] = validate_seek,           [SYS_TELL] = validate_tell,
+    [SYS_COMPUTE_E] = validate_compute_e,
+};
 
 static handler_func syscall_handlers[SYS_CALL_COUNT] = {
-    [SYS_HALT] = sys_halt_handler,         [SYS_EXIT] = sys_exit_handler,
-    [SYS_EXEC] = sys_exec_handler,         [SYS_WRITE] = sys_write_handler,
-    [SYS_PRACTICE] = sys_practice_handler, [SYS_WAIT] = sys_wait_handler,
-    [SYS_CREATE] = sys_create_handler,     [SYS_REMOVE] = sys_remove_handler,
-    [SYS_OPEN] = sys_open_handler,         [SYS_FILESIZE] = sys_filesize_handler,
-    [SYS_READ] = sys_read_handler,         [SYS_CLOSE] = sys_close_handler,
-    [SYS_SEEK] = sys_seek_handler,         [SYS_TELL] = sys_tell_handler,
+    [SYS_HALT] = sys_halt_handler,           [SYS_EXIT] = sys_exit_handler,
+    [SYS_EXEC] = sys_exec_handler,           [SYS_WRITE] = sys_write_handler,
+    [SYS_PRACTICE] = sys_practice_handler,   [SYS_WAIT] = sys_wait_handler,
+    [SYS_CREATE] = sys_create_handler,       [SYS_REMOVE] = sys_remove_handler,
+    [SYS_OPEN] = sys_open_handler,           [SYS_FILESIZE] = sys_filesize_handler,
+    [SYS_READ] = sys_read_handler,           [SYS_CLOSE] = sys_close_handler,
+    [SYS_SEEK] = sys_seek_handler,           [SYS_TELL] = sys_tell_handler,
+    [SYS_COMPUTE_E] = sys_compute_e_handler,
 };
 
 /* Main syscall handler */

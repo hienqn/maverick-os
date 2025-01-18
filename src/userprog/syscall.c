@@ -93,8 +93,6 @@ static bool validate_compute_e(struct intr_frame* f UNUSED, uint32_t* args) { re
 static bool validate_seek(struct intr_frame* f UNUSED, uint32_t* args) {
   // Validate args[1] itself as a pointer before using it
   int fd = args[1];
-  int position = args[2];
-
   // Validate the file name string
   return fd >= 0 && fd < MAX_FD ? true : false;
 }
@@ -412,7 +410,6 @@ static void sys_write_handler(struct intr_frame* f, uint32_t* args) {
   } else {
     struct file* open_file = process_get_file(fd);
     if (open_file != NULL) {
-      off_t file_size = file_length(open_file); // Retrieve the file size
       off_t byte_write = file_write(open_file, buffer, size);
       f->eax = byte_write;
     } else {

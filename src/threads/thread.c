@@ -116,7 +116,7 @@ void thread_init(void) {
   initial_thread->status = THREAD_RUNNING;
   initial_thread->tid = allocate_tid();
 
-  /* Initialize FP */
+  /* Initialize FP for the main thread */
   asm volatile("finit");
   asm volatile("fnsave %0" : "=m"(initial_thread->fpu_state));
 }
@@ -190,7 +190,7 @@ tid_t thread_create(const char* name, int priority, thread_func* function, void*
   /* Save the current thread's FPU state to a temporary location */
   asm volatile("fnsave %0" : "=m"(temp_fpu_state));
 
-  /* Initialize a clean FPU state */
+  /* Initialize a clean FP state */
   asm volatile("fninit");
 
   /* Allocate thread. */

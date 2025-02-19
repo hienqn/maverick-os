@@ -7,6 +7,8 @@
 #include "threads/interrupt.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
+#include "lib/kernel/list.h"
+#include "threads/malloc.h"
 
 /* See [8254] for hardware details of the 8254 timer chip. */
 
@@ -16,6 +18,16 @@
 #if TIMER_FREQ > 1000
 #error TIMER_FREQ <= 1000 recommended
 #endif
+
+struct sleeping_thread {
+  struct thread* thread; // Blocked thread
+  int64_t wake_tick;     // Absolute tick to wake up
+  struct list_elem elem; // List element
+};
+
+/* Global sleeping list for threads that are sleeping.
+   This should be initialized (e.g., in timer_init()). */
+static struct list sleeping_list;
 
 /* Number of timer ticks since OS booted. */
 static int64_t ticks;
@@ -29,10 +41,23 @@ static bool too_many_loops(unsigned loops);
 static void busy_wait(int64_t loops);
 static void real_time_sleep(int64_t num, int32_t denom);
 static void real_time_delay(int64_t num, int32_t denom);
+static bool sleeping_thread_less(const struct list_elem* a, const struct list_elem* b,
+                                 void* aux UNUSED);
+static void check_sleeping_threads(void);
+/* Comparator function for sleeping threads.  
+ * Returns true if the wake_tick for *a* is less than that for *b*.
+ */
+bool sleeping_thread_less(const struct list_elem* a, const struct list_elem* b, void* aux UNUSED) {
+  struct sleeping_thread* st_a = list_entry(a, struct sleeping_thread, elem);
+  struct sleeping_thread* st_b = list_entry(b, struct sleeping_thread, elem);
+  return st_a->wake_tick < st_b->wake_tick;
+}
 
 /* Sets up the timer to interrupt TIMER_FREQ times per second,
    and registers the corresponding interrupt. */
 void timer_init(void) {
+  list_init(&sleeping_list); // Initialize the sleeping list
+
   pit_configure_channel(0, 2, TIMER_FREQ);
   intr_register_ext(0x20, timer_interrupt, "8254 Timer");
 }
@@ -76,11 +101,30 @@ int64_t timer_elapsed(int64_t then) { return timer_ticks() - then; }
 /* Sleeps for approximately TICKS timer ticks.  Interrupts must
    be turned on. */
 void timer_sleep(int64_t ticks) {
-  int64_t start = timer_ticks();
+  ASSERT(!intr_context());
 
-  ASSERT(intr_get_level() == INTR_ON);
-  while (timer_elapsed(start) < ticks)
-    thread_yield();
+  int64_t wake_tick = timer_ticks() + ticks;
+  enum intr_level old_level = intr_disable();
+
+  /* Create a new sleeping_thread for the current thread. */
+  struct sleeping_thread* st = malloc(sizeof *st);
+  if (st == NULL)
+    PANIC("Failed to allocate memory for sleeping_thread");
+
+  st->thread = thread_current();
+  st->wake_tick = wake_tick;
+
+  /* 
+     Insert the sleeping_thread into a global list of sleeping threads.
+     The list should be ordered by wake_tick so that the timer interrupt
+     handler can easily check which threads need to be woken.
+  */
+  list_insert_ordered(&sleeping_list, &st->elem, sleeping_thread_less, NULL);
+
+  /* Block the current thread until its wake_tick arrives. */
+  thread_block();
+
+  intr_set_level(old_level);
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -129,6 +173,7 @@ void timer_print_stats(void) { printf("Timer: %" PRId64 " ticks\n", timer_ticks(
 static void timer_interrupt(struct intr_frame* args UNUSED) {
   ticks++;
   thread_tick();
+  check_sleeping_threads();
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
@@ -189,4 +234,27 @@ static void real_time_delay(int64_t num, int32_t denom) {
      the possibility of overflow. */
   ASSERT(denom % 1000 == 0);
   busy_wait(loops_per_tick * num / 1000 * TIMER_FREQ / (denom / 1000));
+}
+
+/*
+ * Iterates over every thread in the sleeping_list.
+ * For each thread, if the global tick count (ticks)
+ * has reached or passed the thread's wake_tick, remove
+ * the thread from the list and unblock it.
+ */
+static void check_sleeping_threads(void) {
+  struct list_elem* e = list_begin(&sleeping_list);
+
+  while (e != list_end(&sleeping_list)) {
+    struct sleeping_thread* st = list_entry(e, struct sleeping_thread, elem);
+
+    if (ticks >= st->wake_tick) {
+      /* Remove the thread from the list and unblock it. */
+      e = list_remove(e);
+      thread_unblock(st->thread);
+    } else {
+      /* Since the list is sorted by wake_tick, if this thread is not ready, none after it will be. */
+      break;
+    }
+  }
 }

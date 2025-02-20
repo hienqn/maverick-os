@@ -63,7 +63,12 @@ void sema_down(struct semaphore* sema) {
 
   old_level = intr_disable();
   while (sema->value == 0) {
-    list_push_back(&sema->waiters, &thread_current()->elem);
+    /* Insert the current thread into the waiters list based on the active scheduling policy. */
+    if (active_sched_policy == SCHED_PRIO)
+      list_insert_ordered(&sema->waiters, &thread_current()->elem, prio_thread_less, NULL);
+    else
+      list_push_back(&sema->waiters, &thread_current()->elem);
+
     thread_block();
   }
   sema->value--;
@@ -92,9 +97,8 @@ bool sema_try_down(struct semaphore* sema) {
   return success;
 }
 
-/* Up or "V" operation on a semaphore.  Increments SEMA's value
-   and wakes up one thread of those waiting for SEMA, if any.
-
+/* Up or "V" operation on a semaphore.
+   Increments SEMA's value and wakes up one thread waiting for SEMA, if any.
    This function may be called from an interrupt handler. */
 void sema_up(struct semaphore* sema) {
   enum intr_level old_level;
@@ -102,8 +106,13 @@ void sema_up(struct semaphore* sema) {
   ASSERT(sema != NULL);
 
   old_level = intr_disable();
-  if (!list_empty(&sema->waiters))
-    thread_unblock(list_entry(list_pop_front(&sema->waiters), struct thread, elem));
+  if (!list_empty(&sema->waiters)) {
+    if (active_sched_policy == SCHED_PRIO)
+      thread_unblock(
+          list_entry(list_max(&sema->waiters, prio_thread_less, NULL), struct thread, elem));
+    else
+      thread_unblock(list_entry(list_pop_front(&sema->waiters), struct thread, elem));
+  }
   sema->value++;
   intr_set_level(old_level);
 }
@@ -320,9 +329,18 @@ void cond_wait(struct condition* cond, struct lock* lock) {
   ASSERT(lock_held_by_current_thread(lock));
 
   sema_init(&waiter.semaphore, 0);
-  list_push_back(&cond->waiters, &waiter.elem);
+
+  // Add the waiter to the condition variable's waiters list
+  if (active_sched_policy == SCHED_PRIO)
+    list_insert_ordered(&cond->waiters, &waiter.elem, prio_thread_less, NULL);
+  else
+    list_push_back(&cond->waiters, &waiter.elem);
+
+  // Release the lock and wait for the condition variable to be signaled
   lock_release(lock);
   sema_down(&waiter.semaphore);
+
+  // Reacquire the lock
   lock_acquire(lock);
 }
 
@@ -339,8 +357,14 @@ void cond_signal(struct condition* cond, struct lock* lock UNUSED) {
   ASSERT(!intr_context());
   ASSERT(lock_held_by_current_thread(lock));
 
-  if (!list_empty(&cond->waiters))
-    sema_up(&list_entry(list_pop_front(&cond->waiters), struct semaphore_elem, elem)->semaphore);
+  if (!list_empty(&cond->waiters)) {
+    if (active_sched_policy == SCHED_PRIO)
+      sema_up(
+          &list_entry(list_max(&cond->waiters, prio_thread_less, NULL), struct semaphore_elem, elem)
+               ->semaphore);
+    else
+      sema_up(&list_entry(list_pop_front(&cond->waiters), struct semaphore_elem, elem)->semaphore);
+  }
 }
 
 /* Wakes up all threads, if any, waiting on COND (protected by

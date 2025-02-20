@@ -28,6 +28,10 @@ static struct list fifo_ready_list;
    that are ready to run but not actually running. */
 static struct list prio_ready_list;
 
+/* List of processes in THREAD_READY state for PRIO scheduler, that is, processes
+   that are ready to run but not actually running. */
+static struct list prio_ready_list;
+
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
 static struct list all_list;
@@ -64,12 +68,11 @@ static void schedule(void);
 static void thread_enqueue(struct thread* t);
 static tid_t allocate_tid(void);
 void thread_switch_tail(struct thread* prev);
-bool prio_thread_less(const struct list_elem* a, const struct list_elem* b, void* aux UNUSED);
-
 static void kernel_thread(thread_func*, void* aux);
 static void idle(void* aux UNUSED);
 static struct thread* running_thread(void);
-
+static bool thread_priority_cmp(const struct list_elem* a, const struct list_elem* b,
+                                void* aux UNUSED);
 static struct thread* next_thread_to_run(void);
 static struct thread* thread_schedule_fifo(void);
 static struct thread* thread_schedule_prio(void);
@@ -260,7 +263,7 @@ static void thread_enqueue(struct thread* t) {
   if (active_sched_policy == SCHED_FIFO)
     list_push_back(&fifo_ready_list, &t->elem);
   else if (active_sched_policy == SCHED_PRIO) {
-    list_insert_ordered(&prio_ready_list, &t->elem, prio_thread_less, NULL);
+    list_insert_ordered(&prio_ready_list, &t->elem, thread_priority_cmp, NULL);
   } else
     PANIC("Unimplemented scheduling policy value: %d", active_sched_policy);
 }
@@ -483,11 +486,11 @@ static struct thread* thread_schedule_fifo(void) {
 /* Strict priority scheduler */
 static struct thread* thread_schedule_prio(void) {
   if (!list_empty(&prio_ready_list)) {
-    struct list_elem* e = list_max(&prio_ready_list, prio_thread_less, NULL);
+    struct list_elem* e = list_max(&prio_ready_list, thread_priority_cmp, NULL);
+    list_remove(e);
     return list_entry(e, struct thread, elem);
-  } else {
+  } else
     return idle_thread;
-  }
 }
 
 /* Fair priority scheduler */
@@ -597,8 +600,8 @@ uint32_t thread_stack_ofs = offsetof(struct thread, stack);
 
 uint32_t thread_fpu_ofs = offsetof(struct thread, fpu_state);
 
-bool prio_thread_less(const struct list_elem* a, const struct list_elem* b, void* aux UNUSED) {
-  struct thread* t_b = list_entry(b, struct thread, elem);
+bool thread_priority_cmp(const struct list_elem* a, const struct list_elem* b, void* aux UNUSED) {
   struct thread* t_a = list_entry(a, struct thread, elem);
+  struct thread* t_b = list_entry(b, struct thread, elem);
   return t_a->priority < t_b->priority;
 }

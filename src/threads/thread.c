@@ -71,8 +71,7 @@ void thread_switch_tail(struct thread* prev);
 static void kernel_thread(thread_func*, void* aux);
 static void idle(void* aux UNUSED);
 static struct thread* running_thread(void);
-static bool thread_priority_cmp(const struct list_elem* a, const struct list_elem* b,
-                                void* aux UNUSED);
+bool thread_priority_cmp(const struct list_elem* a, const struct list_elem* b, void* aux UNUSED);
 static struct thread* next_thread_to_run(void);
 static struct thread* thread_schedule_fifo(void);
 static struct thread* thread_schedule_prio(void);

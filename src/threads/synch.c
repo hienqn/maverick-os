@@ -64,6 +64,7 @@ void sema_down(struct semaphore* sema) {
   old_level = intr_disable();
   while (sema->value == 0) {
     if (active_sched_policy == SCHED_PRIO) {
+      // print this thread's priority
       list_insert_ordered(&sema->waiters, &thread_current()->elem, thread_priority_cmp, NULL);
     } else {
       list_push_back(&sema->waiters, &thread_current()->elem);
@@ -102,21 +103,30 @@ bool sema_try_down(struct semaphore* sema) {
    This function may be called from an interrupt handler. */
 void sema_up(struct semaphore* sema) {
   enum intr_level old_level;
+  struct thread* t = NULL;
 
   ASSERT(sema != NULL);
-
   old_level = intr_disable();
   if (!list_empty(&sema->waiters)) {
     if (active_sched_policy == SCHED_PRIO) {
+      // get the highest-priority thread
       struct list_elem* e = list_max(&sema->waiters, thread_priority_cmp, NULL);
       list_remove(e);
-      thread_unblock(list_entry(e, struct thread, elem));
+      t = list_entry(e, struct thread, elem);
+      thread_unblock(t);
     } else {
-      thread_unblock(list_entry(list_pop_front(&sema->waiters), struct thread, elem));
+      t = list_entry(list_pop_front(&sema->waiters), struct thread, elem);
+      thread_unblock(t);
     }
   }
   sema->value++;
   intr_set_level(old_level);
+
+  /* If we're not in interrupt context and we just unblocked a higher-priority thread,
+     yield so that it can run immediately. */
+  if (t != NULL && !intr_context() && t->priority > thread_current()->priority) {
+    thread_yield();
+  }
 }
 
 static void sema_test_helper(void* sema_);
@@ -332,6 +342,7 @@ void cond_wait(struct condition* cond, struct lock* lock) {
 
   sema_init(&waiter.semaphore, 0);
   if (active_sched_policy == SCHED_PRIO) {
+    // insert in order of priority
     list_insert_ordered(&cond->waiters, &waiter.elem, thread_priority_cmp, NULL);
   } else {
     list_push_back(&cond->waiters, &waiter.elem);

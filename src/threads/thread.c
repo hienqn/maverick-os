@@ -28,10 +28,6 @@ static struct list fifo_ready_list;
    that are ready to run but not actually running. */
 static struct list prio_ready_list;
 
-/* List of processes in THREAD_READY state for PRIO scheduler, that is, processes
-   that are ready to run but not actually running. */
-static struct list prio_ready_list;
-
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
 static struct list all_list;
@@ -234,6 +230,10 @@ tid_t thread_create(const char* name, int priority, thread_func* function, void*
   /* Add to run queue. */
   thread_unblock(t);
 
+  if (priority > thread_current()->priority) {
+    thread_yield();
+  }
+
   return tid;
 }
 
@@ -283,7 +283,6 @@ void thread_unblock(struct thread* t) {
   old_level = intr_disable();
   ASSERT(t->status == THREAD_BLOCKED);
   thread_enqueue(t);
-  t->status = THREAD_READY;
   intr_set_level(old_level);
 }
 
@@ -355,7 +354,19 @@ void thread_foreach(thread_action_func* func, void* aux) {
 }
 
 /* Sets the current thread's priority to NEW_PRIORITY. */
-void thread_set_priority(int new_priority) { thread_current()->priority = new_priority; }
+void thread_set_priority(int new_priority) {
+  thread_current()->priority = new_priority;
+  // sort the ready list
+  list_sort(&prio_ready_list, thread_priority_cmp, NULL);
+  // Check if the next thread in the ready queue has a higher priority.
+  if (!list_empty(&prio_ready_list)) {
+    struct thread* next =
+        list_entry(list_max(&prio_ready_list, thread_priority_cmp, NULL), struct thread, elem);
+    if (next->priority > thread_current()->priority) {
+      thread_yield();
+    }
+  }
+}
 
 /* Returns the current thread's priority. */
 int thread_get_priority(void) { return thread_current()->priority; }

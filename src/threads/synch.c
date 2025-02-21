@@ -301,6 +301,7 @@ void rw_lock_release(struct rw_lock* rw_lock, bool reader) {
 struct semaphore_elem {
   struct list_elem elem;      /* List element. */
   struct semaphore semaphore; /* This semaphore. */
+  int priority;               /* Priority of the thread. */
 };
 
 /* Initializes condition variable COND.  A condition variable
@@ -310,6 +311,13 @@ void cond_init(struct condition* cond) {
   ASSERT(cond != NULL);
 
   list_init(&cond->waiters);
+}
+
+static bool semaphore_elem_priority_cmp(const struct list_elem* a, const struct list_elem* b,
+                                        void* aux UNUSED) {
+  struct semaphore_elem* a_elem = list_entry(a, struct semaphore_elem, elem);
+  struct semaphore_elem* b_elem = list_entry(b, struct semaphore_elem, elem);
+  return a_elem->priority < b_elem->priority;
 }
 
 /* Atomically releases LOCK and waits for COND to be signaled by
@@ -341,9 +349,12 @@ void cond_wait(struct condition* cond, struct lock* lock) {
   ASSERT(lock_held_by_current_thread(lock));
 
   sema_init(&waiter.semaphore, 0);
+  waiter.priority = thread_current()->priority;
   if (active_sched_policy == SCHED_PRIO) {
     // insert in order of priority
-    list_insert_ordered(&cond->waiters, &waiter.elem, thread_priority_cmp, NULL);
+    // CANNOT USE THREAD_PRIORITY_CMP HERE BECAUSE WE ARE USING A SEMAPHORE ELEM
+    // SO WE NEED TO USE SEMAPHORE_ELEM_PRIORITY_CMP
+    list_insert_ordered(&cond->waiters, &waiter.elem, semaphore_elem_priority_cmp, NULL);
   } else {
     list_push_back(&cond->waiters, &waiter.elem);
   }
@@ -365,14 +376,18 @@ void cond_signal(struct condition* cond, struct lock* lock UNUSED) {
   ASSERT(!intr_context());
   ASSERT(lock_held_by_current_thread(lock));
 
-  if (!list_empty(&cond->waiters))
+  // find the highest priority thread in the list
+  if (!list_empty(&cond->waiters)) {
+    // check if the scheduler policy is priority
     if (active_sched_policy == SCHED_PRIO) {
-      struct list_elem* e = list_max(&cond->waiters, thread_priority_cmp, NULL);
+      // find the highest priority thread in the list
+      struct list_elem* e = list_max(&cond->waiters, semaphore_elem_priority_cmp, NULL);
       list_remove(e);
       sema_up(&list_entry(e, struct semaphore_elem, elem)->semaphore);
     } else {
       sema_up(&list_entry(list_pop_front(&cond->waiters), struct semaphore_elem, elem)->semaphore);
     }
+  }
 }
 
 /* Wakes up all threads, if any, waiting on COND (protected by

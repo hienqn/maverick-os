@@ -260,8 +260,8 @@ void lock_release(struct lock* lock) {
     for (w = list_begin(&held_lock->semaphore.waiters);
          w != list_end(&held_lock->semaphore.waiters); w = list_next(w)) {
       struct thread* waiter = list_entry(w, struct thread, elem);
-      if (waiter->priority > new_priority) {
-        new_priority = waiter->priority;
+      if (waiter->effective_priority > new_priority) {
+        new_priority = waiter->effective_priority;
       }
     }
   }

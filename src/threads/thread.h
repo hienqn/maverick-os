@@ -88,7 +88,11 @@ struct thread {
   char name[16];             /* Name (for debugging purposes). */
   uint8_t* stack;            /* Saved stack pointer. */
   int priority;              /* Priority. */
+  int effective_priority;    /* Effective Priority. */
   struct list_elem allelem;  /* List element for all threads list. */
+
+  struct lock* waiting_lock; /* The lock that this thread is waiting for*/
+  struct list held_locks;    /* The locks that this thread is currently holding*/
 
   uint8_t fpu_state[108] __attribute__((aligned(4)));
   /* FPU state. Size depends on architecture

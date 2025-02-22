@@ -342,7 +342,7 @@ void rw_lock_release(struct rw_lock* rw_lock, bool reader) {
 struct semaphore_elem {
   struct list_elem elem;      /* List element. */
   struct semaphore semaphore; /* This semaphore. */
-  int priority;               /* Priority of the thread. */
+  int effective_priority;     /* Effective priority of the thread. */
 };
 
 /* Initializes condition variable COND.  A condition variable
@@ -358,7 +358,7 @@ static bool semaphore_elem_priority_cmp(const struct list_elem* a, const struct 
                                         void* aux UNUSED) {
   struct semaphore_elem* a_elem = list_entry(a, struct semaphore_elem, elem);
   struct semaphore_elem* b_elem = list_entry(b, struct semaphore_elem, elem);
-  return a_elem->priority < b_elem->priority;
+  return a_elem->effective_priority < b_elem->effective_priority;
 }
 
 /* Atomically releases LOCK and waits for COND to be signaled by
@@ -390,7 +390,7 @@ void cond_wait(struct condition* cond, struct lock* lock) {
   ASSERT(lock_held_by_current_thread(lock));
 
   sema_init(&waiter.semaphore, 0);
-  waiter.priority = thread_current()->priority;
+  waiter.effective_priority = thread_current()->effective_priority;
   if (active_sched_policy == SCHED_PRIO) {
     // insert in order of priority
     // CANNOT USE THREAD_PRIORITY_CMP HERE BECAUSE WE ARE USING A SEMAPHORE ELEM

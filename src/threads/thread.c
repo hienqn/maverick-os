@@ -363,7 +363,7 @@ void thread_set_priority(int new_priority) {
   if (!list_empty(&prio_ready_list)) {
     struct thread* next =
         list_entry(list_max(&prio_ready_list, thread_priority_cmp, NULL), struct thread, elem);
-    if (next->priority > thread_current()->priority) {
+    if (next->effective_priority > thread_current()->effective_priority) {
       thread_yield();
     }
   }
@@ -618,5 +618,5 @@ uint32_t thread_fpu_ofs = offsetof(struct thread, fpu_state);
 bool thread_priority_cmp(const struct list_elem* a, const struct list_elem* b, void* aux UNUSED) {
   struct thread* t_a = list_entry(a, struct thread, elem);
   struct thread* t_b = list_entry(b, struct thread, elem);
-  return t_a->priority < t_b->priority;
+  return t_a->effective_priority < t_b->effective_priority;
 }

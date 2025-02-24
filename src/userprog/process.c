@@ -23,7 +23,7 @@
 static thread_func start_process NO_RETURN;
 static thread_func start_pthread NO_RETURN;
 static bool load(const char* file_name, void (**eip)(void), void** esp);
-bool setup_thread(void (**eip)(void), void** esp);
+bool setup_thread(void** esp, int num_threads);
 
 typedef struct process_args {
   struct semaphore load_program_sem;
@@ -1019,7 +1019,7 @@ static void start_pthread(void* exec_) {
 
   if (!success) {
     pthread_args->success = success;
-    sema_up(pthread_args->sem);
+    sema_up(&pthread_args->sem);
     thread_exit();
   }
 
@@ -1027,12 +1027,12 @@ static void start_pthread(void* exec_) {
 
   if (!success) {
     pthread_args->success = success;
-    sema_up(pthread_args->sem);
+    sema_up(&pthread_args->sem);
     thread_exit();
   }
 
   pthread_args->success = success;
-  sema_up(pthread_args->sem);
+  sema_up(&pthread_args->sem);
 
   /* Start the user pthread by simulating a return from an
      interrupt, implemented by intr_exit (in

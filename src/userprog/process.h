@@ -38,10 +38,12 @@ struct process {
   uint32_t* pagedir;           // Page directory
   char process_name[16];       // Name of the process
   struct thread* main_thread;  // Pointer to the main thread
+  struct list all_threads;     // List of all threads in this process
   struct list child_processes; // List of child processes
   struct lock child_lock;      // Lock for synchronizing access to child_processes
   struct process* p_process;
   struct file* fd_table[MAX_FD];
+  int total_threads;
 };
 
 void userprog_init(void);

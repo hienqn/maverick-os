@@ -94,8 +94,7 @@ struct thread {
   struct lock* waiting_lock; /* The lock that this thread is waiting for*/
   struct list held_locks;    /* The locks that this thread is currently holding*/
 
-  uint8_t fpu_state[108] __attribute__((aligned(4)));
-  /* FPU state. Size depends on architecture
+  uint8_t fpu_state[108] __attribute__((aligned(4))); /* FPU state. Size depends on architecture */
 
   /* Shared between thread.c and synch.c. */
   struct list_elem elem; /* List element. */

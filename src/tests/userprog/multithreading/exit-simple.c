@@ -17,6 +17,7 @@ void thread_function(void* arg UNUSED) {
 void test_main(void) {
   msg("Main started.");
   tid_t tid = pthread_check_create(thread_function, NULL);
+  printf("tid: %d\n", tid);
   pthread_check_join(tid);
   msg("Main finished.");
 }

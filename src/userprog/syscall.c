@@ -89,22 +89,15 @@ static bool is_valid_buffer(void* buffer, size_t size) {
 }
 
 static bool validate_pt_create(struct intr_frame* f UNUSED, uint32_t* args) {
-  int fd = args[1];
-  void* buffer = (void*)args[2];
-  unsigned size = args[3];
-
-  // Check if the file descriptor is valid
-  if (fd < 0 || fd >= MAX_FD) {
+  // the args are: sfun, tfun, arg. These validations are wrong
+  // we need to validate the args[1], args[2], args[3]
+  if (!is_valid_pointer(&args[1], sizeof(stub_fun))) {
     return false;
   }
-
-  // Check if the buffer pointer is valid
-  if (!is_valid_pointer(buffer, sizeof(char*))) {
+  if (!is_valid_pointer(&args[2], sizeof(pthread_fun))) {
     return false;
   }
-
-  // Check if the buffer range is valid
-  if (!is_valid_buffer(buffer, size)) {
+  if (!is_valid_pointer(&args[3], sizeof(void*))) {
     return false;
   }
 
@@ -444,17 +437,25 @@ static void sys_write_handler(struct intr_frame* f, uint32_t* args) {
 
 static void sys_pt_create_handler(struct intr_frame* f, uint32_t* args) {
   // extract out all 3 arguments from args
-  // pass that into pthread_execute
-  // what does pthread_execute do?
-  // 1. it creates a new thread. thread_create create a kernel thread.
-  // 2. it sets up the new thread
+  stub_fun sfun = (stub_fun)args[1];
+  pthread_fun tfun = (pthread_fun)args[2];
+  void* arg = (void*)args[3];
 
-  // Exactly.By the time start_thread(or your equivalent function) is called,
-  //     the kernel thread has already been created.The thread_create call sets up the thread control
-  //         block and allocates the kernel stack,
-  //     then schedules the thread to run start_thread as its entry point.At that point, start_thread's job is to initialize
-  //  the user-level context—setting up the intr_frame, determining the correct values for EIP and ESP,
-  //  and calling process_activate—so that the thread can transition to running in user mode with the proper environment.
+  pthread_execute(sfun, tfun, arg);
+}
+
+static void sys_pt_exit_handler(struct intr_frame* f, uint32_t* args) { pthread_exit(); }
+
+static bool validate_pt_exit(struct intr_frame* f, uint32_t* args) { return true; }
+
+static void sys_pthread_join_handler(struct intr_frame* f, uint32_t* args) {
+  tid_t tid = args[1];
+  pthread_join(tid);
+  f->eax = 0;
+}
+
+static bool validate_pthread_join(struct intr_frame* f, uint32_t* args) {
+  return is_valid_pointer(&args[1], sizeof(tid_t));
 }
 
 /* Arrays for syscall validators and handlers */
@@ -466,7 +467,8 @@ static validate_func syscall_validators[SYS_CALL_COUNT] = {
     [SYS_OPEN] = validate_open,           [SYS_FILESIZE] = validate_filesize,
     [SYS_READ] = validate_read,           [SYS_CLOSE] = validate_close,
     [SYS_SEEK] = validate_seek,           [SYS_TELL] = validate_tell,
-    [SYS_COMPUTE_E] = validate_compute_e, [SYS_PT_CREATE] = validate_pt_create};
+    [SYS_COMPUTE_E] = validate_compute_e, [SYS_PT_CREATE] = validate_pt_create,
+    [SYS_PT_EXIT] = validate_pt_exit,     [SYS_PT_JOIN] = validate_pthread_join};
 
 static handler_func syscall_handlers[SYS_CALL_COUNT] = {
     [SYS_HALT] = sys_halt_handler,           [SYS_EXIT] = sys_exit_handler,
@@ -476,7 +478,8 @@ static handler_func syscall_handlers[SYS_CALL_COUNT] = {
     [SYS_OPEN] = sys_open_handler,           [SYS_FILESIZE] = sys_filesize_handler,
     [SYS_READ] = sys_read_handler,           [SYS_CLOSE] = sys_close_handler,
     [SYS_SEEK] = sys_seek_handler,           [SYS_TELL] = sys_tell_handler,
-    [SYS_COMPUTE_E] = sys_compute_e_handler, [SYS_PT_CREATE] = sys_pt_create_handler};
+    [SYS_COMPUTE_E] = sys_compute_e_handler, [SYS_PT_CREATE] = sys_pt_create_handler,
+    [SYS_PT_EXIT] = sys_pt_exit_handler,     [SYS_PT_JOIN] = sys_pthread_join_handler};
 
 /* Main syscall handler */
 static void syscall_handler(struct intr_frame* f) {

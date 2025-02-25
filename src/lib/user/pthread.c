@@ -7,6 +7,7 @@ void _pthread_start_stub(pthread_fun fun, void* arg);
    Calls pthread_exit when the function completes.
    Returns TID of created thread or TID_ERROR on error */
 tid_t pthread_create(pthread_fun fun, void* arg) {
+  printf("pthread_create\n");
   return sys_pthread_create(_pthread_start_stub, fun, arg);
 }
 

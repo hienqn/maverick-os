@@ -35,12 +35,14 @@ typedef struct child_process {
    to the PCB, and the PCB will have a pointer to the main thread
    of the process, which is `special`. */
 struct process {
-  uint32_t* pagedir;           // Page directory
-  char process_name[16];       // Name of the process
-  struct thread* main_thread;  // Pointer to the main thread
-  struct list all_threads;     // List of all threads in this process
-  struct list child_processes; // List of child processes
-  struct lock child_lock;      // Lock for synchronizing access to child_processes
+  uint32_t* pagedir;                 // Page directory
+  char process_name[16];             // Name of the process
+  struct thread* main_thread;        // Pointer to the main thread
+  struct list all_threads;           // List of all threads in this process
+  struct list child_processes;       // List of child processes
+  struct lock child_lock;            // Lock for synchronizing access to child_processes
+  struct lock all_threads_lock;      // Lock for synchronizing access to all_threads
+  struct condition all_threads_cond; // Condition variable for all_threads
   struct process* p_process;
   struct file* fd_table[MAX_FD];
   int total_threads;

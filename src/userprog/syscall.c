@@ -441,7 +441,12 @@ static void sys_pt_create_handler(struct intr_frame* f, uint32_t* args) {
   pthread_fun tfun = (pthread_fun)args[2];
   void* arg = (void*)args[3];
 
-  pthread_execute(sfun, tfun, arg);
+  tid_t tid = pthread_execute(sfun, tfun, arg);
+  if (tid != TID_ERROR) {
+    f->eax = tid;
+  } else {
+    f->eax = -1;
+  }
 }
 
 static void sys_pt_exit_handler(struct intr_frame* f, uint32_t* args) { pthread_exit(); }
@@ -450,8 +455,13 @@ static bool validate_pt_exit(struct intr_frame* f, uint32_t* args) { return true
 
 static void sys_pthread_join_handler(struct intr_frame* f, uint32_t* args) {
   tid_t tid = args[1];
-  pthread_join(tid);
-  f->eax = 0;
+  tid_t result = pthread_join(tid);
+  printf("sys_pthread_join_handler: tid: %d, result: %d\n", tid, result);
+  if (result != TID_ERROR) {
+    f->eax = result;
+  } else {
+    f->eax = -1;
+  }
 }
 
 static bool validate_pthread_join(struct intr_frame* f, uint32_t* args) {

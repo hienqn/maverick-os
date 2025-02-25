@@ -227,6 +227,9 @@ tid_t thread_create(const char* name, int priority, thread_func* function, void*
   /* Restore the original FPU state from the temporary location */
   asm volatile("frstor %0" : : "m"(temp_fpu_state));
 
+  /* Initialize sema for joining the thread */
+  sema_init(&t->join_sem, 0);
+
   /* Add to run queue. */
   thread_unblock(t);
 

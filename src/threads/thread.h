@@ -102,6 +102,8 @@ struct thread {
 #ifdef USERPROG
   /* Owned by process.c. */
   struct process* pcb; /* Process control block if this thread is a userprog */
+  struct semaphore join_sem;
+  void* user_stack;
 #endif
 
   /* Owned by thread.c. */

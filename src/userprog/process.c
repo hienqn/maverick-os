@@ -180,9 +180,11 @@ void userprog_init(void) {
   list_init(&t->pcb->all_threads);
   lock_init(&t->pcb->child_lock);
   list_init(&t->pcb->all_threads);
+  // add the main thread to the list of threads in the PCB
+  list_push_back(&t->pcb->all_threads, &t->elem_in_pcb);
+  t->pcb->total_threads = 1;
   lock_init(&t->pcb->all_threads_lock);
   cond_init(&t->pcb->all_threads_cond);
-  t->pcb->total_threads = 1;
   t->pcb->p_process = NULL;
   for (int i = 0; i < MAX_FD; i++) {
     t->pcb->fd_table[i] = NULL;
@@ -315,9 +317,11 @@ static void start_process(void* args) {
     list_init(&t->pcb->child_processes);
     lock_init(&t->pcb->child_lock);
     list_init(&t->pcb->all_threads);
+    // add the main thread to the list of threads in the PCB
+    list_push_back(&t->pcb->all_threads, &t->elem_in_pcb);
+    t->pcb->total_threads = 1;
     lock_init(&t->pcb->all_threads_lock);
     cond_init(&t->pcb->all_threads_cond);
-    t->pcb->total_threads = 1;
   }
 
   /* Initialize interrupt frame and load executable. */

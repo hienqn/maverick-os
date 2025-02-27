@@ -871,7 +871,6 @@ static bool setup_stack(void** esp) {
     success = install_page(((uint8_t*)PHYS_BASE) - PGSIZE, kpage, true);
     if (success) {
       *esp = PHYS_BASE;
-      thread_current()->user_stack = kpage;
     } else
       palloc_free_page(kpage);
   }
@@ -921,7 +920,6 @@ bool setup_thread(void** esp) {
     success = install_page(((uint8_t*)PHYS_BASE) - num_threads * PGSIZE, kpage, true);
     if (success) {
       *esp = PHYS_BASE - (num_threads - 1) * PGSIZE;
-      thread_current()->user_stack = kpage;
     } else
       palloc_free_page(kpage);
   }
@@ -1131,13 +1129,12 @@ tid_t pthread_join(tid_t tid) {
 void pthread_exit(void) {
   struct thread* t = thread_current();
   ASSERT(t->pcb != NULL);
-  ASSERT(is_main_thread(t, t->pcb) == false);
 
-  // Store user_stack pointer locally before any operations
-  void* stack_to_free = t->user_stack;
-
-  // Immediately set to NULL to prevent double-free
-  t->user_stack = NULL;
+  // if this is the main thread, call pthread_exit_main
+  if (is_main_thread(t, t->pcb)) {
+    pthread_exit_main();
+    return;
+  }
 
   // Lock to protect shared resources
   lock_acquire(&t->pcb->all_threads_lock);

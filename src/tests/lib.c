@@ -94,7 +94,6 @@ void sema_check_init(sema_t* sema, int val) {
 
 /* Joins and checks return value */
 void pthread_check_join(tid_t tid) {
-  printf("pthread_check_join: tid: %d\n", tid);
   if (!pthread_join(tid))
     exit(1);
 }
@@ -102,7 +101,6 @@ void pthread_check_join(tid_t tid) {
 /* Creates a thread and checks return value */
 tid_t pthread_check_create(pthread_fun fun, void* arg) {
   tid_t tid = pthread_create(fun, arg);
-  printf("pthread_check_create: tid: %d\n", tid);
   if (tid == TID_ERROR)
     exit(1);
   return tid;

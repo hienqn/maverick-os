@@ -982,42 +982,44 @@ static bool prepare_pthread_stack(pthread_fun tf, void* arg, void** esp) {
   printf("--STACK PREP BEGIN-- Initial esp=%p\n", (void*)*esp);
   printf("Function pointer=%p, Argument=%p\n", (void*)tf, arg);
 
-  // Push arguments in right-to-left order.
+  // Step 1: Calculate how much space we'll need
+  // We need space for: function pointer + argument = 8 bytes
+  size_t total_size = 2 * sizeof(void*);
 
-  // Step 1: Push the argument.
-  *esp -= sizeof(void*);
-  memcpy(*esp, &arg, sizeof(void*));
-  printf("Step 1: Pushed arg=%p at esp=%p\n", arg, (void*)*esp);
-  printf("        Value at esp: %p\n", *(void**)*esp);
-
-  // Step 2: Push the thread function pointer.
-  *esp -= sizeof(void*);
-  memcpy(*esp, &tf, sizeof(void*));
-  printf("Step 2: Pushed function=%p at esp=%p\n", (void*)tf, (void*)*esp);
-  printf("        Value at esp: %p\n", *(void**)*esp);
-
-  // Step 3: Align the stack pointer to a 16-byte boundary.
+  // Step 2: Calculate and apply padding to ensure 16-byte alignment after pushing
   uintptr_t sp = (uintptr_t)*esp;
-  size_t misalignment = sp % 16;
-  printf("Pre-alignment: esp=%p, misalignment=%zu bytes\n", (void*)*esp, misalignment);
+  size_t future_sp = sp - total_size;
+  size_t misalignment = future_sp % 16;
+
+  printf("Pre-padding: esp=%p, projected misalignment=%zu bytes\n", (void*)*esp, misalignment);
 
   if (misalignment != 0) {
-    size_t padding = 16 - misalignment;
-    printf("Step 3: Adding %zu bytes of padding\n", padding);
+    size_t padding = misalignment; // Apply enough padding to make it aligned
+    printf("Step 2: Adding %zu bytes of padding\n", padding);
     *esp -= padding;
     memset(*esp, 0, padding);
-    printf("        New esp=%p\n", (void*)*esp);
+    printf("        New esp after padding=%p\n", (void*)*esp);
   } else {
-    printf("Step 3: Stack already aligned, no padding needed\n");
+    printf("Step 2: No padding needed, stack will be aligned\n");
   }
 
-  // No Step 4 (no fake return address)
+  // Step 3: Push the function pointer first (as requested)
+  *esp -= sizeof(void*);
+  memcpy(*esp, &tf, sizeof(void*));
+  printf("Step 3: Pushed function=%p at esp=%p\n", (void*)tf, (void*)*esp);
+  printf("        Value at esp: %p\n", *(void**)*esp);
+
+  // Step 4: Push the argument second
+  *esp -= sizeof(void*);
+  memcpy(*esp, &arg, sizeof(void*));
+  printf("Step 4: Pushed arg=%p at esp=%p\n", arg, (void*)*esp);
+  printf("        Value at esp: %p\n", *(void**)*esp);
 
   // Verify final alignment
   sp = (uintptr_t)*esp;
   printf("Final alignment check: esp=%p, bytes from 16-byte boundary=%zu\n", (void*)*esp, sp % 16);
 
-  // Log the first few values on the stack to help with debugging
+  // Debug output
   printf("Stack contents (first 16 bytes):\n");
   unsigned char* stack_bytes = (unsigned char*)*esp;
   for (int i = 0; i < 16; i++) {
@@ -1119,22 +1121,24 @@ tid_t pthread_join(tid_t tid) {
     return TID_ERROR;
   }
 
+  printf("pthread_join: joining thread %d\n", tid);
+
+  // We need to find the thread first
+  struct thread* thread_to_join = NULL;
+  bool found = false;
+
   // Acquire lock to safely access the thread list
   lock_acquire(&t->pcb->all_threads_lock);
-
   printf("pthread_join: total threads: %d\n", t->pcb->total_threads);
 
   struct list_elem* elem = list_begin(&t->pcb->all_threads);
-  struct thread* thread = NULL;
-  bool found = false;
-
-  printf("executing pthread_join: tid: %d\n", tid);
 
   // Safe iteration with lock held
   while (elem != list_end(&t->pcb->all_threads)) {
-    // IMPORTANT: Use elem_in_pcb as the list element field
-    thread = list_entry(elem, struct thread, elem_in_pcb);
+    // Use elem_in_pcb as the list element field
+    struct thread* thread = list_entry(elem, struct thread, elem_in_pcb);
     if (thread->tid == tid) {
+      thread_to_join = thread;
       found = true;
       break;
     }
@@ -1142,23 +1146,22 @@ tid_t pthread_join(tid_t tid) {
   }
 
   if (!found) {
-    printf("pthread_join: thread not found\n");
+    printf("pthread_join: thread %d not found\n", tid);
     lock_release(&t->pcb->all_threads_lock);
     return TID_ERROR;
   }
 
-  // Get semaphore reference before releasing lock
-  struct semaphore* join_sema = &thread->join_sem;
+  // Get a reference to the semaphore before releasing the lock
+  struct semaphore* join_sema = &thread_to_join->join_sem;
+  printf("pthread_join: found thread %d, waiting on semaphore\n", tid);
 
-  printf("executing pthread_join: found thread: %d\n", thread->tid);
-
-  // Release lock before waiting on semaphore to prevent deadlock
+  // CRITICAL FIX: Release the lock before waiting on the semaphore
+  // This prevents deadlock where the thread we're joining needs the lock to exit
   lock_release(&t->pcb->all_threads_lock);
 
-  // Wait for thread to exit
-  printf("pthread_join: waiting on semaphore for thread %d\n", tid);
+  // Now wait on the semaphore
   sema_down(join_sema);
-  printf("pthread_join: thread %d exited\n", tid);
+  printf("pthread_join: thread %d has exited\n", tid);
 
   return tid;
 }
@@ -1173,24 +1176,46 @@ tid_t pthread_join(tid_t tid) {
    This function will be implemented in Project 2: Multithreading. For
    now, it does nothing. */
 void pthread_exit(void) {
+  printf("pthread_exit: exiting thread %d\n", thread_current()->tid);
   struct thread* t = thread_current();
   ASSERT(t->pcb != NULL);
   ASSERT(is_main_thread(t, t->pcb) == false);
 
+  // Store user_stack pointer locally before any operations
+  void* stack_to_free = t->user_stack;
+  printf("pthread_exit: user_stack=%p\n", stack_to_free);
+
+  // Immediately set to NULL to prevent double-free
+  t->user_stack = NULL;
+
+  // Lock to protect shared resources
   lock_acquire(&t->pcb->all_threads_lock);
 
-  if (t->user_stack != NULL) {
-    palloc_free_page(t->user_stack);
-  };
-
-  list_remove(&t->elem);
+  // Remove from thread list first (do this before freeing memory)
+  list_remove(&t->elem_in_pcb);
   t->pcb->total_threads--;
-  sema_up(&t->join_sem);
+  printf("pthread_exit: threads remaining: %d\n", t->pcb->total_threads);
 
+  // Signal any waiters
+  sema_up(&t->join_sem);
+  printf("pthread_exit: signaled join semaphore\n");
+
+  // Signal the all_threads condition
   cond_signal(&t->pcb->all_threads_cond, &t->pcb->all_threads_lock);
 
+  // Release lock before freeing memory
   lock_release(&t->pcb->all_threads_lock);
 
+  // Free memory last, after all data structures are updated
+  if (stack_to_free != NULL) {
+    printf("pthread_exit: freeing stack at %p\n", stack_to_free);
+    palloc_free_page(stack_to_free);
+    printf("pthread_exit: stack freed successfully\n");
+  } else {
+    printf("pthread_exit: no stack to free\n");
+  }
+
+  printf("pthread_exit: calling thread_exit()\n");
   thread_exit();
 }
 
@@ -1204,16 +1229,36 @@ void pthread_exit(void) {
    now, it does nothing. */
 void pthread_exit_main(void) {
   struct thread* t = thread_current();
+  printf("pthread_exit_main: main thread %d exiting\n", t->tid);
+
   ASSERT(t->pcb != NULL);
   ASSERT(is_main_thread(t, t->pcb));
 
+  printf("pthread_exit_main: acquiring all_threads_lock\n");
   lock_acquire(&t->pcb->all_threads_lock);
 
+  printf("pthread_exit_main: total threads: %d\n", t->pcb->total_threads);
+
+  // Wait for all non-main threads to exit
   while (t->pcb->total_threads > 1) {
+    printf("pthread_exit_main: waiting for %d threads to exit\n", t->pcb->total_threads - 1);
     cond_wait(&t->pcb->all_threads_cond, &t->pcb->all_threads_lock);
+    printf("pthread_exit_main: woke up, now %d threads\n", t->pcb->total_threads);
+  }
+
+  printf("pthread_exit_main: all threads exited, cleaning up\n");
+
+  // Clean up PCB resources if needed
+  // Consider also freeing the main thread's user stack if it exists
+  if (t->user_stack != NULL) {
+    printf("pthread_exit_main: freeing main thread stack at %p\n", (void*)t->user_stack);
+    void* stack_to_free = t->user_stack;
+    t->user_stack = NULL;
+    palloc_free_page(stack_to_free);
   }
 
   lock_release(&t->pcb->all_threads_lock);
+  printf("pthread_exit_main: calling thread_exit()\n");
 
   thread_exit();
 }

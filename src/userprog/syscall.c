@@ -449,19 +449,17 @@ static void sys_pt_create_handler(struct intr_frame* f, uint32_t* args) {
   }
 }
 
-static void sys_pt_exit_handler(struct intr_frame* f, uint32_t* args) { pthread_exit(); }
+static void sys_pt_exit_handler(struct intr_frame* f, uint32_t* args) {
+  printf("sys_pt_exit_handler: exiting thread\n");
+  pthread_exit();
+}
 
 static bool validate_pt_exit(struct intr_frame* f, uint32_t* args) { return true; }
 
 static void sys_pthread_join_handler(struct intr_frame* f, uint32_t* args) {
   tid_t tid = args[1];
   tid_t result = pthread_join(tid);
-  printf("sys_pthread_join_handler: tid: %d, result: %d\n", tid, result);
-  if (result != TID_ERROR) {
-    f->eax = result;
-  } else {
-    f->eax = -1;
-  }
+  f->eax = result;
 }
 
 static bool validate_pthread_join(struct intr_frame* f, uint32_t* args) {

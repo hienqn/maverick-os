@@ -452,7 +452,6 @@ static void sys_pt_create_handler(struct intr_frame* f, uint32_t* args) {
 static void sys_pt_exit_handler(struct intr_frame* f, uint32_t* args) {
   if (is_main_thread(thread_current(), thread_current()->pcb)) {
     pthread_exit_main();
-    terminate(f, 0);
   } else {
     pthread_exit();
   }

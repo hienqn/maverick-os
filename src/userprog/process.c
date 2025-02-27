@@ -1160,13 +1160,14 @@ void pthread_exit(void) {
 void pthread_exit_main(void) {
   struct thread* t = thread_current();
 
-  // Signal any threads joining with main
   sema_up(&t->join_sem);
 
-  // Wait for all threads to finish
   lock_acquire(&t->pcb->all_threads_lock);
   while (t->pcb->total_threads > 1) {
     cond_wait(&t->pcb->all_threads_cond, &t->pcb->all_threads_lock);
   }
   lock_release(&t->pcb->all_threads_lock);
+  // terminate the process with exit code 0
+  printf("%s: exit(%d)\n", thread_current()->pcb->process_name, 0);
+  process_exit(0);
 }

@@ -507,6 +507,7 @@ void process_exit(const int exit_status) {
     // Finally, free the process control block itself.
     free(pcb_to_free);
   }
+
   thread_exit();
 }
 
@@ -975,31 +976,32 @@ tid_t pthread_execute(stub_fun sf, pthread_fun tf, void* arg) {
 
 static bool prepare_pthread_stack(pthread_fun tf, void* arg, void** esp) {
 
-  // Step 1: Calculate how much space we'll need
-  // We need space for: function pointer + argument = 8 bytes
-  size_t total_size = 2 * sizeof(void*);
+  // First calculate alignment needs
+  size_t needed_space = 2 * sizeof(void*);                        // Two pointers: function and arg
+  uintptr_t aligned_sp = ((uintptr_t)*esp - needed_space) & ~0xF; // Align to 16 bytes
+  size_t padding = (uintptr_t)*esp - needed_space - aligned_sp;
 
-  // Step 2: Calculate and apply padding to ensure 16-byte alignment after pushing
-  uintptr_t sp = (uintptr_t)*esp;
-  size_t future_sp = sp - total_size;
-  size_t misalignment = future_sp % 16;
-
-  if (misalignment != 0) {
-    size_t padding = misalignment; // Apply enough padding to make it aligned
+  // Apply padding first if needed
+  if (padding > 0) {
     *esp -= padding;
     memset(*esp, 0, padding);
   }
 
-  // Step 3: Push the function pointer first (as requested)
-  *esp -= sizeof(void*);
-  memcpy(*esp, &tf, sizeof(void*));
+  // IMPORTANT: According to x86 convention, push args right-to-left
 
-  // Step 4: Push the argument second
+  // Push arg (rightmost parameter) first
   *esp -= sizeof(void*);
-  memcpy(*esp, &arg, sizeof(void*));
+  *(void**)(*esp) = arg;
 
-  // Verify final alignment
-  sp = (uintptr_t)*esp;
+  // Push function pointer (leftmost parameter) second
+  *esp -= sizeof(void*);
+  *(void**)(*esp) = tf;
+
+  // Push a fake return address (use a recognizable pattern)
+  // 0xDEADBEEF is a common debugging value that will cause
+  // an obvious error if the function tries to return
+  *esp -= sizeof(void*);
+  *(uint32_t*)*esp = 0xDEADBEEF;
 
   return true;
 }
@@ -1107,8 +1109,6 @@ tid_t pthread_join(tid_t tid) {
   // Get a reference to the semaphore before releasing the lock
   struct semaphore* join_sema = &thread_to_join->join_sem;
 
-  // CRITICAL FIX: Release the lock before waiting on the semaphore
-  // This prevents deadlock where the thread we're joining needs the lock to exit
   lock_release(&t->pcb->all_threads_lock);
 
   // Now wait on the semaphore
@@ -1129,12 +1129,6 @@ tid_t pthread_join(tid_t tid) {
 void pthread_exit(void) {
   struct thread* t = thread_current();
   ASSERT(t->pcb != NULL);
-
-  // if this is the main thread, call pthread_exit_main
-  if (is_main_thread(t, t->pcb)) {
-    pthread_exit_main();
-    return;
-  }
 
   // Lock to protect shared resources
   lock_acquire(&t->pcb->all_threads_lock);
@@ -1166,17 +1160,13 @@ void pthread_exit(void) {
 void pthread_exit_main(void) {
   struct thread* t = thread_current();
 
-  ASSERT(t->pcb != NULL);
-  ASSERT(is_main_thread(t, t->pcb));
+  // Signal any threads joining with main
+  sema_up(&t->join_sem);
 
+  // Wait for all threads to finish
   lock_acquire(&t->pcb->all_threads_lock);
-
-  // Wait for all non-main threads to exit
   while (t->pcb->total_threads > 1) {
     cond_wait(&t->pcb->all_threads_cond, &t->pcb->all_threads_lock);
   }
-
   lock_release(&t->pcb->all_threads_lock);
-
-  thread_exit();
 }

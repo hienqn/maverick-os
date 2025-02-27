@@ -449,9 +449,7 @@ static void sys_pt_create_handler(struct intr_frame* f, uint32_t* args) {
   }
 }
 
-static void sys_pt_exit_handler(struct intr_frame* f, uint32_t* args) {
-  pthread_exit();
-}
+static void sys_pt_exit_handler(struct intr_frame* f, uint32_t* args) { pthread_exit(); }
 
 static bool validate_pt_exit(struct intr_frame* f, uint32_t* args) { return true; }
 
@@ -465,6 +463,13 @@ static bool validate_pthread_join(struct intr_frame* f, uint32_t* args) {
   return is_valid_pointer(&args[1], sizeof(tid_t));
 }
 
+static bool validate_get_tid(struct intr_frame* f, uint32_t* args) { return true; }
+
+static void sys_get_tid_handler(struct intr_frame* f, uint32_t* args) {
+  tid_t tid = thread_current()->tid;
+  f->eax = tid;
+}
+
 /* Arrays for syscall validators and handlers */
 static validate_func syscall_validators[SYS_CALL_COUNT] = {
     [SYS_HALT] = validate_halt,           [SYS_EXIT] = validate_exit,
@@ -475,7 +480,8 @@ static validate_func syscall_validators[SYS_CALL_COUNT] = {
     [SYS_READ] = validate_read,           [SYS_CLOSE] = validate_close,
     [SYS_SEEK] = validate_seek,           [SYS_TELL] = validate_tell,
     [SYS_COMPUTE_E] = validate_compute_e, [SYS_PT_CREATE] = validate_pt_create,
-    [SYS_PT_EXIT] = validate_pt_exit,     [SYS_PT_JOIN] = validate_pthread_join};
+    [SYS_PT_EXIT] = validate_pt_exit,     [SYS_PT_JOIN] = validate_pthread_join,
+    [SYS_GET_TID] = validate_get_tid};
 
 static handler_func syscall_handlers[SYS_CALL_COUNT] = {
     [SYS_HALT] = sys_halt_handler,           [SYS_EXIT] = sys_exit_handler,
@@ -486,7 +492,8 @@ static handler_func syscall_handlers[SYS_CALL_COUNT] = {
     [SYS_READ] = sys_read_handler,           [SYS_CLOSE] = sys_close_handler,
     [SYS_SEEK] = sys_seek_handler,           [SYS_TELL] = sys_tell_handler,
     [SYS_COMPUTE_E] = sys_compute_e_handler, [SYS_PT_CREATE] = sys_pt_create_handler,
-    [SYS_PT_EXIT] = sys_pt_exit_handler,     [SYS_PT_JOIN] = sys_pthread_join_handler};
+    [SYS_PT_EXIT] = sys_pt_exit_handler,     [SYS_PT_JOIN] = sys_pthread_join_handler,
+    [SYS_GET_TID] = sys_get_tid_handler};
 
 /* Main syscall handler */
 static void syscall_handler(struct intr_frame* f) {

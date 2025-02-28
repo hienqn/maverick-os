@@ -183,6 +183,8 @@ void userprog_init(void) {
   // add the main thread to the list of threads in the PCB
   list_push_back(&t->pcb->all_threads, &t->elem_in_pcb);
   t->pcb->total_threads = 1;
+  t->pcb->terminating = false;
+  t->pcb->exit_code = 0;
   lock_init(&t->pcb->all_threads_lock);
   cond_init(&t->pcb->all_threads_cond);
   t->pcb->p_process = NULL;
@@ -320,6 +322,8 @@ static void start_process(void* args) {
     // add the main thread to the list of threads in the PCB
     list_push_back(&t->pcb->all_threads, &t->elem_in_pcb);
     t->pcb->total_threads = 1;
+    t->pcb->terminating = false;
+    t->pcb->exit_code = 0;
     lock_init(&t->pcb->all_threads_lock);
     cond_init(&t->pcb->all_threads_cond);
   }
@@ -448,6 +452,14 @@ void process_exit(const int exit_status) {
   if (cur->pcb == NULL) {
     thread_exit();
     NOT_REACHED();
+  }
+
+  // if this is not the main theads, and there are still other threads, set the flag
+  // and set the exit_code as well
+  if (!is_main_thread(cur, cur->pcb) && cur->pcb->total_threads > 1) {
+    cur->pcb->exit_code = exit_status;
+    cur->pcb->terminating = true;
+    pthread_exit();
   }
 
   struct process* p_process = cur->pcb->p_process;
@@ -1134,15 +1146,15 @@ void pthread_exit(void) {
   struct thread* t = thread_current();
   ASSERT(t->pcb != NULL);
 
+  // Signal any waiters
+  sema_up(&t->join_sem);
+
   // Lock to protect shared resources
   lock_acquire(&t->pcb->all_threads_lock);
 
   // Remove from thread list first (do this before freeing memory)
   list_remove(&t->elem_in_pcb);
   t->pcb->total_threads--;
-
-  // Signal any waiters
-  sema_up(&t->join_sem);
 
   // Signal the all_threads condition
   cond_signal(&t->pcb->all_threads_cond, &t->pcb->all_threads_lock);
@@ -1161,9 +1173,10 @@ void pthread_exit(void) {
 
    This function will be implemented in Project 2: Multithreading. For
    now, it does nothing. */
-void pthread_exit_main(void) {
+void pthread_exit_main(int exit_code) {
   struct thread* t = thread_current();
 
+  // why do i need to called sema_up here?
   sema_up(&t->join_sem);
 
   lock_acquire(&t->pcb->all_threads_lock);
@@ -1171,7 +1184,6 @@ void pthread_exit_main(void) {
     cond_wait(&t->pcb->all_threads_cond, &t->pcb->all_threads_lock);
   }
   lock_release(&t->pcb->all_threads_lock);
-  // terminate the process with exit code 0
-  printf("%s: exit(%d)\n", thread_current()->pcb->process_name, 0);
-  process_exit(0);
+
+  process_exit(exit_code);
 }

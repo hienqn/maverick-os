@@ -11,6 +11,7 @@
 #include "devices/timer.h"
 #ifdef USERPROG
 #include "userprog/gdt.h"
+#include "userprog/process.h"
 #endif
 
 /* Programmable Interrupt Controller (PIC) registers.
@@ -320,6 +321,17 @@ void intr_handler(struct intr_frame* frame) {
   bool external;
   intr_handler_func* handler;
   struct thread* cur = thread_current();
+
+  // if the thread is terminating, call pthread_exit
+  if (is_trap_from_userspace(frame)) {
+    if (cur->pcb != NULL && cur->pcb->terminating) {
+      if (is_main_thread(cur, cur->pcb)) {
+        pthread_exit_main(cur->pcb->exit_code);
+      } else {
+        pthread_exit();
+      }
+    }
+  }
 
   // Save FPU state if the interrupt occurred in user mode
   if (frame->cs == SEL_UCSEG) { // Check if the code segment is user mode

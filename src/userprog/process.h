@@ -46,6 +46,8 @@ struct process {
   struct process* p_process;
   struct file* fd_table[MAX_FD];
   int total_threads;
+  bool terminating;
+  int exit_code;
 };
 
 void userprog_init(void);
@@ -65,6 +67,6 @@ pid_t get_pid(struct process*);
 tid_t pthread_execute(stub_fun, pthread_fun, void*);
 tid_t pthread_join(tid_t);
 void pthread_exit(void);
-void pthread_exit_main(void);
+void pthread_exit_main(int exit_code);
 
 #endif /* userprog/process.h */

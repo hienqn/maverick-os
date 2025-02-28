@@ -451,7 +451,7 @@ static void sys_pt_create_handler(struct intr_frame* f, uint32_t* args) {
 
 static void sys_pt_exit_handler(struct intr_frame* f, uint32_t* args) {
   if (is_main_thread(thread_current(), thread_current()->pcb)) {
-    pthread_exit_main();
+    pthread_exit_main(0);
   } else {
     pthread_exit();
   }
@@ -525,4 +525,13 @@ static void syscall_handler(struct intr_frame* f) {
 
   /* Execute the syscall */
   syscall_handlers[syscall_number](f, args);
+
+  // Threads coming from the kernel, if the thread is terminating, call pthread_exit
+  if (thread_current()->pcb->terminating) {
+    if (is_main_thread(thread_current(), thread_current()->pcb)) {
+      pthread_exit_main(thread_current()->pcb->exit_code);
+    } else {
+      pthread_exit();
+    }
+  }
 }

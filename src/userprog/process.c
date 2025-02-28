@@ -486,6 +486,8 @@ void process_exit(const int exit_status) {
     lock_release(&p_process->child_lock);
   }
 
+  printf("%s: exit(%d)\n", thread_current()->pcb->process_name, thread_current()->pcb->exit_code);
+
   // Free current process's resources
   struct process* pcb_to_free = cur->pcb;
   if (pcb_to_free) {
@@ -1155,6 +1157,7 @@ void pthread_exit(void) {
   // Remove from thread list first (do this before freeing memory)
   list_remove(&t->elem_in_pcb);
   t->pcb->total_threads--;
+  // print the total threads in the process
 
   // Signal the all_threads condition
   cond_signal(&t->pcb->all_threads_cond, &t->pcb->all_threads_lock);
@@ -1173,7 +1176,7 @@ void pthread_exit(void) {
 
    This function will be implemented in Project 2: Multithreading. For
    now, it does nothing. */
-void pthread_exit_main(int exit_code) {
+void pthread_exit_main(void) {
   struct thread* t = thread_current();
 
   // why do i need to called sema_up here?
@@ -1185,5 +1188,5 @@ void pthread_exit_main(int exit_code) {
   }
   lock_release(&t->pcb->all_threads_lock);
 
-  process_exit(exit_code);
+  process_exit(t->pcb->exit_code);
 }

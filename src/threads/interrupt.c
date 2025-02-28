@@ -326,7 +326,7 @@ void intr_handler(struct intr_frame* frame) {
   if (is_trap_from_userspace(frame)) {
     if (cur->pcb != NULL && cur->pcb->terminating) {
       if (is_main_thread(cur, cur->pcb)) {
-        pthread_exit_main(cur->pcb->exit_code);
+        pthread_exit_main();
       } else {
         pthread_exit();
       }

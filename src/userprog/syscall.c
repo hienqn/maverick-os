@@ -26,7 +26,6 @@ void syscall_init(void) {
 /* Helper functions */
 static void terminate(struct intr_frame* f, int status) {
   f->eax = status;
-  printf("%s: exit(%d)\n", thread_current()->pcb->process_name, status);
   process_exit(status);
 }
 
@@ -450,8 +449,10 @@ static void sys_pt_create_handler(struct intr_frame* f, uint32_t* args) {
 }
 
 static void sys_pt_exit_handler(struct intr_frame* f, uint32_t* args) {
+  // print all the threads in the process
+  struct process* pcb = thread_current()->pcb;
   if (is_main_thread(thread_current(), thread_current()->pcb)) {
-    pthread_exit_main(0);
+    pthread_exit_main();
   } else {
     pthread_exit();
   }
@@ -529,7 +530,7 @@ static void syscall_handler(struct intr_frame* f) {
   // Threads coming from the kernel, if the thread is terminating, call pthread_exit
   if (thread_current()->pcb->terminating) {
     if (is_main_thread(thread_current(), thread_current()->pcb)) {
-      pthread_exit_main(thread_current()->pcb->exit_code);
+      pthread_exit_main();
     } else {
       pthread_exit();
     }

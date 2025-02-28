@@ -67,6 +67,6 @@ pid_t get_pid(struct process*);
 tid_t pthread_execute(stub_fun, pthread_fun, void*);
 tid_t pthread_join(tid_t);
 void pthread_exit(void);
-void pthread_exit_main(int exit_code);
+void pthread_exit_main(void);
 
 #endif /* userprog/process.h */

@@ -1132,6 +1132,12 @@ tid_t pthread_join(tid_t tid) {
     return tid;
   }
 
+  // make sure this thread is in the same process
+  if (t->pcb != thread_to_join->pcb) {
+    lock_release(&t->pcb->all_threads_lock);
+    return TID_ERROR;
+  }
+
   // Get a reference to the semaphore before releasing the lock
   struct semaphore* join_sema = &thread_to_join->join_sem;
 

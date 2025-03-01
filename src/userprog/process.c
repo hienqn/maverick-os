@@ -462,6 +462,14 @@ void process_exit(const int exit_status) {
     pthread_exit();
   }
 
+  // if this is the main thread, and there are still other threads, set the flag
+  // and set the exit_code as well
+  if (is_main_thread(cur, cur->pcb) && cur->pcb->total_threads > 1) {
+    cur->pcb->exit_code = exit_status;
+    cur->pcb->terminating = true;
+    pthread_exit_main();
+  }
+
   struct process* p_process = cur->pcb->p_process;
 
   for (int fd = 3; fd < MAX_FD; fd++) {

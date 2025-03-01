@@ -26,6 +26,7 @@ void syscall_init(void) {
 /* Helper functions */
 static void terminate(struct intr_frame* f, int status) {
   f->eax = status;
+  thread_current()->pcb->exit_code = status;
   process_exit(status);
 }
 

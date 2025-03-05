@@ -944,13 +944,39 @@ bool setup_thread(void** esp) {
 
   kpage = palloc_get_page(PAL_USER | PAL_ZERO);
   if (kpage != NULL) {
-    success = install_page(((uint8_t*)PHYS_BASE) - num_threads * PGSIZE, kpage, true);
+    void* upage = ((uint8_t*)PHYS_BASE) - num_threads * PGSIZE;
+    success = install_page(upage, kpage, true);
     if (success) {
       *esp = PHYS_BASE - (num_threads - 1) * PGSIZE;
+      thread_current()->user_stack = upage; // Store the address for cleanup later
     } else
       palloc_free_page(kpage);
   }
   return success;
+}
+
+/* Uninstalls a page from the page table.
+   Looks up the user virtual address UPAGE in the current thread's page directory.
+   If the page is mapped, the function clears the mapping and frees the physical page.
+   Returns true on success, false if UPAGE was not mapped. */
+static bool uninstall_page(void* upage) {
+  struct thread* t = thread_current();
+  void* kpage = pagedir_get_page(t->pcb->pagedir, upage);
+  if (kpage != NULL) {
+    pagedir_clear_page(t->pcb->pagedir, upage);
+    palloc_free_page(kpage);
+    return true;
+  }
+  return false;
+}
+
+void free_thread_stack(struct thread* t) {
+  if (t->user_stack != NULL) {
+    // Remove the mapping from the page directory and free the physical page:
+    bool success = uninstall_page(t->user_stack);
+    // Optionally check success/error here
+    t->user_stack = NULL;
+  }
 }
 
 typedef struct pthread_args {
@@ -1172,6 +1198,8 @@ void pthread_exit(void) {
   list_remove(&t->elem_in_pcb);
   t->pcb->total_threads--;
   // print the total threads in the process
+
+  free_thread_stack(t);
 
   // Signal the all_threads condition
   cond_signal(&t->pcb->all_threads_cond, &t->pcb->all_threads_lock);

@@ -10,9 +10,16 @@
 #include "filesys/filesys.h"
 #include "filesys/file.h"
 #include "lib/float.h"
+#include "threads/synch.h"
+
+/* Helper function prototypes */
+static struct kernel_lock* find_kernel_lock(char* user_lock_ptr);
 
 void syscall_init(void);
 struct lock global_lock;
+static struct list all_kernel_locks;
+static struct list all_kernel_semaphores;
+
 typedef bool (*validate_func)(struct intr_frame* f, uint32_t* args);
 typedef void (*handler_func)(struct intr_frame* f, uint32_t* args);
 
@@ -20,6 +27,8 @@ static void syscall_handler(struct intr_frame*);
 
 void syscall_init(void) {
   lock_init(&global_lock);
+  list_init(&all_kernel_locks);
+  list_init(&all_kernel_semaphores);
   intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall");
 }
 
@@ -478,30 +487,128 @@ static void sys_get_tid_handler(struct intr_frame* f, uint32_t* args) {
   f->eax = tid;
 }
 
+static bool validate_lock_init(struct intr_frame* f, uint32_t* args) {
+  return is_valid_pointer(&args[1], sizeof(char*));
+}
+
+static void sys_lock_init_handler(struct intr_frame* f, uint32_t* args) {
+  char* lock = (char*)args[1];
+  if (lock == NULL) {
+    f->eax = 0;
+    return;
+  }
+
+  // Allocate kernel_lock on the heap so it persists after the function returns
+  struct kernel_lock* kernel_lock = malloc(sizeof(struct kernel_lock));
+  if (kernel_lock == NULL) {
+    // Memory allocation failed
+    f->eax = 0;
+    return;
+  }
+
+  // Initialize the lock structure
+  kernel_lock->user_lock_ptr = lock;
+  lock_init(&kernel_lock->lock);
+  kernel_lock->owner = thread_current();
+
+  // Add to list of locks
+  list_push_back(&all_kernel_locks, &kernel_lock->elem);
+
+  f->eax = 1;
+}
+
+static bool validate_lock_acquire(struct intr_frame* f, uint32_t* args) {
+  return is_valid_pointer(&args[1], sizeof(char*));
+}
+
+static void sys_lock_acquire_handler(struct intr_frame* f, uint32_t* args) {
+  char* lock = (char*)args[1];
+  struct kernel_lock* kernel_lock = find_kernel_lock(lock);
+
+  if (kernel_lock == NULL) {
+    f->eax = 0;
+    return;
+  }
+
+  if (kernel_lock->owner != thread_current()) {
+    f->eax = 0;
+    return;
+  }
+
+  lock_acquire(&kernel_lock->lock);
+  f->eax = 1;
+}
+
+static bool validate_lock_release(struct intr_frame* f, uint32_t* args) {
+  return is_valid_pointer(&args[1], sizeof(char*));
+}
+
+static void sys_lock_release_handler(struct intr_frame* f, uint32_t* args) {
+  char* lock = (char*)args[1];
+  struct kernel_lock* kernel_lock = find_kernel_lock(lock);
+
+  if (kernel_lock == NULL) {
+    f->eax = 0;
+    return;
+  }
+
+  if (kernel_lock->owner != thread_current()) {
+    f->eax = 0;
+    return;
+  }
+
+  lock_release(&kernel_lock->lock);
+  f->eax = 1;
+}
+
 /* Arrays for syscall validators and handlers */
 static validate_func syscall_validators[SYS_CALL_COUNT] = {
-    [SYS_HALT] = validate_halt,           [SYS_EXIT] = validate_exit,
-    [SYS_EXEC] = validate_exec,           [SYS_WRITE] = validate_write,
-    [SYS_PRACTICE] = validate_practice,   [SYS_WAIT] = validate_wait,
-    [SYS_CREATE] = validate_create,       [SYS_REMOVE] = validate_remove,
-    [SYS_OPEN] = validate_open,           [SYS_FILESIZE] = validate_filesize,
-    [SYS_READ] = validate_read,           [SYS_CLOSE] = validate_close,
-    [SYS_SEEK] = validate_seek,           [SYS_TELL] = validate_tell,
-    [SYS_COMPUTE_E] = validate_compute_e, [SYS_PT_CREATE] = validate_pt_create,
-    [SYS_PT_EXIT] = validate_pt_exit,     [SYS_PT_JOIN] = validate_pthread_join,
-    [SYS_GET_TID] = validate_get_tid};
+    [SYS_HALT] = validate_halt,
+    [SYS_EXIT] = validate_exit,
+    [SYS_EXEC] = validate_exec,
+    [SYS_WRITE] = validate_write,
+    [SYS_PRACTICE] = validate_practice,
+    [SYS_WAIT] = validate_wait,
+    [SYS_CREATE] = validate_create,
+    [SYS_REMOVE] = validate_remove,
+    [SYS_OPEN] = validate_open,
+    [SYS_FILESIZE] = validate_filesize,
+    [SYS_READ] = validate_read,
+    [SYS_CLOSE] = validate_close,
+    [SYS_SEEK] = validate_seek,
+    [SYS_TELL] = validate_tell,
+    [SYS_COMPUTE_E] = validate_compute_e,
+    [SYS_PT_CREATE] = validate_pt_create,
+    [SYS_PT_EXIT] = validate_pt_exit,
+    [SYS_PT_JOIN] = validate_pthread_join,
+    [SYS_GET_TID] = validate_get_tid,
+    [SYS_LOCK_INIT] = validate_lock_init,
+    [SYS_LOCK_ACQUIRE] = validate_lock_acquire,
+    [SYS_LOCK_RELEASE] = validate_lock_release};
 
 static handler_func syscall_handlers[SYS_CALL_COUNT] = {
-    [SYS_HALT] = sys_halt_handler,           [SYS_EXIT] = sys_exit_handler,
-    [SYS_EXEC] = sys_exec_handler,           [SYS_WRITE] = sys_write_handler,
-    [SYS_PRACTICE] = sys_practice_handler,   [SYS_WAIT] = sys_wait_handler,
-    [SYS_CREATE] = sys_create_handler,       [SYS_REMOVE] = sys_remove_handler,
-    [SYS_OPEN] = sys_open_handler,           [SYS_FILESIZE] = sys_filesize_handler,
-    [SYS_READ] = sys_read_handler,           [SYS_CLOSE] = sys_close_handler,
-    [SYS_SEEK] = sys_seek_handler,           [SYS_TELL] = sys_tell_handler,
-    [SYS_COMPUTE_E] = sys_compute_e_handler, [SYS_PT_CREATE] = sys_pt_create_handler,
-    [SYS_PT_EXIT] = sys_pt_exit_handler,     [SYS_PT_JOIN] = sys_pthread_join_handler,
-    [SYS_GET_TID] = sys_get_tid_handler};
+    [SYS_HALT] = sys_halt_handler,
+    [SYS_EXIT] = sys_exit_handler,
+    [SYS_EXEC] = sys_exec_handler,
+    [SYS_WRITE] = sys_write_handler,
+    [SYS_PRACTICE] = sys_practice_handler,
+    [SYS_WAIT] = sys_wait_handler,
+    [SYS_CREATE] = sys_create_handler,
+    [SYS_REMOVE] = sys_remove_handler,
+    [SYS_OPEN] = sys_open_handler,
+    [SYS_FILESIZE] = sys_filesize_handler,
+    [SYS_READ] = sys_read_handler,
+    [SYS_CLOSE] = sys_close_handler,
+    [SYS_SEEK] = sys_seek_handler,
+    [SYS_TELL] = sys_tell_handler,
+    [SYS_COMPUTE_E] = sys_compute_e_handler,
+    [SYS_PT_CREATE] = sys_pt_create_handler,
+    [SYS_PT_EXIT] = sys_pt_exit_handler,
+    [SYS_PT_JOIN] = sys_pthread_join_handler,
+    [SYS_GET_TID] = sys_get_tid_handler,
+    [SYS_LOCK_INIT] = sys_lock_init_handler,
+    [SYS_LOCK_ACQUIRE] = sys_lock_acquire_handler,
+    [SYS_LOCK_RELEASE] = sys_lock_release_handler};
 
 /* Main syscall handler */
 static void syscall_handler(struct intr_frame* f) {
@@ -536,4 +643,17 @@ static void syscall_handler(struct intr_frame* f) {
       pthread_exit();
     }
   }
+}
+
+static struct kernel_lock* find_kernel_lock(char* user_lock_ptr) {
+  struct list_elem* e;
+
+  for (e = list_begin(&all_kernel_locks); e != list_end(&all_kernel_locks); e = list_next(e)) {
+    struct kernel_lock* klock = list_entry(e, struct kernel_lock, elem);
+    if (klock->user_lock_ptr == user_lock_ptr) {
+      return klock;
+    }
+  }
+
+  return NULL; // Not found
 }

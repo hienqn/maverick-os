@@ -10,6 +10,12 @@ struct semaphore {
   struct list waiters; /* List of waiting threads. */
 };
 
+struct kernel_semaphore {
+  struct semaphore sema; // Actual kernel semaphore (from threads/synch.h)
+  struct list_elem elem; // For storing in a list
+  char* user_sema_ptr;   // User-space address of the sema_t
+};
+
 void sema_init(struct semaphore*, unsigned value);
 void sema_down(struct semaphore*);
 bool sema_try_down(struct semaphore*);
@@ -21,6 +27,13 @@ struct lock {
   struct thread* holder;      /* Thread holding lock (for debugging). */
   struct semaphore semaphore; /* Binary semaphore controlling access. */
   struct list_elem elem;      /* List element for held_locks list. */
+};
+
+struct kernel_lock {
+  struct lock lock;      // Actual kernel lock (from threads/synch.h)
+  struct list_elem elem; // For storing in a list
+  char* user_lock_ptr;   // User-space address of the lock_t
+  struct thread* owner;  // Thread that owns the lock
 };
 
 void lock_init(struct lock*);

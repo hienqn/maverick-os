@@ -530,8 +530,8 @@ static void sys_lock_acquire_handler(struct intr_frame* f, uint32_t* args) {
     return;
   }
 
-  // Check if current thread already holds this lock
-  if (kernel_lock->lock.holder == thread_current()) {
+  // Use provided API function instead of accessing internal structure
+  if (lock_held_by_current_thread(&kernel_lock->lock)) {
     // Double acquire detected
     f->eax = 0;
     return;
@@ -554,8 +554,8 @@ static void sys_lock_release_handler(struct intr_frame* f, uint32_t* args) {
     return;
   }
 
-  // Check if current thread already holds this lock
-  if (kernel_lock->lock.holder != thread_current()) {
+  // If you already released the lock, lock_held_by_current_thread will return false
+  if (!lock_held_by_current_thread(&kernel_lock->lock)) {
     f->eax = 0;
     return;
   }

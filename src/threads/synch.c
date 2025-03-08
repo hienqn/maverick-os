@@ -43,7 +43,7 @@
      thread, if any). */
 void sema_init(struct semaphore* sema, unsigned value) {
   ASSERT(sema != NULL);
-
+  ASSERT(value >= 0);
   sema->value = value;
   list_init(&sema->waiters);
 }

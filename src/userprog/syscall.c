@@ -14,7 +14,7 @@
 
 /* Helper function prototypes */
 static struct kernel_lock* find_kernel_lock(char* user_lock_ptr);
-
+static struct kernel_semaphore* find_kernel_semaphore(char* user_sema_ptr);
 void syscall_init(void);
 struct lock global_lock;
 static struct list all_kernel_locks;
@@ -499,6 +499,7 @@ static void sys_lock_init_handler(struct intr_frame* f, uint32_t* args) {
   }
 
   // Allocate kernel_lock on the heap so it persists after the function returns
+  // where should I free this?
   struct kernel_lock* kernel_lock = malloc(sizeof(struct kernel_lock));
   if (kernel_lock == NULL) {
     // Memory allocation failed
@@ -564,6 +565,71 @@ static void sys_lock_release_handler(struct intr_frame* f, uint32_t* args) {
   f->eax = 1;
 }
 
+static bool validate_sema_init(struct intr_frame* f, uint32_t* args) {
+  return is_valid_pointer(&args[1], sizeof(char*)) && is_valid_pointer(&args[2], sizeof(int));
+}
+
+static void sys_sema_init_handler(struct intr_frame* f, uint32_t* args) {
+  char* sema = (char*)args[1];
+  int value = args[2];
+
+  if (sema == NULL) {
+    f->eax = 0;
+    return;
+  }
+
+  if (value < 0) {
+    f->eax = 0;
+    return;
+  }
+
+  struct kernel_semaphore* kernel_sema = malloc(sizeof(struct kernel_semaphore));
+  if (kernel_sema == NULL) {
+    f->eax = 0;
+    return;
+  }
+
+  kernel_sema->user_sema_ptr = sema;
+  sema_init(&kernel_sema->sema, value);
+  list_push_back(&all_kernel_semaphores, &kernel_sema->elem);
+
+  f->eax = 1;
+}
+
+static bool validate_sema_down(struct intr_frame* f, uint32_t* args) {
+  return is_valid_pointer(&args[1], sizeof(char*));
+}
+
+static void sys_sema_down_handler(struct intr_frame* f, uint32_t* args) {
+  char* sema = (char*)args[1];
+  struct kernel_semaphore* kernel_sema = find_kernel_semaphore(sema);
+
+  if (kernel_sema == NULL) {
+    f->eax = 0;
+    return;
+  }
+
+  sema_down(&kernel_sema->sema);
+  f->eax = 1;
+}
+
+static bool validate_sema_up(struct intr_frame* f, uint32_t* args) {
+  return is_valid_pointer(&args[1], sizeof(char*));
+}
+
+static void sys_sema_up_handler(struct intr_frame* f, uint32_t* args) {
+  char* sema = (char*)args[1];
+  struct kernel_semaphore* kernel_sema = find_kernel_semaphore(sema);
+
+  if (kernel_sema == NULL) {
+    f->eax = 0;
+    return;
+  }
+
+  sema_up(&kernel_sema->sema);
+  f->eax = 1;
+}
+
 /* Arrays for syscall validators and handlers */
 static validate_func syscall_validators[SYS_CALL_COUNT] = {
     [SYS_HALT] = validate_halt,
@@ -587,7 +653,10 @@ static validate_func syscall_validators[SYS_CALL_COUNT] = {
     [SYS_GET_TID] = validate_get_tid,
     [SYS_LOCK_INIT] = validate_lock_init,
     [SYS_LOCK_ACQUIRE] = validate_lock_acquire,
-    [SYS_LOCK_RELEASE] = validate_lock_release};
+    [SYS_LOCK_RELEASE] = validate_lock_release,
+    [SYS_SEMA_INIT] = validate_sema_init,
+    [SYS_SEMA_DOWN] = validate_sema_down,
+    [SYS_SEMA_UP] = validate_sema_up};
 
 static handler_func syscall_handlers[SYS_CALL_COUNT] = {
     [SYS_HALT] = sys_halt_handler,
@@ -611,7 +680,10 @@ static handler_func syscall_handlers[SYS_CALL_COUNT] = {
     [SYS_GET_TID] = sys_get_tid_handler,
     [SYS_LOCK_INIT] = sys_lock_init_handler,
     [SYS_LOCK_ACQUIRE] = sys_lock_acquire_handler,
-    [SYS_LOCK_RELEASE] = sys_lock_release_handler};
+    [SYS_LOCK_RELEASE] = sys_lock_release_handler,
+    [SYS_SEMA_INIT] = sys_sema_init_handler,
+    [SYS_SEMA_DOWN] = sys_sema_down_handler,
+    [SYS_SEMA_UP] = sys_sema_up_handler};
 
 /* Main syscall handler */
 static void syscall_handler(struct intr_frame* f) {
@@ -655,6 +727,20 @@ static struct kernel_lock* find_kernel_lock(char* user_lock_ptr) {
     struct kernel_lock* klock = list_entry(e, struct kernel_lock, elem);
     if (klock->user_lock_ptr == user_lock_ptr) {
       return klock;
+    }
+  }
+
+  return NULL; // Not found
+}
+
+static struct kernel_semaphore* find_kernel_semaphore(char* user_sema_ptr) {
+  struct list_elem* e;
+
+  for (e = list_begin(&all_kernel_semaphores); e != list_end(&all_kernel_semaphores);
+       e = list_next(e)) {
+    struct kernel_semaphore* ksema = list_entry(e, struct kernel_semaphore, elem);
+    if (ksema->user_sema_ptr == user_sema_ptr) {
+      return ksema;
     }
   }
 

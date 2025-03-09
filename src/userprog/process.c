@@ -179,7 +179,6 @@ void userprog_init(void) {
   list_init(&t->pcb->child_processes);
   list_init(&t->pcb->all_threads);
   lock_init(&t->pcb->child_lock);
-  list_init(&t->pcb->all_threads);
   // add the main thread to the list of threads in the PCB
   list_push_back(&t->pcb->all_threads, &t->elem_in_pcb);
   t->pcb->total_threads = 1;
@@ -1077,7 +1076,7 @@ static void start_pthread(void* exec_) {
   process_activate();
 
   // Step 3. Add the current thread in pcb. elem is used for synchronization, let's use another variable.
-  list_push_front(&t->pcb->all_threads, &t->elem_in_pcb);
+  list_push_back(&t->pcb->all_threads, &t->elem_in_pcb);
   t->pcb->total_threads++;
 
   // Step 4. Set up interrupt stack frame, including stack pointer and instruction pointer.
@@ -1155,7 +1154,7 @@ tid_t pthread_join(tid_t tid) {
 
   if (!found) {
     lock_release(&t->pcb->all_threads_lock);
-    return tid;
+    return TID_ERROR;
   }
 
   // make sure this thread is in the same process

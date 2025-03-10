@@ -137,6 +137,17 @@ static void page_fault(struct intr_frame* f) {
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
+  /* Handle user-mode page fault directly here */
+  if (user) {
+    thread_current()->pcb->exit_code = -1;
+
+    /* Terminate the process immediately */
+    process_exit(-1);
+
+    /* Should not return from process_exit */
+    NOT_REACHED();
+  }
+
   /* To implement virtual memory, delete the rest of the function
      body, and replace it with code that brings in the page to
      which fault_addr refers. */

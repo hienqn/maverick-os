@@ -45,9 +45,16 @@ struct process {
   struct condition all_threads_cond; // Condition variable for all_threads
   struct process* p_process;
   struct file* fd_table[MAX_FD];
+  struct thread_descriptor* threads_descriptor_table[MAX_THREADS];
   int total_threads;
   bool terminating;
   int exit_code;
+};
+
+struct thread_descriptor {
+  struct thread* thread;
+  bool has_been_joined;
+  tid_t tid;
 };
 
 void userprog_init(void);

@@ -181,6 +181,13 @@ void userprog_init(void) {
   lock_init(&t->pcb->child_lock);
   // add the main thread to the list of threads in the PCB
   list_push_back(&t->pcb->all_threads, &t->elem_in_pcb);
+  // initialize the thread descriptor table
+  t->pcb->threads_descriptor_table[t->tid] =
+      (struct thread_descriptor*)malloc(sizeof(struct thread_descriptor));
+  t->pcb->threads_descriptor_table[t->tid]->thread = t;
+  t->pcb->threads_descriptor_table[t->tid]->has_been_joined = false;
+  t->pcb->threads_descriptor_table[t->tid]->tid = t->tid;
+
   t->pcb->total_threads = 1;
   t->pcb->terminating = false;
   t->pcb->exit_code = 0;
@@ -320,6 +327,14 @@ static void start_process(void* args) {
     list_init(&t->pcb->all_threads);
     // add the main thread to the list of threads in the PCB
     list_push_back(&t->pcb->all_threads, &t->elem_in_pcb);
+
+    // initialize the thread descriptor table
+    t->pcb->threads_descriptor_table[t->tid] =
+        (struct thread_descriptor*)malloc(sizeof(struct thread_descriptor));
+    t->pcb->threads_descriptor_table[t->tid]->thread = t;
+    t->pcb->threads_descriptor_table[t->tid]->has_been_joined = false;
+    t->pcb->threads_descriptor_table[t->tid]->tid = t->tid;
+
     t->pcb->total_threads = 1;
     t->pcb->terminating = false;
     t->pcb->exit_code = 0;
@@ -1077,6 +1092,12 @@ static void start_pthread(void* exec_) {
 
   // Step 3. Add the current thread in pcb. elem is used for synchronization, let's use another variable.
   list_push_back(&t->pcb->all_threads, &t->elem_in_pcb);
+  t->pcb->threads_descriptor_table[t->tid] =
+      (struct thread_descriptor*)malloc(sizeof(struct thread_descriptor));
+  t->pcb->threads_descriptor_table[t->tid]->thread = t;
+  t->pcb->threads_descriptor_table[t->tid]->has_been_joined = false;
+  t->pcb->threads_descriptor_table[t->tid]->tid = t->tid;
+
   t->pcb->total_threads++;
 
   // Step 4. Set up interrupt stack frame, including stack pointer and instruction pointer.
@@ -1130,47 +1151,43 @@ tid_t pthread_join(tid_t tid) {
   if (tid == thread_current()->tid) {
     return TID_ERROR;
   }
+  // get the thread descriptor of the thread to join
+  struct thread_descriptor* thread_descriptor = t->pcb->threads_descriptor_table[tid];
 
-  // We need to find the thread first
-  struct thread* thread_to_join = NULL;
-  bool found = false;
+  // if a thread is created in a process, its thread descriptor will be guaranteed to be in the table
+  // if it's not in the table, then we know it's a bogus tid
+  if (thread_descriptor == NULL) {
+    return TID_ERROR;
+  }
 
-  // Acquire lock to safely access the thread list
-  lock_acquire(&t->pcb->all_threads_lock);
-
-  struct list_elem* elem = list_begin(&t->pcb->all_threads);
-
-  // Safe iteration with lock held
-  while (elem != list_end(&t->pcb->all_threads)) {
-    // Use elem_in_pcb as the list element field
-    struct thread* thread = list_entry(elem, struct thread, elem_in_pcb);
-    if (thread->tid == tid) {
-      thread_to_join = thread;
-      found = true;
-      break;
+  // if the thread of the thread descriptor is null, then the thread has already exited
+  if (thread_descriptor->thread == NULL) {
+    // if the thread has already exited, check if it has been joined
+    if (thread_descriptor->has_been_joined) {
+      return TID_ERROR;
     }
-    elem = list_next(elem);
+    return tid;
   }
 
-  if (!found) {
-    lock_release(&t->pcb->all_threads_lock);
-    return TID_ERROR;
-  }
+  // get the thread to join
+  struct thread* thread_to_join = thread_descriptor->thread;
 
-  // make sure this thread is in the same process
-  if (t->pcb != thread_to_join->pcb) {
-    lock_release(&t->pcb->all_threads_lock);
-    return TID_ERROR;
+  // if the status of the thread to join is THREAD_DYING, then the thread has already exited
+  if (thread_to_join->status == THREAD_DYING) {
+    return tid;
   }
 
   // Get a reference to the semaphore before releasing the lock
   struct semaphore* join_sema = &thread_to_join->join_sem;
 
-  lock_release(&t->pcb->all_threads_lock);
-
+  // check if the thread has been joined, make sure it's also in the table
+  if (thread_descriptor->has_been_joined) {
+    return TID_ERROR;
+  }
+  // set the thread as joined
+  thread_descriptor->has_been_joined = true;
   // Now wait on the semaphore
   sema_down(join_sema);
-
   return tid;
 }
 

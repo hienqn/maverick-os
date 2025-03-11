@@ -188,6 +188,11 @@ void userprog_init(void) {
   t->pcb->threads_descriptor_table[t->tid]->has_been_joined = false;
   t->pcb->threads_descriptor_table[t->tid]->tid = t->tid;
 
+  memset(t->pcb->lock_map, 0, sizeof(t->pcb->lock_map));
+  memset(t->pcb->sema_map, 0, sizeof(t->pcb->sema_map));
+  memset(t->pcb->locks, 0, sizeof(t->pcb->locks));
+  memset(t->pcb->semaphores, 0, sizeof(t->pcb->semaphores));
+
   t->pcb->total_threads = 1;
   t->pcb->terminating = false;
   t->pcb->exit_code = 0;
@@ -334,6 +339,11 @@ static void start_process(void* args) {
     t->pcb->threads_descriptor_table[t->tid]->thread = t;
     t->pcb->threads_descriptor_table[t->tid]->has_been_joined = false;
     t->pcb->threads_descriptor_table[t->tid]->tid = t->tid;
+
+    memset(t->pcb->lock_map, 0, sizeof(t->pcb->lock_map));
+    memset(t->pcb->sema_map, 0, sizeof(t->pcb->sema_map));
+    memset(t->pcb->locks, 0, sizeof(t->pcb->locks));
+    memset(t->pcb->semaphores, 0, sizeof(t->pcb->semaphores));
 
     t->pcb->total_threads = 1;
     t->pcb->terminating = false;
@@ -521,6 +531,22 @@ void process_exit(const int exit_status) {
       if (pcb_to_free->fd_table[fd] != NULL) {
         file_close(pcb_to_free->fd_table[fd]);
         pcb_to_free->fd_table[fd] = NULL;
+      }
+    }
+
+    // Free kernel locks
+    for (int i = 0; i < MAX_LOCKS_PER_PROCESS; i++) {
+      if (pcb_to_free->locks[i] != NULL) {
+        free(pcb_to_free->locks[i]);
+        pcb_to_free->locks[i] = NULL;
+      }
+    }
+
+    // Free kernel semaphores
+    for (int i = 0; i < MAX_SEMAS_PER_PROCESS; i++) {
+      if (pcb_to_free->semaphores[i] != NULL) {
+        free(pcb_to_free->semaphores[i]);
+        pcb_to_free->semaphores[i] = NULL;
       }
     }
 

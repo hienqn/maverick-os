@@ -13,12 +13,12 @@
 #include "threads/synch.h"
 
 /* Helper function prototypes */
-static struct kernel_lock* find_kernel_lock(char* user_lock_ptr);
-static struct kernel_semaphore* find_kernel_semaphore(char* user_sema_ptr);
+static int allocate_lock_id(struct process* pcb);
+static int allocate_sema_id(struct process* pcb);
+static struct kernel_lock* find_kernel_lock(char lock_id);
+static struct kernel_semaphore* find_kernel_semaphore(char sema_id);
 void syscall_init(void);
 struct lock global_lock;
-static struct list all_kernel_locks;
-static struct list all_kernel_semaphores;
 
 typedef bool (*validate_func)(struct intr_frame* f, uint32_t* args);
 typedef void (*handler_func)(struct intr_frame* f, uint32_t* args);
@@ -27,8 +27,6 @@ static void syscall_handler(struct intr_frame*);
 
 void syscall_init(void) {
   lock_init(&global_lock);
-  list_init(&all_kernel_locks);
-  list_init(&all_kernel_semaphores);
   intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall");
 }
 
@@ -492,28 +490,41 @@ static bool validate_lock_init(struct intr_frame* f, uint32_t* args) {
 }
 
 static void sys_lock_init_handler(struct intr_frame* f, uint32_t* args) {
-  char* lock = (char*)args[1];
-  if (lock == NULL) {
+  char* user_lock_ptr = (char*)args[1];
+  if (user_lock_ptr == NULL) {
     f->eax = 0;
     return;
   }
 
-  // Allocate kernel_lock on the heap so it persists after the function returns
-  // where should I free this?
+  struct process* pcb = thread_current()->pcb;
+  int lock_id = allocate_lock_id(pcb);
+
+  if (lock_id < 0) {
+    f->eax = 0; // No more IDs available
+    return;
+  }
+
   struct kernel_lock* kernel_lock = malloc(sizeof(struct kernel_lock));
   if (kernel_lock == NULL) {
-    // Memory allocation failed
+    // Free the ID we just allocated
+    int byte_idx = lock_id / 8;
+    int bit_idx = lock_id % 8;
+    pcb->lock_map[byte_idx] &= ~(1 << bit_idx);
+
     f->eax = 0;
     return;
   }
 
-  // Initialize the lock structure
-  kernel_lock->user_lock_ptr = lock;
+  // Initialize the lock
+  kernel_lock->user_lock_ptr = user_lock_ptr;
   lock_init(&kernel_lock->lock);
   kernel_lock->owner = thread_current();
 
-  // Add to list of locks
-  list_push_back(&all_kernel_locks, &kernel_lock->elem);
+  // Store in the process's lock table
+  pcb->locks[lock_id] = kernel_lock;
+
+  // Return the ID to the user by writing it to the user's lock_t
+  *user_lock_ptr = (char)lock_id;
 
   f->eax = 1;
 }
@@ -523,17 +534,19 @@ static bool validate_lock_acquire(struct intr_frame* f, uint32_t* args) {
 }
 
 static void sys_lock_acquire_handler(struct intr_frame* f, uint32_t* args) {
-  char* lock = (char*)args[1];
-  struct kernel_lock* kernel_lock = find_kernel_lock(lock);
+  char* user_lock_ptr = (char*)args[1];
+  char lock_id = *user_lock_ptr; // Read the ID from user space
+
+  // Direct O(1) lookup
+  struct process* pcb = thread_current()->pcb;
+  struct kernel_lock* kernel_lock = pcb->locks[(unsigned char)lock_id];
 
   if (kernel_lock == NULL) {
     f->eax = 0;
     return;
   }
 
-  // Use provided API function instead of accessing internal structure
   if (lock_held_by_current_thread(&kernel_lock->lock)) {
-    // Double acquire detected
     f->eax = 0;
     return;
   }
@@ -547,15 +560,17 @@ static bool validate_lock_release(struct intr_frame* f, uint32_t* args) {
 }
 
 static void sys_lock_release_handler(struct intr_frame* f, uint32_t* args) {
-  char* lock = (char*)args[1];
-  struct kernel_lock* kernel_lock = find_kernel_lock(lock);
+  char* user_lock_ptr = (char*)args[1];
+  char lock_id = *user_lock_ptr; // Read the ID from user space
+
+  struct process* pcb = thread_current()->pcb;
+  struct kernel_lock* kernel_lock = pcb->locks[(unsigned char)lock_id];
 
   if (kernel_lock == NULL) {
     f->eax = 0;
     return;
   }
 
-  // If you already released the lock, lock_held_by_current_thread will return false
   if (!lock_held_by_current_thread(&kernel_lock->lock)) {
     f->eax = 0;
     return;
@@ -570,10 +585,13 @@ static bool validate_sema_init(struct intr_frame* f, uint32_t* args) {
 }
 
 static void sys_sema_init_handler(struct intr_frame* f, uint32_t* args) {
-  char* sema = (char*)args[1];
+  char* user_sema_ptr = (char*)args[1];
   int value = args[2];
 
-  if (sema == NULL) {
+  struct process* pcb = thread_current()->pcb;
+  int sema_id = allocate_sema_id(pcb);
+
+  if (sema_id < 0) {
     f->eax = 0;
     return;
   }
@@ -584,15 +602,20 @@ static void sys_sema_init_handler(struct intr_frame* f, uint32_t* args) {
   }
 
   struct kernel_semaphore* kernel_sema = malloc(sizeof(struct kernel_semaphore));
+
   if (kernel_sema == NULL) {
     f->eax = 0;
     return;
   }
 
-  kernel_sema->user_sema_ptr = sema;
-  sema_init(&kernel_sema->sema, value);
-  list_push_back(&all_kernel_semaphores, &kernel_sema->elem);
+  if (user_sema_ptr == NULL) {
+    f->eax = 0;
+    return;
+  }
 
+  kernel_sema->user_sema_ptr = user_sema_ptr;
+  sema_init(&kernel_sema->sema, value);
+  pcb->semaphores[sema_id] = kernel_sema;
   f->eax = 1;
 }
 
@@ -601,8 +624,8 @@ static bool validate_sema_down(struct intr_frame* f, uint32_t* args) {
 }
 
 static void sys_sema_down_handler(struct intr_frame* f, uint32_t* args) {
-  char* sema = (char*)args[1];
-  struct kernel_semaphore* kernel_sema = find_kernel_semaphore(sema);
+  char* user_sema_ptr = (char*)args[1];
+  struct kernel_semaphore* kernel_sema = find_kernel_semaphore(*user_sema_ptr);
 
   if (kernel_sema == NULL) {
     f->eax = 0;
@@ -618,8 +641,8 @@ static bool validate_sema_up(struct intr_frame* f, uint32_t* args) {
 }
 
 static void sys_sema_up_handler(struct intr_frame* f, uint32_t* args) {
-  char* sema = (char*)args[1];
-  struct kernel_semaphore* kernel_sema = find_kernel_semaphore(sema);
+  char* user_sema_ptr = (char*)args[1];
+  struct kernel_semaphore* kernel_sema = find_kernel_semaphore(*user_sema_ptr);
 
   if (kernel_sema == NULL) {
     f->eax = 0;
@@ -720,29 +743,54 @@ static void syscall_handler(struct intr_frame* f) {
   }
 }
 
-static struct kernel_lock* find_kernel_lock(char* user_lock_ptr) {
-  struct list_elem* e;
+// Get the next available lock ID
+static int allocate_lock_id(struct process* pcb) {
+  for (int i = 0; i < MAX_LOCKS_PER_PROCESS; i++) {
+    int byte_idx = i / 8;
+    int bit_idx = i % 8;
 
-  for (e = list_begin(&all_kernel_locks); e != list_end(&all_kernel_locks); e = list_next(e)) {
-    struct kernel_lock* klock = list_entry(e, struct kernel_lock, elem);
-    if (klock->user_lock_ptr == user_lock_ptr) {
-      return klock;
+    if ((pcb->lock_map[byte_idx] & (1 << bit_idx)) == 0) {
+      // Mark as used
+      pcb->lock_map[byte_idx] |= (1 << bit_idx);
+      return i;
     }
   }
-
-  return NULL; // Not found
+  return -1; // No available IDs
 }
 
-static struct kernel_semaphore* find_kernel_semaphore(char* user_sema_ptr) {
-  struct list_elem* e;
+// Find a lock by its ID
+static struct kernel_lock* find_kernel_lock(char lock_id) {
+  struct process* pcb = thread_current()->pcb;
+  int id = (unsigned char)lock_id;
 
-  for (e = list_begin(&all_kernel_semaphores); e != list_end(&all_kernel_semaphores);
-       e = list_next(e)) {
-    struct kernel_semaphore* ksema = list_entry(e, struct kernel_semaphore, elem);
-    if (ksema->user_sema_ptr == user_sema_ptr) {
-      return ksema;
-    }
+  if (id >= MAX_LOCKS_PER_PROCESS) {
+    return NULL;
   }
 
-  return NULL; // Not found
+  return pcb->locks[id];
+}
+
+static int allocate_sema_id(struct process* pcb) {
+  // similar to allocate_lock_id
+  for (int i = 0; i < MAX_SEMAS_PER_PROCESS; i++) {
+    int byte_idx = i / 8;
+    int bit_idx = i % 8;
+
+    if ((pcb->sema_map[byte_idx] & (1 << bit_idx)) == 0) {
+      pcb->sema_map[byte_idx] |= (1 << bit_idx);
+      return i;
+    }
+  }
+  return -1; // No available IDs
+}
+
+static struct kernel_semaphore* find_kernel_semaphore(char sema_id) {
+  struct process* pcb = thread_current()->pcb;
+  int id = (unsigned char)sema_id;
+
+  if (id >= MAX_SEMAS_PER_PROCESS) {
+    return NULL;
+  }
+
+  return pcb->semaphores[id];
 }

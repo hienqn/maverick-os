@@ -29,6 +29,10 @@ typedef struct child_process {
   struct list_elem elem; // List element for struct lists
 } child_process_t;
 
+// Add these definitions at the top
+#define MAX_LOCKS_PER_PROCESS 256
+#define MAX_SEMAS_PER_PROCESS 256
+
 /* The process control block for a given process. Since
    there can be multiple threads per process, we need a separate
    PCB from the TCB. All TCBs in a process will have a pointer
@@ -43,12 +47,16 @@ struct process {
   struct lock child_lock;            // Lock for synchronizing access to child_processes
   struct lock all_threads_lock;      // Lock for synchronizing access to all_threads
   struct condition all_threads_cond; // Condition variable for all_threads
-  struct process* p_process;
-  struct file* fd_table[MAX_FD];
-  struct thread_descriptor* threads_descriptor_table[MAX_THREADS];
-  int total_threads;
-  bool terminating;
-  int exit_code;
+  struct process* p_process;         // Pointer to the process
+  struct file* fd_table[MAX_FD];     // File descriptor table
+  struct thread_descriptor* threads_descriptor_table[MAX_THREADS]; // Thread descriptor table
+  int total_threads; // Total number of threads in the process
+  bool terminating;  // Whether the process is terminating
+  int exit_code;     // Exit code of the process
+  struct kernel_lock* locks[MAX_LOCKS_PER_PROCESS]; // Array of kernel locks
+  struct kernel_semaphore* semaphores[MAX_SEMAS_PER_PROCESS]; // Array of kernel semaphores
+  uint8_t lock_map[MAX_LOCKS_PER_PROCESS / 8]; // Bitmap for locks
+  uint8_t sema_map[MAX_SEMAS_PER_PROCESS / 8]; // Bitmap for semaphores
 };
 
 struct thread_descriptor {

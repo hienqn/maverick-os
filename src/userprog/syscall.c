@@ -518,7 +518,8 @@ static void sys_lock_init_handler(struct intr_frame* f, uint32_t* args) {
   // Initialize the lock
   kernel_lock->user_lock_ptr = user_lock_ptr;
   lock_init(&kernel_lock->lock);
-  kernel_lock->owner = thread_current();
+
+  kernel_lock->owner = NULL;
 
   // Store in the process's lock table
   pcb->locks[lock_id] = kernel_lock;
@@ -546,12 +547,19 @@ static void sys_lock_acquire_handler(struct intr_frame* f, uint32_t* args) {
     return;
   }
 
-  if (lock_held_by_current_thread(&kernel_lock->lock)) {
+  // Check for double acquisition
+  if (kernel_lock->owner == thread_current()) {
+    // Double acquisition detected! Return failure immediately
     f->eax = 0;
     return;
   }
 
+  // Set the owner AFTER successful acquisition
+  kernel_lock->owner = thread_current();
+
+  // Acquire the lock FIRST
   lock_acquire(&kernel_lock->lock);
+
   f->eax = 1;
 }
 
@@ -561,7 +569,7 @@ static bool validate_lock_release(struct intr_frame* f, uint32_t* args) {
 
 static void sys_lock_release_handler(struct intr_frame* f, uint32_t* args) {
   char* user_lock_ptr = (char*)args[1];
-  char lock_id = *user_lock_ptr; // Read the ID from user space
+  char lock_id = *user_lock_ptr;
 
   struct process* pcb = thread_current()->pcb;
   struct kernel_lock* kernel_lock = pcb->locks[(unsigned char)lock_id];
@@ -571,11 +579,16 @@ static void sys_lock_release_handler(struct intr_frame* f, uint32_t* args) {
     return;
   }
 
-  if (!lock_held_by_current_thread(&kernel_lock->lock)) {
+  // Check if we own the lock
+  if (kernel_lock->owner != thread_current()) {
     f->eax = 0;
     return;
   }
 
+  // Clear the owner BEFORE releasing the lock
+  kernel_lock->owner = NULL;
+
+  // Now release the lock
   lock_release(&kernel_lock->lock);
   f->eax = 1;
 }

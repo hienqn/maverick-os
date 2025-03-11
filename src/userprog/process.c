@@ -537,7 +537,13 @@ void process_exit(const int exit_status) {
     // Free kernel locks
     for (int i = 0; i < MAX_LOCKS_PER_PROCESS; i++) {
       if (pcb_to_free->locks[i] != NULL) {
-        free(pcb_to_free->locks[i]);
+        struct kernel_lock* kernel_lock = pcb_to_free->locks[i];
+
+        if (kernel_lock->owner == thread_current()) {
+          kernel_lock->owner = NULL;
+          lock_release(&kernel_lock->lock);
+        }
+        free(kernel_lock);
         pcb_to_free->locks[i] = NULL;
       }
     }

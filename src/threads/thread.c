@@ -359,11 +359,29 @@ void thread_foreach(thread_action_func* func, void* aux) {
 
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void thread_set_priority(int new_priority) {
-  thread_current()->effective_priority = new_priority;
   thread_current()->priority = new_priority;
-  // sort the ready list
+
+  // Recalculate effective priority (similar to lock_release code)
+  int effective = new_priority;
+  struct list_elem* e;
+
+  for (e = list_begin(&thread_current()->held_locks); e != list_end(&thread_current()->held_locks);
+       e = list_next(e)) {
+    struct lock* held_lock = list_entry(e, struct lock, elem);
+    struct list_elem* w;
+
+    for (w = list_begin(&held_lock->semaphore.waiters);
+         w != list_end(&held_lock->semaphore.waiters); w = list_next(w)) {
+      struct thread* waiter = list_entry(w, struct thread, elem);
+      if (waiter->effective_priority > effective) {
+        effective = waiter->effective_priority;
+      }
+    }
+  }
+
+  thread_current()->effective_priority = effective;
+  // Sort ready list and yield if necessary (as in your current code)
   list_sort(&prio_ready_list, thread_priority_cmp, NULL);
-  // Check if the next thread in the ready queue has a higher priority.
   if (!list_empty(&prio_ready_list)) {
     struct thread* next =
         list_entry(list_max(&prio_ready_list, thread_priority_cmp, NULL), struct thread, elem);

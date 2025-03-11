@@ -588,6 +588,11 @@ static void sys_sema_init_handler(struct intr_frame* f, uint32_t* args) {
   char* user_sema_ptr = (char*)args[1];
   int value = args[2];
 
+  if (user_sema_ptr == NULL || value < 0) {
+    f->eax = 0;
+    return;
+  }
+
   struct process* pcb = thread_current()->pcb;
   int sema_id = allocate_sema_id(pcb);
 
@@ -596,36 +601,40 @@ static void sys_sema_init_handler(struct intr_frame* f, uint32_t* args) {
     return;
   }
 
-  if (value < 0) {
-    f->eax = 0;
-    return;
-  }
-
   struct kernel_semaphore* kernel_sema = malloc(sizeof(struct kernel_semaphore));
 
   if (kernel_sema == NULL) {
+    // Free the ID we just allocated
+    int byte_idx = sema_id / 8;
+    int bit_idx = sema_id % 8;
+    pcb->sema_map[byte_idx] &= ~(1 << bit_idx);
+
     f->eax = 0;
     return;
   }
 
-  if (user_sema_ptr == NULL) {
-    f->eax = 0;
-    return;
-  }
-
-  kernel_sema->user_sema_ptr = user_sema_ptr;
   sema_init(&kernel_sema->sema, value);
   pcb->semaphores[sema_id] = kernel_sema;
-  f->eax = 1;
-}
 
-static bool validate_sema_down(struct intr_frame* f, uint32_t* args) {
-  return is_valid_pointer(&args[1], sizeof(char*));
+  // Write the ID back to user space
+  *user_sema_ptr = (char)sema_id;
+  f->eax = 1;
 }
 
 static void sys_sema_down_handler(struct intr_frame* f, uint32_t* args) {
   char* user_sema_ptr = (char*)args[1];
-  struct kernel_semaphore* kernel_sema = find_kernel_semaphore(*user_sema_ptr);
+
+  // Read the ID from user space
+  unsigned char sema_id = *user_sema_ptr;
+
+  struct process* pcb = thread_current()->pcb;
+  if (sema_id >= MAX_SEMAS_PER_PROCESS || pcb->semaphores[sema_id] == NULL) {
+    f->eax = 0; // Indicate failure but don't terminate
+    return;
+  }
+
+  // Get the semaphore from the current process's table
+  struct kernel_semaphore* kernel_sema = find_kernel_semaphore(sema_id);
 
   if (kernel_sema == NULL) {
     f->eax = 0;
@@ -636,13 +645,22 @@ static void sys_sema_down_handler(struct intr_frame* f, uint32_t* args) {
   f->eax = 1;
 }
 
+static bool validate_sema_down(struct intr_frame* f, uint32_t* args) {
+  return is_valid_pointer(&args[1], sizeof(char*));
+}
+
 static bool validate_sema_up(struct intr_frame* f, uint32_t* args) {
   return is_valid_pointer(&args[1], sizeof(char*));
 }
 
 static void sys_sema_up_handler(struct intr_frame* f, uint32_t* args) {
   char* user_sema_ptr = (char*)args[1];
-  struct kernel_semaphore* kernel_sema = find_kernel_semaphore(*user_sema_ptr);
+
+  // Read the ID from user space
+  unsigned char sema_id = *user_sema_ptr;
+
+  // Get the semaphore from the current process's table
+  struct kernel_semaphore* kernel_sema = find_kernel_semaphore(sema_id);
 
   if (kernel_sema == NULL) {
     f->eax = 0;

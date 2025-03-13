@@ -536,9 +536,8 @@ static bool validate_lock_acquire(struct intr_frame* f, uint32_t* args) {
 
 static void sys_lock_acquire_handler(struct intr_frame* f, uint32_t* args) {
   char* user_lock_ptr = (char*)args[1];
-  char lock_id = *user_lock_ptr; // Read the ID from user space
+  char lock_id = *user_lock_ptr;
 
-  // Direct O(1) lookup
   struct process* pcb = thread_current()->pcb;
   struct kernel_lock* kernel_lock = pcb->locks[(unsigned char)lock_id];
 
@@ -547,18 +546,17 @@ static void sys_lock_acquire_handler(struct intr_frame* f, uint32_t* args) {
     return;
   }
 
-  // Check for double acquisition
+  // Check for self-acquisition first
   if (kernel_lock->owner == thread_current()) {
-    // Double acquisition detected! Return failure immediately
     f->eax = 0;
     return;
   }
 
-  // Set the owner AFTER successful acquisition
-  kernel_lock->owner = thread_current();
-
-  // Acquire the lock FIRST
+  // FIRST acquire the underlying Pintos lock
   lock_acquire(&kernel_lock->lock);
+
+  // ONLY AFTER successful acquisition, mark ownership
+  kernel_lock->owner = thread_current();
 
   f->eax = 1;
 }

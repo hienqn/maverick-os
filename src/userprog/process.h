@@ -7,7 +7,7 @@
 // At most 8MB can be allocated to the stack
 // These defines will be used in Project 2: Multithreading
 #define MAX_STACK_PAGES (1 << 11)
-#define MAX_THREADS 127
+#define MAX_THREADS 500
 #define MAX_FD 150
 
 typedef int fd;
@@ -50,13 +50,13 @@ struct process {
   struct process* p_process;         // Pointer to the process
   struct file* fd_table[MAX_FD];     // File descriptor table
   struct thread_descriptor* threads_descriptor_table[MAX_THREADS]; // Thread descriptor table
-  int total_threads; // Total number of threads in the process
-  bool terminating;  // Whether the process is terminating
-  int exit_code;     // Exit code of the process
+  int total_threads;                                // Total number of threads in the process
+  bool terminating;                                 // Whether the process is terminating
+  int exit_code;                                    // Exit code of the process
   struct kernel_lock* locks[MAX_LOCKS_PER_PROCESS]; // Array of kernel locks
   struct kernel_semaphore* semaphores[MAX_SEMAS_PER_PROCESS]; // Array of kernel semaphores
-  uint8_t lock_map[MAX_LOCKS_PER_PROCESS / 8]; // Bitmap for locks
-  uint8_t sema_map[MAX_SEMAS_PER_PROCESS / 8]; // Bitmap for semaphores
+  uint8_t lock_map[MAX_LOCKS_PER_PROCESS / 8];                // Bitmap for locks
+  uint8_t sema_map[MAX_SEMAS_PER_PROCESS / 8];                // Bitmap for semaphores
 };
 
 struct thread_descriptor {

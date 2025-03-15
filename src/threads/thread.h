@@ -106,6 +106,7 @@ struct thread {
   struct process* pcb; /* Process control block if this thread is a userprog */
   struct semaphore join_sem;
   void* user_stack;
+  size_t stack_index; /* Index in the stack bitmap */
 #endif
 
   /* Owned by thread.c. */

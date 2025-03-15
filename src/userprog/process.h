@@ -51,6 +51,7 @@ struct process {
   struct file* fd_table[MAX_FD];     // File descriptor table
   struct thread_descriptor* threads_descriptor_table[MAX_THREADS]; // Thread descriptor table
   int total_threads;                                // Total number of threads in the process
+  struct bitmap* stack_bitmap;                      // Bitmap for tracking stack allocations
   bool terminating;                                 // Whether the process is terminating
   int exit_code;                                    // Exit code of the process
   struct kernel_lock* locks[MAX_LOCKS_PER_PROCESS]; // Array of kernel locks

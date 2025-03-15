@@ -19,6 +19,7 @@
 #include "threads/synch.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "lib/kernel/bitmap.h"
 
 static thread_func start_process NO_RETURN;
 static thread_func start_pthread NO_RETURN;
@@ -188,6 +189,13 @@ void userprog_init(void) {
   t->pcb->threads_descriptor_table[t->tid]->has_been_joined = false;
   t->pcb->threads_descriptor_table[t->tid]->tid = t->tid;
 
+  // Initialize the stack bitmap
+  t->pcb->stack_bitmap = bitmap_create(MAX_THREADS);
+  ASSERT(t->pcb->stack_bitmap != NULL);
+  // Mark the first slot as used by the main thread
+  bitmap_set(t->pcb->stack_bitmap, 0, true);
+  t->stack_index = 0;
+
   memset(t->pcb->lock_map, 0, sizeof(t->pcb->lock_map));
   memset(t->pcb->sema_map, 0, sizeof(t->pcb->sema_map));
   memset(t->pcb->locks, 0, sizeof(t->pcb->locks));
@@ -339,6 +347,13 @@ static void start_process(void* args) {
     t->pcb->threads_descriptor_table[t->tid]->thread = t;
     t->pcb->threads_descriptor_table[t->tid]->has_been_joined = false;
     t->pcb->threads_descriptor_table[t->tid]->tid = t->tid;
+
+    // Initialize the stack bitmap
+    t->pcb->stack_bitmap = bitmap_create(MAX_THREADS);
+    ASSERT(t->pcb->stack_bitmap != NULL);
+    // Mark the first slot as used by the main thread
+    bitmap_set(t->pcb->stack_bitmap, 0, true);
+    t->stack_index = 0;
 
     memset(t->pcb->lock_map, 0, sizeof(t->pcb->lock_map));
     memset(t->pcb->sema_map, 0, sizeof(t->pcb->sema_map));
@@ -574,6 +589,12 @@ void process_exit(const int exit_status) {
       pagedir_destroy(pcb_to_free->pagedir); // Frees page directory and associated resources.
       pcb_to_free->pagedir = NULL;           // Prevent dangling pointer.
       // printf("[DEBUG] Page directory destroyed for process '%s'\n", pcb_to_free->process_name);
+    }
+
+    // Destroy stack bitmap
+    if (pcb_to_free->stack_bitmap != NULL) {
+      bitmap_destroy(pcb_to_free->stack_bitmap);
+      pcb_to_free->stack_bitmap = NULL;
     }
 
     // Finally, free the process control block itself.
@@ -984,20 +1005,36 @@ pid_t get_pid(struct process* p) { return (pid_t)p->main_thread->tid; }
    function signature. */
 bool setup_thread(void** esp) {
   ASSERT(thread_current()->pcb != NULL);
+  struct process* pcb = thread_current()->pcb;
   uint8_t* kpage;
   bool success = false;
-  int num_threads = thread_current()->pcb->total_threads;
 
+  // Find an available slot in the stack bitmap
+  size_t stack_index = bitmap_scan(pcb->stack_bitmap, 0, 1, false);
+  if (stack_index == BITMAP_ERROR) {
+    return false; // No available slots
+  }
+
+  // Allocate a physical page
   kpage = palloc_get_page(PAL_USER | PAL_ZERO);
   if (kpage != NULL) {
-    void* upage = ((uint8_t*)PHYS_BASE) - num_threads * PGSIZE;
+    // Calculate the virtual address for this stack
+    void* upage = ((uint8_t*)PHYS_BASE) - (stack_index + 1) * PGSIZE;
+
     success = install_page(upage, kpage, true);
     if (success) {
-      *esp = PHYS_BASE - (num_threads - 1) * PGSIZE;
-      thread_current()->user_stack = upage; // Store the address for cleanup later
-    } else
+      // Mark the stack slot as used in the bitmap
+      bitmap_set(pcb->stack_bitmap, stack_index, true);
+
+      // Set the stack pointer and save stack info for cleanup
+      *esp = PHYS_BASE - stack_index * PGSIZE;
+      thread_current()->user_stack = upage;
+      thread_current()->stack_index = stack_index; // Store for cleanup
+    } else {
       palloc_free_page(kpage);
+    }
   }
+
   return success;
 }
 
@@ -1020,7 +1057,12 @@ void free_thread_stack(struct thread* t) {
   if (t->user_stack != NULL) {
     // Remove the mapping from the page directory and free the physical page:
     bool success = uninstall_page(t->user_stack);
-    // Optionally check success/error here
+
+    // Mark the stack slot as available in the bitmap
+    if (t->pcb != NULL && t->pcb->stack_bitmap != NULL) {
+      bitmap_set(t->pcb->stack_bitmap, t->stack_index, false);
+    }
+
     t->user_stack = NULL;
   }
 }
@@ -1073,7 +1115,6 @@ tid_t pthread_execute(stub_fun sf, pthread_fun tf, void* arg) {
 }
 
 static bool prepare_pthread_stack(pthread_fun tf, void* arg, void** esp) {
-
   // First calculate alignment needs
   size_t needed_space = 2 * sizeof(void*);                        // Two pointers: function and arg
   uintptr_t aligned_sp = ((uintptr_t)*esp - needed_space) & ~0xF; // Align to 16 bytes

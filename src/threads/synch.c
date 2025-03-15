@@ -124,7 +124,8 @@ void sema_up(struct semaphore* sema) {
 
   /* If we're not in interrupt context and we just unblocked a higher-priority thread,
      yield so that it can run immediately. */
-  if (t != NULL && !intr_context() && t->priority > thread_current()->priority) {
+  if (t != NULL && !intr_context() &&
+      t->effective_priority > thread_current()->effective_priority) {
     thread_yield();
   }
 }

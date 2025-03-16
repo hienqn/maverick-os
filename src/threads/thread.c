@@ -264,6 +264,9 @@ static void thread_enqueue(struct thread* t) {
   ASSERT(intr_get_level() == INTR_OFF);
   ASSERT(is_thread(t));
 
+  // print the thread's status
+  printf("Thread %d is being enqueued with status %d\n", t->tid, t->status);
+
   if (active_sched_policy == SCHED_FIFO)
     list_push_back(&fifo_ready_list, &t->elem);
   else if (active_sched_policy == SCHED_PRIO) {

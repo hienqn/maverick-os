@@ -65,9 +65,12 @@ void sema_down(struct semaphore* sema) {
   while (sema->value == 0) {
     if (active_sched_policy == SCHED_PRIO) {
       // print this thread's priority
-      list_insert_ordered(&sema->waiters, &thread_current()->elem, thread_priority_cmp, NULL);
+      list_insert_ordered(&sema->waiters, &thread_current()->sync_elem, thread_priority_cmp, NULL);
     } else {
-      list_push_back(&sema->waiters, &thread_current()->elem);
+      // print which thread is added to the waiters list
+      printf("Thread %d added to waiters list of semaphore %p\n", thread_current()->tid,
+             (void*)sema);
+      list_push_back(&sema->waiters, &thread_current()->sync_elem);
     }
     thread_block();
   }
@@ -112,10 +115,10 @@ void sema_up(struct semaphore* sema) {
       // get the highest-priority thread
       struct list_elem* e = list_max(&sema->waiters, thread_priority_cmp, NULL);
       list_remove(e);
-      t = list_entry(e, struct thread, elem);
+      t = list_entry(e, struct thread, sync_elem);
       thread_unblock(t);
     } else {
-      t = list_entry(list_pop_front(&sema->waiters), struct thread, elem);
+      t = list_entry(list_pop_front(&sema->waiters), struct thread, sync_elem);
       thread_unblock(t);
     }
   }
@@ -200,7 +203,7 @@ void lock_acquire(struct lock* lock) {
     thread_current()->waiting_lock = lock;
     struct thread* holder = lock->holder; // Could be NULL if released just now
 
-    if (holder != NULL) { // Donate only if there’s a holder
+    if (holder != NULL) { // Donate only if there's a holder
       int current_priority = thread_current()->effective_priority;
       struct thread* current = thread_current();
       while (holder != NULL && holder != current) { // Avoid self-cycle
@@ -260,7 +263,7 @@ void lock_release(struct lock* lock) {
     struct list_elem* w;
     for (w = list_begin(&held_lock->semaphore.waiters);
          w != list_end(&held_lock->semaphore.waiters); w = list_next(w)) {
-      struct thread* waiter = list_entry(w, struct thread, elem);
+      struct thread* waiter = list_entry(w, struct thread, sync_elem);
       if (waiter->effective_priority > new_priority) {
         new_priority = waiter->effective_priority;
       }

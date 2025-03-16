@@ -1368,7 +1368,7 @@ void pthread_exit(void) {
     printf(" Semaphore value: %d\n", t->join_sem.value);
     for (e = list_begin(&t->join_sem.waiters); e != list_end(&t->join_sem.waiters);
          e = list_next(e)) {
-      struct thread* waiter = list_entry(e, struct thread, elem);
+      struct thread* waiter = list_entry(e, struct thread, sync_elem);
       waiters_count++;
       printf(" %d", waiter->tid);
     }
@@ -1379,6 +1379,20 @@ void pthread_exit(void) {
 
   // Now signal the semaphore
   sema_up(&t->join_sem);
+
+  // print successful signal
+  printf("Process %s: Thread %d successfully signaled semaphore %p\n", t->pcb->process_name, t->tid,
+         (void*)&t->join_sem);
+
+  struct list_elem* e;
+  // same thing like above, print all the waiters after signal
+  printf("Process %s: Thread %d has following waiters on this semaphore after signal %p:\n",
+         t->pcb->process_name, t->tid, (void*)&t->join_sem);
+  for (e = list_begin(&t->join_sem.waiters); e != list_end(&t->join_sem.waiters);
+       e = list_next(e)) {
+    struct thread* waiter = list_entry(e, struct thread, sync_elem);
+    printf(" %d \n", waiter->tid);
+  }
 
   // Lock to protect shared resources
   lock_acquire(&t->pcb->all_threads_lock);
@@ -1422,6 +1436,10 @@ void pthread_exit(void) {
    now, it does nothing. */
 void pthread_exit_main(void) {
   struct thread* t = thread_current();
+
+  // print the semaphore value
+  printf("Process %s: Thread %d semaphore value before signal %p: %d\n", t->pcb->process_name,
+         t->tid, (void*)&t->join_sem, t->join_sem.value);
 
   // why do i need to called sema_up here?
   sema_up(&t->join_sem);

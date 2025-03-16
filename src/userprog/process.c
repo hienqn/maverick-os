@@ -1286,15 +1286,21 @@ void pthread_exit(void) {
   // Remove from thread list first (do this before freeing memory)
   list_remove(&t->elem_in_pcb);
   t->pcb->total_threads--;
-  // print the total threads in the process
 
+  // print the total threads in the process
   free_thread_stack(t);
+
+  // update the thread descriptor table
+  t->pcb->threads_descriptor_table[t->tid]->thread = NULL;
+  t->pcb->threads_descriptor_table[t->tid]->tid = t->tid;
 
   // Signal the all_threads condition
   cond_signal(&t->pcb->all_threads_cond, &t->pcb->all_threads_lock);
 
   // Release lock before freeing memory
   lock_release(&t->pcb->all_threads_lock);
+
+  printf("[DEBUG EXIT] Thread %d exiting\n", t->tid);
 
   thread_exit();
 }

@@ -83,24 +83,22 @@ typedef int tid_t;
    blocked state is on a semaphore wait list. */
 struct thread {
   /* Owned by thread.c. */
-  tid_t tid;                 /* Thread identifier. */
-  enum thread_status status; /* Thread state. */
-  char name[16];             /* Name (for debugging purposes). */
-  uint8_t* stack;            /* Saved stack pointer. */
-  int priority;              /* Priority. */
-  int effective_priority;    /* Effective Priority. */
-  struct list_elem allelem;  /* List element for all threads list. */
+  tid_t tid;                         /* Thread identifier. */
+  enum thread_status status;         /* Thread state. */
+  char name[16];                     /* Name (for debugging purposes). */
+  uint8_t* stack;                    /* Saved stack pointer. */
+  int priority;                      /* Priority. */
+  int effective_priority;            /* Effective Priority. */
+  struct list_elem allelem;          /* List element for ready list */
+  struct list_elem elem;             /* List element for ready list */
+  struct list_elem sync_elem;        /* List element for synchronization objects */
+  struct list_elem all_threads_elem; /* List element for all_threads list */
 
   struct lock* waiting_lock; /* The lock that this thread is waiting for*/
   struct list held_locks;    /* The locks that this thread is currently holding*/
 
   uint8_t fpu_state[108] __attribute__((aligned(4))); /* FPU state. Size depends on architecture */
 
-  /* Shared between thread.c and synch.c. */
-  struct list_elem elem; /* List element. */
-
-  /* Shared between thread.c and process.c. */
-  struct list_elem elem_in_pcb; /* List element. */
 #ifdef USERPROG
   /* Owned by process.c. */
   struct process* pcb; /* Process control block if this thread is a userprog */

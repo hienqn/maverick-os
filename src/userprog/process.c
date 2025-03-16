@@ -180,14 +180,6 @@ void userprog_init(void) {
   list_init(&t->pcb->child_processes);
   list_init(&t->pcb->all_threads);
   lock_init(&t->pcb->child_lock);
-  // add the main thread to the list of threads in the PCB
-  list_push_back(&t->pcb->all_threads, &t->elem_in_pcb);
-  // initialize the thread descriptor table
-  t->pcb->threads_descriptor_table[t->tid] =
-      (struct thread_descriptor*)malloc(sizeof(struct thread_descriptor));
-  t->pcb->threads_descriptor_table[t->tid]->thread = t;
-  t->pcb->threads_descriptor_table[t->tid]->has_been_joined = false;
-  t->pcb->threads_descriptor_table[t->tid]->tid = t->tid;
 
   // Initialize the stack bitmap
   t->pcb->stack_bitmap = bitmap_create(MAX_THREADS);
@@ -210,6 +202,20 @@ void userprog_init(void) {
   for (int i = 0; i < MAX_FD; i++) {
     t->pcb->fd_table[i] = NULL;
   }
+
+  // initialize the thread descriptor table
+  t->pcb->threads_descriptor_table[t->tid] =
+      (struct thread_descriptor*)malloc(sizeof(struct thread_descriptor));
+
+  if (t->pcb->threads_descriptor_table[t->tid] == NULL) {
+    printf("Failed to allocate memory for thread descriptor table\n");
+    return;
+  }
+
+  t->pcb->threads_descriptor_table[t->tid]->thread = t;
+  t->pcb->threads_descriptor_table[t->tid]->has_been_joined = false;
+  t->pcb->threads_descriptor_table[t->tid]->tid = t->tid;
+
   t->pcb->fd_table[STDIN_FILENO] = NULL;
   t->pcb->fd_table[STDOUT_FILENO] = NULL;
   t->pcb->fd_table[STDERR_FILENO] = NULL;
@@ -338,19 +344,13 @@ static void start_process(void* args) {
     list_init(&t->pcb->child_processes);
     lock_init(&t->pcb->child_lock);
     list_init(&t->pcb->all_threads);
-    // add the main thread to the list of threads in the PCB
-    list_push_back(&t->pcb->all_threads, &t->elem_in_pcb);
-
-    // initialize the thread descriptor table
-    t->pcb->threads_descriptor_table[t->tid] =
-        (struct thread_descriptor*)malloc(sizeof(struct thread_descriptor));
-    t->pcb->threads_descriptor_table[t->tid]->thread = t;
-    t->pcb->threads_descriptor_table[t->tid]->has_been_joined = false;
-    t->pcb->threads_descriptor_table[t->tid]->tid = t->tid;
 
     // Initialize the stack bitmap
     t->pcb->stack_bitmap = bitmap_create(MAX_THREADS);
-    ASSERT(t->pcb->stack_bitmap != NULL);
+    if (t->pcb->stack_bitmap == NULL) {
+      printf("Failed to allocate memory for stack bitmap\n");
+      success = false;
+    }
     // Mark the first slot as used by the main thread
     bitmap_set(t->pcb->stack_bitmap, 0, true);
     t->stack_index = 0;
@@ -365,6 +365,21 @@ static void start_process(void* args) {
     t->pcb->exit_code = 0;
     lock_init(&t->pcb->all_threads_lock);
     cond_init(&t->pcb->all_threads_cond);
+
+    // print process creating thread
+    printf("Process %s creating thread %d\n", t->pcb->process_name, t->tid);
+
+    // initialize the thread descriptor table
+    t->pcb->threads_descriptor_table[t->tid] =
+        (struct thread_descriptor*)malloc(sizeof(struct thread_descriptor));
+
+    if (t->pcb->threads_descriptor_table[t->tid] == NULL) {
+      printf("Failed to allocate memory for thread descriptor table\n");
+      success = false;
+    }
+    t->pcb->threads_descriptor_table[t->tid]->thread = t;
+    t->pcb->threads_descriptor_table[t->tid]->has_been_joined = false;
+    t->pcb->threads_descriptor_table[t->tid]->tid = t->tid;
   }
 
   /* Initialize interrupt frame and load executable. */
@@ -1074,6 +1089,7 @@ typedef struct pthread_args {
   bool success;
   struct semaphore sem;
   struct process* pcb;
+  tid_t parent_tid; // Add parent thread ID to track creator
 } pthread_args_t;
 
 /* Starts a new thread with a new user stack running SF, which takes
@@ -1097,6 +1113,7 @@ tid_t pthread_execute(stub_fun sf, pthread_fun tf, void* arg) {
   // But let's assert it anyway.
   ASSERT(thread_current()->pcb != NULL);
   args.pcb = thread_current()->pcb;
+  args.parent_tid = thread_current()->tid; // Store creator's thread ID
   sema_init(&args.sem, 0);
 
   tid = thread_create("stuff", PRI_DEFAULT, start_pthread, &args);
@@ -1163,15 +1180,32 @@ static void start_pthread(void* exec_) {
   // Step 2. Activate the thread to make sure we're in this process context
   process_activate();
 
-  // Step 3. Add the current thread in pcb. elem is used for synchronization, let's use another variable.
-  list_push_back(&t->pcb->all_threads, &t->elem_in_pcb);
+  // lock the thread descriptor table
+  lock_acquire(&t->pcb->all_threads_lock);
+
+  // creating the thread descriptor table entry, also add the current thread id
+  printf("Process %s: Thread %d created by Thread %d\n", t->pcb->process_name, t->tid,
+         pthread_args->parent_tid);
+
   t->pcb->threads_descriptor_table[t->tid] =
       (struct thread_descriptor*)malloc(sizeof(struct thread_descriptor));
+
+  if (t->pcb->threads_descriptor_table[t->tid] == NULL) {
+    printf("Process %s: Failed to allocate descriptor for Thread %d (created by Thread %d)\n",
+           t->pcb->process_name, t->tid, pthread_args->parent_tid);
+    pthread_args->success = false;
+    sema_up(&pthread_args->sem);
+    lock_release(&t->pcb->all_threads_lock);
+    thread_exit();
+  }
+
   t->pcb->threads_descriptor_table[t->tid]->thread = t;
   t->pcb->threads_descriptor_table[t->tid]->has_been_joined = false;
   t->pcb->threads_descriptor_table[t->tid]->tid = t->tid;
 
   t->pcb->total_threads++;
+  printf("Process %s: Total threads now %d after Thread %d creation\n", t->pcb->process_name,
+         t->pcb->total_threads, t->tid);
 
   // Step 4. Set up interrupt stack frame, including stack pointer and instruction pointer.
   memset(&if_, 0, sizeof if_);
@@ -1183,10 +1217,15 @@ static void start_pthread(void* exec_) {
   success = setup_thread(&if_.esp);
 
   if (!success) {
+    printf("Process %s: Failed to setup stack for Thread %d\n", t->pcb->process_name, t->tid);
     pthread_args->success = success;
     sema_up(&pthread_args->sem);
+    lock_release(&t->pcb->all_threads_lock);
     thread_exit();
   }
+
+  // unlock the thread descriptor table
+  lock_release(&t->pcb->all_threads_lock);
 
   success = prepare_pthread_stack(pthread_args->tf, pthread_args->arg, &if_.esp);
 
@@ -1220,25 +1259,38 @@ tid_t pthread_join(tid_t tid) {
   struct thread* t = thread_current();
   ASSERT(t->pcb != NULL);
 
+  printf("Process %s: Thread %d attempting to join Thread %d\n", t->pcb->process_name, t->tid, tid);
+
   // Prevent joining self - would cause deadlock
   if (tid == thread_current()->tid) {
+    printf("Process %s: Thread %d cannot join itself\n", t->pcb->process_name, t->tid);
     return TID_ERROR;
   }
+
   // get the thread descriptor of the thread to join
   struct thread_descriptor* thread_descriptor = t->pcb->threads_descriptor_table[tid];
 
   // if a thread is created in a process, its thread descriptor will be guaranteed to be in the table
   // if it's not in the table, then we know it's a bogus tid
   if (thread_descriptor == NULL) {
+    printf("Process %s: Thread %d not found in descriptor table\n", t->pcb->process_name, tid);
     return TID_ERROR;
   }
 
   // if the thread of the thread descriptor is null, then the thread has already exited
   if (thread_descriptor->thread == NULL) {
+    printf("Process %s: Thread %d has already exited\n", t->pcb->process_name, tid);
+
     // if the thread has already exited, check if it has been joined
     if (thread_descriptor->has_been_joined) {
+      printf("Process %s: Thread %d has already been joined\n", t->pcb->process_name, tid);
       return TID_ERROR;
     }
+
+    // Mark as joined
+    thread_descriptor->has_been_joined = true;
+    printf("Process %s: Thread %d marked as joined (was already exited)\n", t->pcb->process_name,
+           tid);
     return tid;
   }
 
@@ -1247,6 +1299,12 @@ tid_t pthread_join(tid_t tid) {
 
   // if the status of the thread to join is THREAD_DYING, then the thread has already exited
   if (thread_to_join->status == THREAD_DYING) {
+    printf("Process %s: Thread %d is in DYING state\n", t->pcb->process_name, tid);
+
+    // Mark as joined
+    thread_descriptor->has_been_joined = true;
+    printf("Process %s: Thread %d marked as joined (was in DYING state)\n", t->pcb->process_name,
+           tid);
     return tid;
   }
 
@@ -1255,12 +1313,32 @@ tid_t pthread_join(tid_t tid) {
 
   // check if the thread has been joined, make sure it's also in the table
   if (thread_descriptor->has_been_joined) {
+    printf("Process %s: Thread %d has already been joined\n", t->pcb->process_name, tid);
     return TID_ERROR;
   }
+
+  // lock the thread descriptor table
+  lock_acquire(&t->pcb->all_threads_lock);
+
   // set the thread as joined
+  printf("Process %s: Thread %d marking Thread %d as joined\n", t->pcb->process_name, t->tid, tid);
   thread_descriptor->has_been_joined = true;
+
+  // unlock the thread descriptor table
+  lock_release(&t->pcb->all_threads_lock);
+
   // Now wait on the semaphore
+  printf("Process %s: Thread %d waiting for Thread %d to complete\n", t->pcb->process_name, t->tid,
+         tid);
+
+  // Log the semaphore pointer to track which semaphore we're waiting on
+  printf("Process %s: Thread %d waiting on semaphore %p for Thread %d\n", t->pcb->process_name,
+         t->tid, (void*)join_sema, tid);
+
   sema_down(join_sema);
+  printf("Process %s: Thread %d successfully joined Thread %d\n", t->pcb->process_name, t->tid,
+         tid);
+
   return tid;
 }
 
@@ -1278,29 +1356,58 @@ void pthread_exit(void) {
   ASSERT(t->pcb != NULL);
 
   // Signal any waiters
+  printf("Process %s: Thread %d exiting, signaling any waiters\n", t->pcb->process_name, t->tid);
+
+  // Count and log waiting threads
+  int waiters_count = 0;
+  if (!list_empty(&t->join_sem.waiters)) {
+    struct list_elem* e;
+    printf("Process %s: Thread %d has following waiters on this semaphore %p:\n",
+           t->pcb->process_name, t->tid, (void*)&t->join_sem);
+    // print sema value
+    printf(" Semaphore value: %d\n", t->join_sem.value);
+    for (e = list_begin(&t->join_sem.waiters); e != list_end(&t->join_sem.waiters);
+         e = list_next(e)) {
+      struct thread* waiter = list_entry(e, struct thread, elem);
+      waiters_count++;
+      printf(" %d", waiter->tid);
+    }
+    printf(" (total: %d)\n", waiters_count);
+  } else {
+    printf("Process %s: Thread %d has NO waiters\n", t->pcb->process_name, t->tid);
+  }
+
+  // Now signal the semaphore
   sema_up(&t->join_sem);
 
   // Lock to protect shared resources
   lock_acquire(&t->pcb->all_threads_lock);
 
-  // Remove from thread list first (do this before freeing memory)
-  list_remove(&t->elem_in_pcb);
   t->pcb->total_threads--;
 
-  // print the total threads in the process
+  // Free the stack
+  printf("Process %s: Thread %d freeing stack, %d threads remain\n", t->pcb->process_name, t->tid,
+         t->pcb->total_threads);
   free_thread_stack(t);
 
   // update the thread descriptor table
-  t->pcb->threads_descriptor_table[t->tid]->thread = NULL;
-  t->pcb->threads_descriptor_table[t->tid]->tid = t->tid;
+  printf("Process %s: Updating descriptor for Thread %d (marking as exited)\n",
+         t->pcb->process_name, t->tid);
+
+  if (t->pcb->threads_descriptor_table[t->tid] != NULL) {
+    t->pcb->threads_descriptor_table[t->tid]->thread = NULL;
+    t->pcb->threads_descriptor_table[t->tid]->tid = t->tid;
+  } else {
+    printf("Process %s: WARNING - Thread %d has no descriptor entry!\n", t->pcb->process_name,
+           t->tid);
+  }
 
   // Signal the all_threads condition
+  printf("Process %s: Thread %d signaling all_threads_cond\n", t->pcb->process_name, t->tid);
   cond_signal(&t->pcb->all_threads_cond, &t->pcb->all_threads_lock);
 
   // Release lock before freeing memory
   lock_release(&t->pcb->all_threads_lock);
-
-  printf("[DEBUG EXIT] Thread %d exiting\n", t->tid);
 
   thread_exit();
 }

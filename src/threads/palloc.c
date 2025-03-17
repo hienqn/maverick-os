@@ -74,10 +74,11 @@ void* palloc_get_multiple(enum palloc_flags flags, size_t page_cnt) {
   page_idx = bitmap_scan_and_flip(pool->used_map, 0, page_cnt, false);
   lock_release(&pool->lock);
 
-  if (page_idx != BITMAP_ERROR)
+  if (page_idx != BITMAP_ERROR) {
     pages = pool->base + PGSIZE * page_idx;
-  else
+  } else {
     pages = NULL;
+  }
 
   if (pages != NULL) {
     if (flags & PAL_ZERO)
@@ -105,15 +106,17 @@ void palloc_free_multiple(void* pages, size_t page_cnt) {
   size_t page_idx;
 
   ASSERT(pg_ofs(pages) == 0);
-  if (pages == NULL || page_cnt == 0)
+  if (pages == NULL || page_cnt == 0) {
     return;
+  }
 
-  if (page_from_pool(&kernel_pool, pages))
+  if (page_from_pool(&kernel_pool, pages)) {
     pool = &kernel_pool;
-  else if (page_from_pool(&user_pool, pages))
+  } else if (page_from_pool(&user_pool, pages)) {
     pool = &user_pool;
-  else
+  } else {
     NOT_REACHED();
+  }
 
   page_idx = pg_no(pages) - pg_no(pool->base);
 

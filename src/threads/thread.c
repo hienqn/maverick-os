@@ -200,8 +200,11 @@ tid_t thread_create(const char* name, int priority, thread_func* function, void*
 
   /* Allocate thread. */
   t = palloc_get_page(PAL_ZERO);
-  if (t == NULL)
+  // print the t
+  if (t == NULL) {
+    printf("thread_create: Thread allocation failed\n");
     return TID_ERROR;
+  }
 
   /* Initialize thread. */
   init_thread(t, name, priority);
@@ -230,7 +233,9 @@ tid_t thread_create(const char* name, int priority, thread_func* function, void*
 
   /* Dynamically allocate memory for the join semaphore */
   t->join_sem = malloc(sizeof(struct semaphore));
+  // print the join sem
   if (t->join_sem == NULL) {
+    printf("thread_create: Join sem allocation failed\n");
     palloc_free_page(t);
     return TID_ERROR;
   }

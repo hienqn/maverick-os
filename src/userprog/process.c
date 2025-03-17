@@ -1309,7 +1309,7 @@ tid_t pthread_join(tid_t tid) {
   }
 
   // Get a reference to the semaphore before releasing the lock
-  struct semaphore* join_sema = &thread_to_join->join_sem;
+  struct semaphore* join_sema = thread_to_join->join_sem;
 
   // check if the thread has been joined, make sure it's also in the table
   if (thread_descriptor->has_been_joined) {
@@ -1360,13 +1360,13 @@ void pthread_exit(void) {
 
   // Count and log waiting threads
   int waiters_count = 0;
-  if (!list_empty(&t->join_sem.waiters)) {
+  if (!list_empty(&t->join_sem->waiters)) {
     struct list_elem* e;
     printf("Process %s: Thread %d has following waiters on this semaphore %p:\n",
-           t->pcb->process_name, t->tid, (void*)&t->join_sem);
+           t->pcb->process_name, t->tid, (void*)t->join_sem);
     // print sema value
-    printf(" Semaphore value: %d\n", t->join_sem.value);
-    for (e = list_begin(&t->join_sem.waiters); e != list_end(&t->join_sem.waiters);
+    printf(" Semaphore value: %d\n", t->join_sem->value);
+    for (e = list_begin(&t->join_sem->waiters); e != list_end(&t->join_sem->waiters);
          e = list_next(e)) {
       struct thread* waiter = list_entry(e, struct thread, sync_elem);
       waiters_count++;
@@ -1377,22 +1377,24 @@ void pthread_exit(void) {
     printf("Process %s: Thread %d has NO waiters\n", t->pcb->process_name, t->tid);
   }
 
-  // Now signal the semaphore
-  sema_up(&t->join_sem);
+  // Now signal the semaphore multiple times, once for each waiter
+  // This ensures that all waiting threads will be unblocked
+  if (waiters_count > 0) {
+    printf("Process %s: Thread %d signaling semaphore %d time(s)\n", t->pcb->process_name, t->tid,
+           waiters_count);
+
+    // Signal the semaphore once for each waiter
+    for (int i = 0; i < waiters_count; i++) {
+      sema_up(t->join_sem);
+    }
+  } else {
+    // Just signal once if no waiters found (standard behavior)
+    sema_up(t->join_sem);
+  }
 
   // print successful signal
   printf("Process %s: Thread %d successfully signaled semaphore %p\n", t->pcb->process_name, t->tid,
-         (void*)&t->join_sem);
-
-  struct list_elem* e;
-  // same thing like above, print all the waiters after signal
-  printf("Process %s: Thread %d has following waiters on this semaphore after signal %p:\n",
-         t->pcb->process_name, t->tid, (void*)&t->join_sem);
-  for (e = list_begin(&t->join_sem.waiters); e != list_end(&t->join_sem.waiters);
-       e = list_next(e)) {
-    struct thread* waiter = list_entry(e, struct thread, sync_elem);
-    printf(" %d \n", waiter->tid);
-  }
+         (void*)t->join_sem);
 
   // Lock to protect shared resources
   lock_acquire(&t->pcb->all_threads_lock);
@@ -1415,6 +1417,12 @@ void pthread_exit(void) {
     printf("Process %s: WARNING - Thread %d has no descriptor entry!\n", t->pcb->process_name,
            t->tid);
   }
+
+  // Free the dynamically allocated semaphore memory
+  printf("Process %s: Thread %d freeing join_sem at %p\n", t->pcb->process_name, t->tid,
+         (void*)t->join_sem);
+  free(t->join_sem);
+  t->join_sem = NULL;
 
   // Signal the all_threads condition
   printf("Process %s: Thread %d signaling all_threads_cond\n", t->pcb->process_name, t->tid);
@@ -1439,16 +1447,24 @@ void pthread_exit_main(void) {
 
   // print the semaphore value
   printf("Process %s: Thread %d semaphore value before signal %p: %d\n", t->pcb->process_name,
-         t->tid, (void*)&t->join_sem, t->join_sem.value);
+         t->tid, (void*)t->join_sem, t->join_sem->value);
 
   // why do i need to called sema_up here?
-  sema_up(&t->join_sem);
+  sema_up(t->join_sem);
 
   lock_acquire(&t->pcb->all_threads_lock);
   while (t->pcb->total_threads > 1) {
+    printf("pthread_exit_main Process %s: Thread %d waiting for all threads to exit\n",
+           t->pcb->process_name, t->tid);
     cond_wait(&t->pcb->all_threads_cond, &t->pcb->all_threads_lock);
   }
   lock_release(&t->pcb->all_threads_lock);
+
+  // Free the dynamically allocated semaphore memory
+  printf("Process %s: Thread %d freeing join_sem at %p\n", t->pcb->process_name, t->tid,
+         (void*)t->join_sem);
+  free(t->join_sem);
+  t->join_sem = NULL;
 
   process_exit(t->pcb->exit_code);
 }

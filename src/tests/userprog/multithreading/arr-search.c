@@ -77,6 +77,8 @@ void search_and_check(int elem) {
   thread_data.end_idx = ARR_SIZE;
   thread_data.elem = elem;
 
+  printf("Creating thread for element %d\n", elem);
+
   pthread_check_join(pthread_check_create(thread_function, &thread_data));
   // print to see if the thread's element is found
   printf("Thread %d found element %d at index %d\n", thread_data.elem, thread_data.elem_found,

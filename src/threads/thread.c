@@ -117,7 +117,6 @@ void thread_init(void) {
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread();
   init_thread(initial_thread, "main", PRI_DEFAULT);
-  initial_thread->join_sem = NULL;
   initial_thread->status = THREAD_RUNNING;
   initial_thread->tid = allocate_tid();
 
@@ -600,22 +599,19 @@ void thread_switch_tail(struct thread* prev) {
 #endif
 
   /* If the thread we switched from is dying, destroy its struct
-     thread.  This must happen late so that thread_exit() doesn't
-     pull out the rug under itself.  (We don't free
-     initial_thread because its memory was not obtained via
-     palloc().) */
+    thread.  This must happen late so that thread_exit() doesn't
+    pull out the rug under itself.  (We don't free
+    initial_thread because its memory was not obtained via
+    palloc().) */
   if (prev != NULL && prev->status == THREAD_DYING && prev != initial_thread) {
     ASSERT(prev != cur);
 #ifdef USERPROG
-    /* Activate the new address space. */
-    if (thread_current()->status == THREAD_DYING) {
-      // Free semaphore here, after the context switch is complete
-      if (cur->join_sem != NULL) {
-        free(cur->join_sem);
-        cur->join_sem = NULL;
-      }
+    /* Free the semaphore of the thread that's dying */
+    if (prev->join_sem != NULL) {
+      free(prev->join_sem);
     }
-#endif palloc_free_page(prev);
+#endif
+    palloc_free_page(prev);
   }
 }
 

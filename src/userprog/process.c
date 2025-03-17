@@ -220,6 +220,9 @@ void userprog_init(void) {
   t->pcb->fd_table[STDOUT_FILENO] = NULL;
   t->pcb->fd_table[STDERR_FILENO] = NULL;
 
+  t->join_sem = malloc(sizeof(struct semaphore));
+  sema_init(t->join_sem, 0);
+
   /* Kill the kernel if we did not succeed */
   ASSERT(success);
 }

@@ -1421,8 +1421,10 @@ void pthread_exit(void) {
   // Free the dynamically allocated semaphore memory
   printf("Process %s: Thread %d freeing join_sem at %p\n", t->pcb->process_name, t->tid,
          (void*)t->join_sem);
-  free(t->join_sem);
-  t->join_sem = NULL;
+  if (t->join_sem != NULL) {
+    free(t->join_sem);
+    t->join_sem = NULL;
+  }
 
   // Signal the all_threads condition
   printf("Process %s: Thread %d signaling all_threads_cond\n", t->pcb->process_name, t->tid);
@@ -1463,8 +1465,10 @@ void pthread_exit_main(void) {
   // Free the dynamically allocated semaphore memory
   printf("Process %s: Thread %d freeing join_sem at %p\n", t->pcb->process_name, t->tid,
          (void*)t->join_sem);
-  free(t->join_sem);
-  t->join_sem = NULL;
+  if (t->join_sem != NULL) {
+    free(t->join_sem);
+    t->join_sem = NULL;
+  }
 
   process_exit(t->pcb->exit_code);
 }

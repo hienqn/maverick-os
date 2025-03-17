@@ -237,10 +237,6 @@ tid_t thread_create(const char* name, int priority, thread_func* function, void*
 
   /* Initialize the semaphore */
   sema_init(t->join_sem, 0);
-
-  // print the thread's join_sem
-  printf("Thread %d contains join_sem at %p\n", t->tid, (void*)t->join_sem);
-
   /* Add to run queue. */
   thread_unblock(t);
 
@@ -272,9 +268,6 @@ void thread_block(void) {
 static void thread_enqueue(struct thread* t) {
   ASSERT(intr_get_level() == INTR_OFF);
   ASSERT(is_thread(t));
-
-  // print the thread's status
-  printf("Thread %d is being enqueued with status %d\n", t->tid, t->status);
 
   if (active_sched_policy == SCHED_FIFO)
     list_push_back(&fifo_ready_list, &t->elem);
@@ -608,7 +601,16 @@ void thread_switch_tail(struct thread* prev) {
      palloc().) */
   if (prev != NULL && prev->status == THREAD_DYING && prev != initial_thread) {
     ASSERT(prev != cur);
-    palloc_free_page(prev);
+#ifdef USERPROG
+    /* Activate the new address space. */
+    if (thread_current()->status == THREAD_DYING) {
+      // Free semaphore here, after the context switch is complete
+      if (cur->join_sem != NULL) {
+        free(cur->join_sem);
+        cur->join_sem = NULL;
+      }
+    }
+#endif palloc_free_page(prev);
   }
 }
 

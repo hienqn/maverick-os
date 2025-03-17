@@ -58,9 +58,6 @@ void sema_init(struct semaphore* sema, unsigned value) {
 void sema_down(struct semaphore* sema) {
   enum intr_level old_level;
 
-  // Print which thread is downing the semaphore
-  printf("Thread %d downing semaphore %p\n", thread_current()->tid, (void*)sema);
-
   ASSERT(sema != NULL);
   ASSERT(!intr_context());
 
@@ -69,8 +66,6 @@ void sema_down(struct semaphore* sema) {
     if (active_sched_policy == SCHED_PRIO) {
       list_insert_ordered(&sema->waiters, &thread_current()->sync_elem, thread_priority_cmp, NULL);
     } else {
-      printf("Thread %d added to waiters list of semaphore %p\n", thread_current()->tid,
-             (void*)sema);
       list_push_back(&sema->waiters, &thread_current()->sync_elem);
     }
     thread_block();
@@ -424,7 +419,6 @@ void cond_signal(struct condition* cond, struct lock* lock UNUSED) {
 
   // find the highest priority thread in the list
   if (!list_empty(&cond->waiters)) {
-    printf("cond_signal: waiters list is not empty\n");
     // check if the scheduler policy is priority
     if (active_sched_policy == SCHED_PRIO) {
       // find the highest priority thread in the list

@@ -30,8 +30,8 @@ typedef struct child_process {
 } child_process_t;
 
 // Add these definitions at the top
-#define MAX_LOCKS_PER_PROCESS 256
-#define MAX_SEMAS_PER_PROCESS 256
+#define MAX_LOCKS_PER_PROCESS 500
+#define MAX_SEMAS_PER_PROCESS 500
 
 /* The process control block for a given process. Since
    there can be multiple threads per process, we need a separate

@@ -1325,7 +1325,6 @@ void pthread_exit(void) {
          e = list_next(e)) {
       struct thread* waiter = list_entry(e, struct thread, sync_elem);
       waiters_count++;
-      printf(" %d", waiter->tid);
     }
   }
 

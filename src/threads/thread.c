@@ -232,9 +232,7 @@ tid_t thread_create(const char* name, int priority, thread_func* function, void*
 
   /* Dynamically allocate memory for the join semaphore */
   t->join_sem = malloc(sizeof(struct semaphore));
-  // print the join sem
   if (t->join_sem == NULL) {
-    printf("thread_create: Join sem allocation failed\n");
     palloc_free_page(t);
     return TID_ERROR;
   }
@@ -607,8 +605,9 @@ void thread_switch_tail(struct thread* prev) {
     ASSERT(prev != cur);
 #ifdef USERPROG
     /* Free the semaphore of the thread that's dying */
-    if (prev->join_sem != NULL) {
+    if (prev->join_sem != NULL && prev->join_sem->value == 0) {
       free(prev->join_sem);
+      prev->join_sem = NULL;
     }
 #endif
     palloc_free_page(prev);

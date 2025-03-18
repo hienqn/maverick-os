@@ -7,7 +7,7 @@
 // At most 8MB can be allocated to the stack
 // These defines will be used in Project 2: Multithreading
 #define MAX_STACK_PAGES (1 << 11)
-#define MAX_THREADS 500
+#define MAX_THREADS 5000
 #define MAX_FD 150
 
 typedef int fd;

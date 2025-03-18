@@ -1117,21 +1117,13 @@ tid_t pthread_execute(stub_fun sf, pthread_fun tf, void* arg) {
 
   tid = thread_create("stuff", PRI_DEFAULT, start_pthread, &args);
 
-  // print the tid, print the current thread - combine them into one line
-  printf("pthread_execute: Thread created with tid %d, current thread is %d\n", tid,
-         thread_current()->tid);
-
   if (tid == TID_ERROR) {
-    // print the error
-    printf("pthread_execute: Thread creation failed\n");
     return TID_ERROR;
   }
 
   sema_down(&args.sem);
 
   if (!args.success) {
-    // print the error
-    printf("pthread_execute: Thread creation failed\n");
     return TID_ERROR;
   }
 
@@ -1215,9 +1207,6 @@ static void start_pthread(void* exec_) {
 
   success = setup_thread(&if_.esp);
 
-  // print success
-  printf("setup_thread: success = %d\n", success);
-
   if (!success) {
     pthread_args->success = success;
     sema_up(&pthread_args->sem);
@@ -1230,9 +1219,6 @@ static void start_pthread(void* exec_) {
 
   success = prepare_pthread_stack(pthread_args->tf, pthread_args->arg, &if_.esp);
 
-  // print success
-  printf("prepare_pthread_stack: success = %d\n", success);
-
   if (!success) {
     pthread_args->success = success;
     sema_up(&pthread_args->sem);
@@ -1240,7 +1226,6 @@ static void start_pthread(void* exec_) {
   }
 
   pthread_args->success = success;
-  printf("start_pthread: Thread %d is ready to run\n", t->tid);
 
   sema_up(&pthread_args->sem);
 
@@ -1375,9 +1360,6 @@ void pthread_exit(void) {
 
   // Release lock before freeing memory
   lock_release(&t->pcb->all_threads_lock);
-
-  // print the thread exit
-  printf("pthread_exit: Thread %d is exiting\n", t->tid);
 
   thread_exit();
 }

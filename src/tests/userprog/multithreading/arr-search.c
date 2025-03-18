@@ -77,12 +77,7 @@ void search_and_check(int elem) {
   thread_data.end_idx = ARR_SIZE;
   thread_data.elem = elem;
 
-  printf("Creating thread for element %d\n", elem);
-
   pthread_check_join(pthread_check_create(thread_function, &thread_data));
-  // print to see if the thread's element is found
-  printf("Thread %d found element %d at index %d\n", thread_data.elem, thread_data.elem_found,
-         thread_data.elem_idx);
   // Check that the thread's answer is correct
   if (expected_found) {
     ASSERT(thread_data.elem_found);
@@ -101,20 +96,12 @@ void test_main(void) {
 
   // Spawn threads to search for elements in the array
   for (int i = 0; i < ARR_SIZE; i++) {
-    // print the search
-    printf("Searching for element ------- %d\n", i);
     search_and_check(i);
   }
-
-  // print stage 2 done
-  printf("\n\nStage 1 done\n\n-----------------------------------\n\n");
 
   // Spawn threads to search for elements not in the array
   for (int i = -ARR_SIZE; i < 0; i++)
     search_and_check(i);
-
-  // print stage 3 done
-  printf("\n\nStage 2 done\n\n-----------------------------------\n\n");
 
   msg("Main finished");
 }

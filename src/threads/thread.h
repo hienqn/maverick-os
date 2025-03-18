@@ -91,7 +91,6 @@ struct thread {
   int effective_priority;            /* Effective Priority. */
   struct list_elem allelem;          /* List element for ready list */
   struct list_elem elem;             /* List element for ready list */
-  struct list_elem sync_elem;        /* List element for synchronization objects */
   struct list_elem all_threads_elem; /* List element for all_threads list */
 
   struct lock* waiting_lock; /* The lock that this thread is waiting for*/

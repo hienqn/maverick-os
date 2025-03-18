@@ -555,6 +555,13 @@ void process_exit(const int exit_status) {
     // Clear the thread's reference to the PCB.
     cur->pcb = NULL;
 
+    // free all entries in the descriptor table
+    // for (int i = 0; i < MAX_THREADS; i++) {
+    //   if (pcb_to_free->threads_descriptor_table[i] != NULL) {
+    //     free(pcb_to_free->threads_descriptor_table[i]);
+    //   }
+    // };
+
     // Free file descriptors.
     for (int fd = 3; fd < MAX_FD; fd++) {
       if (pcb_to_free->fd_table[fd] != NULL) {
@@ -1327,7 +1334,7 @@ void pthread_exit(void) {
     // print sema value
     for (e = list_begin(&t->join_sem->waiters); e != list_end(&t->join_sem->waiters);
          e = list_next(e)) {
-      struct thread* waiter = list_entry(e, struct thread, sync_elem);
+      struct thread* waiter = list_entry(e, struct thread, elem);
       waiters_count++;
     }
   }

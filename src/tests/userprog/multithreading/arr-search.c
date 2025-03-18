@@ -103,5 +103,8 @@ void test_main(void) {
   for (int i = -ARR_SIZE; i < 0; i++)
     search_and_check(i);
 
+  for (int i = ARR_SIZE; i < ARR_SIZE * 2; i++)
+    search_and_check(i);
+
   msg("Main finished");
 }

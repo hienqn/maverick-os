@@ -1,18 +1,23 @@
 #include "threads/loader.h"
 
-#### Kernel loader.
-
-#### This code should be stored in the first sector of a hard disk.
-#### When the BIOS runs, it loads this code at physical address
-#### 0x7c00-0x7e00 (512 bytes) and jumps to the beginning of it,
-#### in real mode.  The loader loads the kernel into memory and jumps
-#### to its entry point, which is the start function in start.S.
+#### Pintos Bootstrap Loader (Boot Sector)
 ####
-#### The BIOS passes in the drive that the loader was read from as
-#### DL, with floppy drives numbered 0x00, 0x01, ... and hard drives
-#### numbered 0x80, 0x81, ...  We want to support booting a kernel on
-#### a different drive from the loader, so we don't take advantage of
-#### this.
+#### PURPOSE: This 512-byte boot sector (loader.bin) is the first code to execute
+#### when Pintos boots. It runs in 16-bit real mode and acts as a bridge between
+#### BIOS and the Pintos kernel.
+####
+#### BOOT PROCESS:
+#### 1. BIOS loads this sector (512 bytes) from disk sector 0 to memory at 0x7c00
+#### 2. BIOS jumps to 0x7c00, loader begins executing (we're still in real mode)
+#### 3. Loader scans all hard disks for Pintos kernel partition (type 0x20, bootable flag 0x80)
+#### 4. Loads kernel.bin from the found partition into memory at 0x20000
+#### 5. Reads kernel entry point from ELF header and jumps to it (start.S)
+####
+#### REAL MODE: CPU operates like an 8086 with 16-bit addressing, segment:offset 
+#### memory access, no memory protection. The kernel will switch to protected mode.
+####
+#### DISK NUMBERING: DL register holds drive number (floppy: 0x00-0x7F, 
+#### hard disks: 0x80-0xFF). We scan multiple drives to support flexible setups.
 
 # Runs in real mode, which is a 16-bit segment.
 	.code16
@@ -49,53 +54,53 @@
 
 	mov $0x80, %dl			# Hard disk 0.
 read_mbr:
-	sub %ebx, %ebx			# Sector 0.
-	mov $0x2000, %ax		# Use 0x20000 for buffer.
-	mov %ax, %es
-	call read_sector
-	jc no_such_drive
+	sub %ebx, %ebx			# EBX = 0 (read MBR, sector 0).
+	mov $0x2000, %ax		# Buffer segment = 0x2000
+	mov %ax, %es			# ES now points to physical 0x20000
+	call read_sector		# Load disk's MBR (512 bytes) into memory at 0x20000
+	jc no_such_drive		# If BIOS says no disk exists, try next disk
 
-	# Print hd[a-z].
+	# Print hd[a-z] to show which disk we're checking (e.g., "hda", "hdb").
 	call puts
 	.string " hd"
-	mov %dl, %al
-	add $'a' - 0x80, %al
+	mov %dl, %al			# DL = disk number (0x80, 0x81, ...)
+	add $'a' - 0x80, %al	# Convert 0x80 → 'a', 0x81 → 'b', etc.
 	call putc
 
-	# Check for MBR signature--if not present, it's not a
-	# partitioned hard disk.
+	# MBR signature: bytes 510-511 must be 0xaa55 for valid partition table.
+	# If not present, this isn't a partitioned disk (might be raw disk, USB, etc.)
 	cmpw $0xaa55, %es:510
 	jne next_drive
 
-	mov $446, %si			# Offset of partition table entry 1.
-	mov $'1', %al
+	mov $446, %si			# SI = 446 (offset of partition entry 1 in MBR)
+	mov $'1', %al			# AL = '1' (partition number for display)
 check_partition:
-	# Is it an unused partition?
+	# Check if partition is in use (first 4 bytes != 0 means it has data).
 	cmpl $0, %es:(%si)
-	je next_partition
+	je next_partition		# Empty partition slot, skip it
 
-	# Print [1-4].
+	# Print partition number being checked (1, 2, 3, or 4)
 	call putc
 
-	# Is it a Pintos kernel partition?
-	cmpb $0x20, %es:4(%si)
+	# Check partition type: 0x20 = Pintos kernel partition
+	cmpb $0x20, %es:4(%si)		# Byte 4 of partition entry = partition type
 	jne next_partition
 
-	# Is it a bootable partition?
-	cmpb $0x80, %es:(%si)
+	# Check bootable flag: 0x80 = marked as bootable
+	cmpb $0x80, %es:(%si)		# Byte 0 of partition entry = boot flag
 	je load_kernel
 
 next_partition:
-	# No match for this partition, go on to the next one.
-	add $16, %si			# Offset to next partition table entry.
-	inc %al
-	cmp $510, %si
-	jb check_partition
+	# Advance to next partition entry (each entry is 16 bytes).
+	add $16, %si			# SI += 16 (move to next partition entry)
+	inc %al				# Increment partition number ('1'→'2'→'3'→'4')
+	cmp $510, %si			# Have we checked all 4 partitions? (446+64=510)
+	jb check_partition		# If SI < 510, check next partition
 
 next_drive:
-	# No match on this drive, go on to the next one.
-	inc %dl
-	jnc read_mbr
+	# Try the next disk (0x80 → 0x81 → 0x82 ...)
+	inc %dl				# Increment disk number
+	jnc read_mbr			# If no overflow (CF=0), continue scanning
 
 no_such_drive:
 no_boot_partition:
@@ -112,40 +117,36 @@ no_boot_partition:
 
 load_kernel:
 	call puts
-	.string "\rLoading"
+	.string "\rLoading"		# Print "Loading" then dots as we load
 
-	# Figure out number of sectors to read.  A Pintos kernel is
-	# just an ELF format object, which doesn't have an
-	# easy-to-read field to identify its own size (see [ELF1]).
-	# But we limit Pintos kernels to 512 kB for other reasons, so
-	# it's easy enough to just read the entire contents of the
-	# partition or 512 kB from disk, whichever is smaller.
-	mov %es:12(%si), %ecx		# EBP = number of sectors
-	cmp $1024, %ecx			# Cap size at 512 kB
+	# Calculate how many sectors to read. ELF format doesn't have an easy size field.
+	# We just read the entire partition (up to 512KB max, because of loader constraints).
+	mov %es:12(%si), %ecx		# ECX = partition size (bytes 12-15 of partition entry)
+	cmp $1024, %ecx			# Cap at 1024 sectors (512KB)
 	jbe 1f
-	mov $1024, %cx
+	mov $1024, %cx			# Limit to 512KB
 1:
 
-	mov %es:8(%si), %ebx		# EBX = first sector
-	mov $0x2000, %ax		# Start load address: 0x20000
+	mov %es:8(%si), %ebx		# EBX = starting sector number (bytes 8-11)
+	mov $0x2000, %ax		# AX = 0x2000 (we'll load kernel at 0x20000)
 
 next_sector:
-	# Read one sector into memory.
-	mov %ax, %es			# ES:0000 -> load address
-	call read_sector
-	jc read_failed
+	# Load one sector (512 bytes) from disk into memory
+	mov %ax, %es			# ES = load address (incrementing each iteration)
+	call read_sector		# Read sector EBX into memory at ES:0000
+	jc read_failed			# If BIOS reports error, give up
 
-	# Print '.' as progress indicator once every 16 sectors == 8 kB.
-	test $15, %bl
-	jnz 1f
+	# Show progress: print '.' every 16 sectors (every 8 KB loaded)
+	test $15, %bl			# Test if sector number is divisible by 16
+	jnz 1f				# If not, skip printing
 	call puts
-	.string "."
+	.string "."			# Print "." to show loading progress
 1:
 
-	# Advance memory pointer and disk sector.
-	add $0x20, %ax
-	inc %bx
-	loop next_sector
+	# Move to next sector: advance both memory address and disk sector number
+	add $0x20, %ax			# AX += 0x20 (move to next 512-byte block in memory)
+	inc %bx				# BX++ (next sector on disk)
+	loop next_sector		# Loop while ECX > 0 (decrements ECX)
 
 	call puts
 	.string "\r"

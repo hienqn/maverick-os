@@ -1,0 +1,19 @@
+CompileFlags:
+  Add:
+    - -I/home/workspace/group0/src
+    - -I/home/workspace/group0/src/lib
+    - -I/home/workspace/group0/src/lib/kernel
+  Remove:
+    - -m32
+    - -march=i686
+    - -fno-pic
+    - -fno-inline
+    - -fno-stack-protector
+    
+Diagnostics:
+  UnusedIncludes: None
+  MissingIncludes: None
+  
+Index:
+  Background: Build
+

@@ -283,3 +283,6 @@ cscope.po.out
 
 ### PintOS ###
 pintos/**/build
+
+./cache
+./clangd

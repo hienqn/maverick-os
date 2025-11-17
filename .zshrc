@@ -74,6 +74,9 @@ bindkey -e  # Use emacs keybindings
 bindkey '^[[A' history-search-backward
 bindkey '^[[B' history-search-forward
 
+# Pintos PATH setup
+export PATH="$PATH:/home/workspace/group0/src/utils"
+
 # Pintos development aliases
 alias rebuild-index='cd /home/workspace/group0/src/threads && bear -- make && cp compile_commands.json /home/workspace/group0/ && cd - && echo "✓ Code navigation index rebuilt!"'
 

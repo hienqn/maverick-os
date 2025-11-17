@@ -1,7 +1,16 @@
 #! /bin/sh
 
 # Path to GDB macros file.  Customize for your site.
-GDBMACROS=/home/vagrant/.bin/gdb-macros
+# Try multiple locations for flexibility
+if test -f "$HOME/.bin/gdb-macros"; then
+	GDBMACROS="$HOME/.bin/gdb-macros"
+elif test -f "/home/vagrant/.bin/gdb-macros"; then
+	GDBMACROS="/home/vagrant/.bin/gdb-macros"
+elif test -f "$(dirname "$0")/../misc/gdb-macros"; then
+	GDBMACROS="$(dirname "$0")/../misc/gdb-macros"
+else
+	GDBMACROS=""
+fi
 
 # Choose correct GDB.
 if command -v i386-elf-gdb >/dev/null 2>&1; then
@@ -11,10 +20,12 @@ else
 fi
 
 # Run GDB.
-if test -f "$GDBMACROS"; then
+if test -n "$GDBMACROS" && test -f "$GDBMACROS"; then
 	exec $GDB -x "$GDBMACROS" "$@"
 else
-	echo "*** $GDBMACROS does not exist ***"
+	if test -n "$GDBMACROS"; then
+		echo "*** $GDBMACROS does not exist ***"
+	fi
 	echo "*** Pintos GDB macros will not be available ***"
 	exec $GDB "$@"
 fi

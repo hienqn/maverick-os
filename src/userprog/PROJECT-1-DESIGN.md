@@ -30,6 +30,8 @@ This approach has two major deficiencies:
 
 ## Proposed Design
 
+### A. Data Structures and Functions
+
 We will modify `process_execute` and `start_process` to support command-line arguments. This design integrates with the process control structures described in Section 2.
 
 1.  **Command Line Copy**: 
@@ -50,7 +52,9 @@ We will modify `process_execute` and `start_process` to support command-line arg
     - We parse the `cmd_line` string (tokenizing by spaces) to determine `argc` and `argv` and push them onto the stack.
     - After loading (success or failure), we signal the parent using the semaphore in `process_load_info`.
 
-## Stack Layout Strategy
+### B. Algorithms
+
+#### Stack Layout Strategy
 
 We must strictly adhere to the 80x86 calling convention for function arguments. The stack will be prepared as follows, growing downwards from `PHYS_BASE`:
 
@@ -80,6 +84,12 @@ We must strictly adhere to the 80x86 calling convention for function arguments. 
 | `ESP` | `argc` | `int` | Number of arguments |
 | `ESP-4` | `ret addr` | `void *` | Fake return address (0) |
 
+### C. Synchronization
+The parent thread waits on a semaphore in the `process_load_info` structure (allocated on the parent's stack). The child `start_process` function signals this semaphore after it has attempted to load the executable. This ensures the parent knows the result of the load (success or failure) before returning from `process_execute`.
+
+### D. Rationale
+We chose to parse arguments in the child process (`start_process`) rather than the parent (`process_execute`) to minimize the work done in the parent's context. Copying the command line to a new page is necessary because the string passed to `process_execute` might be freed before the child runs. Placing `argv` on the stack ensures strict compliance with C calling conventions, allowing the user program's `main` function to receive arguments correctly.
+
 ---
 
 # 2. Implementing System Calls
@@ -101,7 +111,7 @@ This instruction triggers the following:
 
 Before the C-based `syscall_handler` runs, an assembly stub (`intr-stubs.S`) pushes the remaining registers (general-purpose registers) onto the stack to complete the `intr_frame`.
 
-The `syscall_handler` can then dispatch execution based on the system call number. The arguments for the system call are located on the user stack. We can access them via the saved user stack pointer, which is stored in the `esp` member of the interrupt frame (`f-&gt;esp`).
+The `syscall_handler` can then dispatch execution based on the system call number. The arguments for the system call are located on the user stack. We can access them via the saved user stack pointer, which is stored in the `esp` member of the interrupt frame (`f->esp`).
 
 ## Argument Validation
 
@@ -119,7 +129,7 @@ For every pointer argument, we will perform the following checks:
 
 These system calls (`exec`, `wait`, `exit`) require complex synchronization to ensure the parent can retrieve the child's exit status even if the child dies first.
 
-**Data Structures**
+### A. Data Structures
 
 We will define a shared structure to track the status of a child process. This structure is allocated on the heap and reference-counted.
 
@@ -147,9 +157,9 @@ struct process_load_info {
 };
 ```
 
-**Algorithms**
+### B. Algorithms
 
-**A. `exec` (implemented in `process_execute`)**
+**1. `exec` (implemented in `process_execute`)**
 
 1.  **Prepare Synchronization**: Allocate a `struct process_load_info` and a `semaphore` on the **stack**.
 2.  **Prepare Status**: `malloc` a new `struct process_status`. Initialize `ref_count = 2` (one for parent, one for child), `exit_code = -1`, and `sema_init(&wait_sem, 0)`.
@@ -160,7 +170,7 @@ struct process_load_info {
     *   If load succeeds: child links `my_status` to the passed status, `sema_up`.
 6.  **Parent Resume**: If load failed, free `process_status` and return -1. If successful, add `process_status` to `children` list and return the PID.
 
-**B. `wait`**
+**2. `wait`**
 
 1.  **Find Child**: Iterate through the current thread's `children` list to find the `process_status` with the matching PID.
     *   If not found, return -1.
@@ -170,7 +180,7 @@ struct process_load_info {
 5.  **Cleanup Reference**: Decrement `status->ref_count`. If it hits 0, `free(status)`. Remove the element from the `children` list.
 6.  Return the exit code.
 
-**C. `exit`**
+**3. `exit`**
 
 1.  **Save Status**: If `my_status` is not NULL (kernel threads might not have it), lock it.
     *   Set `my_status->exit_code = status`.
@@ -181,7 +191,7 @@ struct process_load_info {
 3.  **Process Cleanup**: Close files, destroy page directory, etc.
 4.  **Thread Exit**: Call `thread_exit()`.
 
-**D. `fork`**
+**4. `fork`**
 
 We will implement `fork` using two main functions: `process_fork` (running in the parent) and `fork_process` (running in the child).
 
@@ -258,6 +268,12 @@ bool duplicate_pagedir(uint32_t *parent_pd, uint32_t *child_pd) {
 }
 ```
 
+### C. Synchronization
+We use a shared `process_status` structure and a `wait_sem` semaphore. The parent blocks on `wait_sem` during `wait()`, and the child signals it during `exit()`. Reference counting ensures that `process_status` persists until both parent and child are done with it, preventing "use-after-free" errors if the child exits before the parent waits, or if the parent dies before the child.
+
+### D. Rationale
+This "shared state" approach decouples the child's lifecycle from the parent's ability to retrieve its exit status. Using a semaphore for waiting is efficient (blocking rather than busy-waiting). The reference counting is necessary because we cannot predict the order of process termination.
+
 ### 2. Simple System Calls
 
 These system calls are straightforward and do not require complex synchronization or data structures.
@@ -271,3 +287,55 @@ These system calls are straightforward and do not require complex synchronizatio
 
 *   **Action**: Returns the input integer incremented by 1.
 *   **Implementation**: Return `args[1] + 1`.
+
+### 3. File System Calls
+
+For this project, we will use the global lock to ensure correct synchronization. We will keep an array of file descriptors in PCB.
+
+### A. Data Structures
+
+```c
+#define MAX_FILE_DESCRIPTOR 128
+
+struct process {
+  /* Owned by process.c. */
+  uint32_t* pagedir;          /* Page directory. */
+  char process_name[16];      /* Name of the main thread */
+  struct thread* main_thread; /* Pointer to main thread */
+  struct file *fd_table[MAX_FILE_DESCRIPTOR]; /* Array of file pointers */
+  struct file *exec_file;     /* Pointer to executable file to deny writes */
+};
+```
+
+1.  **File Descriptor Table**: 
+    *   We will add `struct file *fd_table[MAX_FILE_DESCRIPTOR]` to `struct process`.
+    *   Indices 0 and 1 are reserved for STDIN and STDOUT.
+    *   This array will be initialized to `NULL` in `process_execute`.
+
+2.  **Executable Protection**:
+    *   We will add `struct file *exec_file` to `struct process`.
+    *   This stores the file pointer of the currently running executable to prevent it from being modified during execution.
+
+### B. Algorithms
+
+**File Descriptor Allocation**
+*   **Open**: Find the first index `i` in `fd_table` (starting from 2) where `fd_table[i]` is `NULL`. If found, store the `struct file*` there and return `i`. If full, return -1.
+*   **Close**: Verify `fd` is valid (2 <= fd < MAX) and not NULL. Call `file_close` and set `fd_table[fd] = NULL`.
+
+**Executable Protection**
+*   In `load()` (process.c): Upon successfully opening the executable file, we call `file_deny_write(file)`. We strictly do **not** close this file handle yet; instead, we store it in `process->exec_file`.
+*   In `process_exit()`: We close `process->exec_file`, which re-allows writes to the file.
+
+**Read/Write Logic**
+*   **FD 0 (STDIN)**: `read` calls `input_getc`. `write` is invalid (do nothing).
+*   **FD 1 (STDOUT)**: `write` calls `putbuf` (splitting large buffers). `read` is invalid.
+*   **FD >= 2**: Verify FD validity. Acquire lock. Call `file_read`/`file_write`. Release lock.
+
+### C. Synchronization
+*   We will define a global lock `struct lock filesys_lock`.
+*   This lock is initialized in `syscall_init`.
+*   It is acquired before any call to `filesys_*` or `file_*` functions and released immediately after.
+*   Exception: We do not hold the lock for console I/O (STDIN/STDOUT).
+
+### D. Rationale
+The Pintos file system is not thread-safe, so a global lock is the simplest and safest way to ensure integrity during concurrent file operations. The file descriptor table maps integer handles (safe for users) to kernel file pointers (unsafe for users), providing isolation. Denying writes to the running executable is a requirement to prevent code corruption during execution, and keeping the file open is the mechanism Pintos uses to enforce this lock.

@@ -78,11 +78,13 @@ pid_t process_execute(char* cmd_line) {
   char* fn_copy;
   tid_t tid;
   struct process_load_info load_info;
+  memset(&load_info, 0, sizeof(load_info));  // Zero everything first
   load_info.load_success = false;
   // loaded_signal is allocated on stack which is fine because its lifetime is in this function scope
   sema_init(&load_info.loaded_signal, 0);
   // Child staus is null for now, we'll implement later
   load_info.child_status = NULL;
+  load_info.argc = 0;
 
   sema_init(&temporary, 0);
   /* Make a copy of FILE_NAME.

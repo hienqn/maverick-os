@@ -74,7 +74,7 @@ static void parse_cmd_line(char *cmd_line, char** file_name, int* argc, char** a
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
    process id, or TID_ERROR if the thread cannot be created. */
-pid_t process_execute(char* cmd_line) {
+pid_t process_execute(const char* cmd_line) {
   char* fn_copy;
   tid_t tid;
   struct process_load_info load_info;
@@ -542,8 +542,11 @@ static bool setup_stack(void** esp, int argc, char **argv) {
         memcpy(stack_ptr, &saved[i], sizeof(char *));
       }
 
+      // Save the address of argv[0] before decrementing stack_ptr
+      uint8_t* argv_start = stack_ptr;
       stack_ptr -= sizeof(char**);
-      memcpy(stack_ptr, stack_ptr + sizeof(char *), sizeof(char *));
+      // Store the ADDRESS of argv[0], not its value
+      memcpy(stack_ptr, &argv_start, sizeof(char**));
 
       stack_ptr -= sizeof(int);
       memcpy(stack_ptr, &argc, sizeof(int));

@@ -51,7 +51,7 @@ struct process_load_info {
 
 void userprog_init(void);
 
-pid_t process_execute(char* cmd_line);
+pid_t process_execute(const char* cmd_line);
 int process_wait(pid_t);
 void process_exit(void);
 void process_activate(void);

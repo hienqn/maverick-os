@@ -12,7 +12,7 @@ void syscall_init(void) { intr_register_int(0x30, 3, INTR_ON, syscall_handler, "
 
 static void syscall_handler(struct intr_frame* f UNUSED) {
   uint32_t* args = ((uint32_t*)f->esp);
-
+  
   /*
    * The following print statement, if uncommented, will print out the syscall
    * number whenever a process enters a system call. You might find it useful
@@ -33,5 +33,9 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     uint32_t size = args[3];
     putbuf(buffer, size);
     f->eax = size;
+  }
+
+  if (args[0] == SYS_PRACTICE) {
+    f->eax = args[1] + 1;
   }
 }

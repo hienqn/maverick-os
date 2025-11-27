@@ -8,6 +8,7 @@
 // These defines will be used in Project 2: Multithreading
 #define MAX_STACK_PAGES (1 << 11)
 #define MAX_THREADS 127
+#define MAX_ARGS 64
 
 /* PIDs and TIDs are the same type. PID should be
    the TID of the main thread of the process */
@@ -29,9 +30,28 @@ struct process {
   struct thread* main_thread; /* Pointer to main thread */
 };
 
+struct process_status {
+   tid_t tid;                  /* Child's thread ID */
+   int exit_code;              /* Exit code (default -1) */
+   struct semaphore wait_sem;  /* Semaphore for the parent to wait on */
+   struct list_elem elem;      /* Element for the parent's children list */
+   int ref_count;              /* Reference count (2 initially: parent + child) */
+   bool is_waited_on;          /* Prevents waiting twice */
+ };
+
+struct process_load_info {
+   char *cmd_line;             /* Command line to execute */
+   char *file_name;
+   int argc;
+   char *argv[MAX_ARGS];       /* Argument array (fixed size) */
+   struct semaphore loaded_signal;  /* Semaphore for loading synchronization */
+   bool load_success;                /* Result of loading */
+   struct process_status *child_status; /* Status struct created by parent */
+ };
+
 void userprog_init(void);
 
-pid_t process_execute(const char* file_name);
+pid_t process_execute(char* cmd_line);
 int process_wait(pid_t);
 void process_exit(void);
 void process_activate(void);

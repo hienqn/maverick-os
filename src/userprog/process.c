@@ -23,7 +23,7 @@
 static struct semaphore temporary;
 static thread_func start_process NO_RETURN;
 static thread_func start_pthread NO_RETURN;
-static bool load(const char* file_name, void (**eip)(void), void** esp);
+static bool load(char* cmd_line, void (**eip)(void), void** esp, int argc, char** argv);
 bool setup_thread(void (**eip)(void), void** esp);
 
 /* Initializes user programs in the system by ensuring the main
@@ -46,13 +46,43 @@ void userprog_init(void) {
   ASSERT(success);
 }
 
+static void parse_cmd_line(char *cmd_line, char** file_name, int* argc, char** argv) {
+  char *token, *save_ptr;
+  int count = 0;
+  
+  // First call: pass the string
+  token = strtok_r(cmd_line, " ", &save_ptr);
+  *file_name = token;  // Set the caller's file_name pointer
+  argv[count] = token;
+  count++;
+  
+  // Subsequent calls: pass NULL
+  while (token != NULL) {
+    token = strtok_r(NULL, " ", &save_ptr);
+    if (token != NULL) {
+      argv[count] = token;
+      count++;
+    } else {
+      argv[count] = NULL;  // Null terminator
+    }
+  }
+  
+  *argc = count;  // Set the caller's argc
+}
+
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
    process id, or TID_ERROR if the thread cannot be created. */
-pid_t process_execute(const char* file_name) {
+pid_t process_execute(char* cmd_line) {
   char* fn_copy;
   tid_t tid;
+  struct process_load_info load_info;
+  load_info.load_success = false;
+  // loaded_signal is allocated on stack which is fine because its lifetime is in this function scope
+  sema_init(&load_info.loaded_signal, 0);
+  // Child staus is null for now, we'll implement later
+  load_info.child_status = NULL;
 
   sema_init(&temporary, 0);
   /* Make a copy of FILE_NAME.
@@ -60,19 +90,28 @@ pid_t process_execute(const char* file_name) {
   fn_copy = palloc_get_page(0);
   if (fn_copy == NULL)
     return TID_ERROR;
-  strlcpy(fn_copy, file_name, PGSIZE);
+  strlcpy(fn_copy, cmd_line, PGSIZE);
+  load_info.cmd_line = fn_copy;
+
+  parse_cmd_line(fn_copy, &load_info.file_name, &load_info.argc, load_info.argv);
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create(file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create(load_info.file_name, PRI_DEFAULT, start_process, &load_info);
   if (tid == TID_ERROR)
     palloc_free_page(fn_copy);
+
+  // Wait until the program is loaded successfully
+  sema_down(&load_info.loaded_signal);
   return tid;
 }
 
+
 /* A thread function that loads a user process and starts it
    running. */
-static void start_process(void* file_name_) {
-  char* file_name = (char*)file_name_;
+static void start_process(void* aux) {
+  struct process_load_info* load_info = (struct process_load_info*)aux;
+  char* file_name = (char*)load_info->file_name;
+
   struct thread* t = thread_current();
   struct intr_frame if_;
   bool success, pcb_success;
@@ -90,7 +129,7 @@ static void start_process(void* file_name_) {
 
     // Continue initializing the PCB as normal
     t->pcb->main_thread = t;
-    strlcpy(t->pcb->process_name, t->name, sizeof t->name);
+    strlcpy(t->pcb->process_name, load_info->file_name, sizeof t->pcb->process_name);
   }
 
   /* Initialize interrupt frame and load executable. */
@@ -99,8 +138,8 @@ static void start_process(void* file_name_) {
     if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
     if_.cs = SEL_UCSEG;
     if_.eflags = FLAG_IF | FLAG_MBS;
-    success = load(file_name, &if_.eip, &if_.esp);
-    if_.esp -= 12;
+
+    success = load(file_name, &if_.eip, &if_.esp, load_info->argc, load_info->argv);
   }
 
   /* Handle failure with succesful PCB malloc. Must free the PCB */
@@ -114,12 +153,13 @@ static void start_process(void* file_name_) {
   }
 
   /* Clean up. Exit on failure or jump to userspace */
-  palloc_free_page(file_name);
+  palloc_free_page(load_info->cmd_line);
   if (!success) {
     sema_up(&temporary);
     thread_exit();
   }
 
+  sema_up(&load_info->loaded_signal);
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -260,8 +300,9 @@ struct Elf32_Phdr {
 #define PF_W 2 /* Writable. */
 #define PF_R 4 /* Readable. */
 
-static bool setup_stack(void** esp);
+static bool setup_stack(void** esp, int argc, char** argv);
 static bool validate_segment(const struct Elf32_Phdr*, struct file*);
+static void parse_cmd_line(char *cmd_line, char** file_name, int* argc, char** argv);
 static bool load_segment(struct file* file, off_t ofs, uint8_t* upage, uint32_t read_bytes,
                          uint32_t zero_bytes, bool writable);
 
@@ -269,7 +310,7 @@ static bool load_segment(struct file* file, off_t ofs, uint8_t* upage, uint32_t 
    Stores the executable's entry point into *EIP
    and its initial stack pointer into *ESP.
    Returns true if successful, false otherwise. */
-bool load(const char* file_name, void (**eip)(void), void** esp) {
+bool load(char* file_name, void (**eip)(void), void** esp, int argc, char**argv) {
   struct thread* t = thread_current();
   struct Elf32_Ehdr ehdr;
   struct file* file = NULL;
@@ -349,7 +390,7 @@ bool load(const char* file_name, void (**eip)(void), void** esp) {
   }
 
   /* Set up stack. */
-  if (!setup_stack(esp))
+  if (!setup_stack(esp, argc, argv))
     goto done;
 
   /* Start address. */
@@ -466,20 +507,57 @@ static bool load_segment(struct file* file, off_t ofs, uint8_t* upage, uint32_t 
 
 /* Create a minimal stack by mapping a zeroed page at the top of
    user virtual memory. */
-static bool setup_stack(void** esp) {
+static bool setup_stack(void** esp, int argc, char **argv) {
   uint8_t* kpage;
   bool success = false;
+  uint8_t *saved[128];
 
   kpage = palloc_get_page(PAL_USER | PAL_ZERO);
   if (kpage != NULL) {
     success = install_page(((uint8_t*)PHYS_BASE) - PGSIZE, kpage, true);
-    if (success)
-      *esp = PHYS_BASE;
-    else
+    if (success) {
+      uint8_t* stack_ptr = (uint8_t*)PHYS_BASE;
+      
+      for (int i = argc - 1; i >= 0; i--) {
+        unsigned len = strlen(argv[i]) + 1;  // +1 for null terminator
+        stack_ptr -= len;
+        memcpy(stack_ptr, argv[i], len);
+        saved[i] = stack_ptr;
+      }
+
+      uint8_t* future_stack_ptr_before_alignment = stack_ptr - sizeof(char *) * (argc + 1) - sizeof(char**) - sizeof(argc);
+      uint8_t* future_stack_ptr_after_alignment = (uint8_t*) ROUND_DOWN((uintptr_t)future_stack_ptr_before_alignment, 16);
+      size_t padding = (size_t)(future_stack_ptr_before_alignment - future_stack_ptr_after_alignment);
+      
+      stack_ptr -= padding;
+      memset(stack_ptr, 0, padding);
+
+      stack_ptr -= sizeof(char *);
+      memset(stack_ptr, 0, sizeof(char *));
+
+      for (int i = argc - 1; i >= 0; i--) {
+        stack_ptr -= sizeof(char *);
+        memcpy(stack_ptr, &saved[i], sizeof(char *));
+      }
+
+      stack_ptr -= sizeof(char**);
+      memcpy(stack_ptr, stack_ptr + sizeof(char *), sizeof(char *));
+
+      stack_ptr -= sizeof(int);
+      memcpy(stack_ptr, &argc, sizeof(int));
+
+      // at this point it should be aligned;
+      stack_ptr -= sizeof(void *);
+      memset(stack_ptr, 0, sizeof(void*));
+
+      *esp = stack_ptr;
+    } else {
       palloc_free_page(kpage);
+    }
   }
   return success;
 }
+
 
 /* Adds a mapping from user virtual address UPAGE to kernel
    virtual address KPAGE to the page table.

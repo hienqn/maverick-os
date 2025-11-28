@@ -7,28 +7,76 @@
 #include "filesys/file.h"
 #include "threads/vaddr.h"
 #include "userprog/pagedir.h"
+#include "devices/shutdown.h"
 
 static void syscall_handler(struct intr_frame*);
 
 void syscall_init(void) { intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall"); }
 
-bool static validate_pointer(void* arg) {
-  char *pointer = (char *) arg;
-  if (!is_user_vaddr(pointer) || !is_user_vaddr(pointer + 3)) return false;
+static bool validate_pointer(void* arg) {
+  char *byte_ptr = (char *)(arg); 
+  if (!is_user_vaddr(byte_ptr) || !is_user_vaddr(byte_ptr + 3)) return false;
   
-  if (!pagedir_get_page(thread_current()->pcb->pagedir, pointer)) return false;
-  if (!pagedir_get_page(thread_current()->pcb->pagedir, pointer + 1)) return false;
-  if (!pagedir_get_page(thread_current()->pcb->pagedir, pointer + 2)) return false;
-  if (!pagedir_get_page(thread_current()->pcb->pagedir, pointer + 3)) return false;
+  if (!pagedir_get_page(thread_current()->pcb->pagedir, byte_ptr)) return false;
+  if (!pagedir_get_page(thread_current()->pcb->pagedir, byte_ptr + 1)) return false;
+  if (!pagedir_get_page(thread_current()->pcb->pagedir, byte_ptr + 2)) return false;
+  if (!pagedir_get_page(thread_current()->pcb->pagedir, byte_ptr + 3)) return false;
 
   return true;
 }
 
-void static validate_and_exit_if_false(struct intr_frame* f, void * arg) {
+static void exit_process(struct intr_frame* f, int exit_code) {
+  f->eax = exit_code;
+  printf("%s: exit(%d)\n", thread_current()->pcb->process_name, f->eax);
+  process_exit();
+}
+
+static bool validate_string(char* str) {
+  char *pointer = str;
+  
+  while (true) {
+    // Validate that the current byte is accessible
+    if (!is_user_vaddr(pointer)) return false;
+    if (!pagedir_get_page(thread_current()->pcb->pagedir, pointer)) return false;
+    
+    // Check for null terminator
+    if (*pointer == '\0') return true;
+    
+    pointer++;
+  }
+}
+
+static bool validate_buffer(char* buffer, int size) {
+  char *pointer = buffer;
+  int count = 0;
+  
+  while (count < size) {
+    // Validate that the current byte is accessible
+    if (!is_user_vaddr(pointer)) return false;
+    if (!pagedir_get_page(thread_current()->pcb->pagedir, pointer)) return false;
+    
+    pointer++;
+    count++;
+  }
+  
+  return true;
+}
+
+static void validate_pointer_and_exit_if_false(struct intr_frame* f, void * arg) {
   if (!validate_pointer(arg)) {
-    f->eax = -1;
-    printf("%s: exit(%d)\n", thread_current()->pcb->process_name, -1);
-    process_exit();
+    exit_process(f, -1);
+  }
+}
+
+static void validate_string_and_exit_if_false(struct intr_frame* f, char* str) {
+  if (!validate_string(str)) {
+    exit_process(f, -1);
+  }
+}
+
+static void validate_buffer_and_exit_if_false(struct intr_frame* f, char* buffer, int size) {
+  if (!validate_buffer(buffer, size)) {
+    exit_process(f, -1);
   }
 }
 
@@ -45,20 +93,31 @@ static void syscall_handler(struct intr_frame* f) {
   // printf("System call number: %d\n", args[0]);
 
   if (args[0] == SYS_EXIT) {
-    f->eax = args[1];
-    printf("%s: exit(%d)\n", thread_current()->pcb->process_name, args[1]);
-    process_exit();
+    exit_process(f, args[1]);
   }
 
   if (args[0] == SYS_WRITE) {
-    void *buffer = (void *)args[2];
-    validate_and_exit_if_false(f, buffer);
+    validate_pointer_and_exit_if_false(f, &args[2]);
+    void* buffer = (void*) args[2];
     uint32_t size = args[3];
+    validate_buffer_and_exit_if_false(f, buffer, size);
     putbuf(buffer, size);
     f->eax = size;
   }
 
   if (args[0] == SYS_PRACTICE) {
     f->eax = args[1] + 1;
+  }
+
+  if (args[0] == SYS_HALT) {
+    shutdown_power_off();
+  }
+
+  if (args[0] == SYS_EXEC) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    char* cmd_line = (char *)args[1];
+    validate_string_and_exit_if_false(f, cmd_line);
+    pid_t pid = process_execute(cmd_line);
+    f->eax = pid == TID_ERROR ? -1 : pid;
   }
 }

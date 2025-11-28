@@ -104,6 +104,13 @@ pid_t process_execute(const char* cmd_line) {
 
   // Wait until the program is loaded successfully
   sema_down(&load_info.loaded_signal);
+
+  // This mean that it's not loaded successfully, we should consider this as failure
+  // If it's not success, a thread is scheduled to be exited already
+  if (load_info.load_success == false) {
+    return TID_ERROR;  
+  }
+
   return tid;
 }
 
@@ -158,10 +165,14 @@ static void start_process(void* aux) {
   palloc_free_page(load_info->cmd_line);
   if (!success) {
     sema_up(&temporary);
+    load_info->load_success = success;
+    sema_up(&load_info->loaded_signal);
     thread_exit();
   }
 
+  load_info->load_success = success;
   sema_up(&load_info->loaded_signal);
+
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its

@@ -20,7 +20,6 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 
-static struct semaphore temporary;
 static thread_func start_process NO_RETURN;
 static thread_func start_pthread NO_RETURN;
 static bool load(char* cmd_line, void (**eip)(void), void** esp, int argc, char** argv);
@@ -44,6 +43,9 @@ void userprog_init(void) {
 
   /* Kill the kernel if we did not succeed */
   ASSERT(success);
+
+  /* Initialize the children status list for the main process */
+  list_init(&t->pcb->children_status);
 }
 
 static void parse_cmd_line(char *cmd_line, char** file_name, int* argc, char** argv) {
@@ -85,8 +87,19 @@ pid_t process_execute(const char* cmd_line) {
   // Child staus is null for now, we'll implement later
   load_info.child_status = NULL;
   load_info.argc = 0;
+  load_info.parent_process = thread_current()->pcb;
+  
+  struct process_status* child_status = malloc(sizeof(struct process_status));
+  if (!child_status) {
+    return TID_ERROR;
+  }
+  load_info.child_status = child_status;
+  load_info.child_status->exit_code = -1;
+  load_info.child_status->is_waited_on = false;
+  load_info.child_status->ref_count = 0;
+  load_info.child_status->tid = -1;
+  sema_init(&load_info.child_status->wait_sem, 0);
 
-  sema_init(&temporary, 0);
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page(0);
@@ -135,6 +148,7 @@ static void start_process(void* aux) {
     // does not try to activate our uninitialized pagedir
     new_pcb->pagedir = NULL;
     t->pcb = new_pcb;
+    list_init(&t->pcb->children_status);
 
     // Continue initializing the PCB as normal
     t->pcb->main_thread = t;
@@ -169,6 +183,22 @@ static void start_process(void* aux) {
     thread_exit();
   }
 
+  /* At this stage, the process has successfully initialized */
+  /* Assigned this process its own status to the memory that the parent process created */
+  t->pcb->my_status = load_info->child_status;
+  /* Increment reference count because this current thread points to this*/
+  t->pcb->my_status->ref_count += 1;
+  /* Initialized my status (this current thread) */
+  t->pcb->my_status->tid = t->tid;
+  /* This thread hasn't been waited on */
+  t->pcb->my_status->is_waited_on = false;
+
+  struct process *parent_process = load_info->parent_process;
+  list_push_front(&parent_process->children_status, &t->pcb->my_status->elem);
+  t->pcb->my_status->ref_count += 1;
+  
+  t->pcb->parent_process = parent_process;
+
   load_info->load_success = success;
   sema_up(&load_info->loaded_signal);
 
@@ -191,9 +221,45 @@ static void start_process(void* aux) {
 
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
-int process_wait(pid_t child_pid UNUSED) {
-  sema_down(&temporary);
-  return 0;
+int process_wait(pid_t child_pid) {
+  struct process *cur_pcb = thread_current()->pcb;
+  struct list *children = &cur_pcb->children_status;
+  struct process_status *child_status = NULL;
+
+  /* Find the child with matching tid in our children list */
+  struct list_elem *e;
+  for (e = list_begin(children); e != list_end(children); e = list_next(e)) {
+    struct process_status *status = list_entry(e, struct process_status, elem);
+    if (status->tid == child_pid) {
+      child_status = status;
+      break;
+    }
+  }
+
+  /* There's no children */
+  if (child_status == NULL) {
+    return -1;
+  };
+  
+  /* Child process is already awaited */
+  if (child_status->is_waited_on) {
+    return -1;
+  };
+
+  child_status->is_waited_on = true;
+
+  sema_down(&child_status->wait_sem);
+
+  int exit_code = child_status->exit_code;
+
+  child_status->ref_count--;
+
+  if (child_status->ref_count == 0) {
+    list_remove(&child_status->elem);
+    free(child_status);
+  }
+
+  return exit_code;
 }
 
 /* Free the current process's resources. */
@@ -228,10 +294,20 @@ void process_exit(void) {
      If this happens, then an unfortuantely timed timer interrupt
      can try to activate the pagedir, but it is now freed memory */
   struct process* pcb_to_free = cur->pcb;
+
+  if (pcb_to_free->my_status != NULL) {
+    sema_up(&pcb_to_free->my_status->wait_sem);
+
+    pcb_to_free->my_status->ref_count--;
+    if (pcb_to_free->my_status->ref_count == 0) {
+      list_remove(&pcb_to_free->my_status->elem);
+      free(pcb_to_free->my_status);
+    }
+  }
+  
   cur->pcb = NULL;
   free(pcb_to_free);
 
-  sema_up(&temporary);
   thread_exit();
 }
 

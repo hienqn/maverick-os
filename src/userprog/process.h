@@ -28,6 +28,9 @@ struct process {
   uint32_t* pagedir;          /* Page directory. */
   char process_name[16];      /* Name of the main thread */
   struct thread* main_thread; /* Pointer to main thread */
+  struct list children_status;        /* List of children process */
+  struct process_status *my_status; /* My own status shared with parent */
+  struct process* parent_process;
 };
 
 struct process_status {
@@ -47,6 +50,7 @@ struct process_load_info {
    struct semaphore loaded_signal;  /* Semaphore for loading synchronization */
    bool load_success;                /* Result of loading */
    struct process_status *child_status; /* Status struct created by parent */
+   struct process *parent_process; /* A pointer to its parent */
  };
 
 void userprog_init(void);

@@ -27,6 +27,7 @@ static bool validate_pointer(void* arg) {
 
 static void exit_process(struct intr_frame* f, int exit_code) {
   f->eax = exit_code;
+  thread_current()->pcb->my_status->exit_code = exit_code;
   printf("%s: exit(%d)\n", thread_current()->pcb->process_name, f->eax);
   process_exit();
 }
@@ -119,5 +120,11 @@ static void syscall_handler(struct intr_frame* f) {
     validate_string_and_exit_if_false(f, cmd_line);
     pid_t pid = process_execute(cmd_line);
     f->eax = pid == TID_ERROR ? -1 : pid;
+  }
+
+  if (args[0] == SYS_WAIT) {
+    pid_t child_pid = args[1];
+    int exit_code = process_wait(child_pid);
+    f->eax = exit_code;
   }
 }

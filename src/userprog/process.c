@@ -164,7 +164,6 @@ static void start_process(void* aux) {
   /* Clean up. Exit on failure or jump to userspace */
   palloc_free_page(load_info->cmd_line);
   if (!success) {
-    sema_up(&temporary);
     load_info->load_success = success;
     sema_up(&load_info->loaded_signal);
     thread_exit();

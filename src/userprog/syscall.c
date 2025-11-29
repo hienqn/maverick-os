@@ -1,6 +1,9 @@
 #include "userprog/syscall.h"
 #include <stdio.h>
+#include <string.h>
 #include <syscall-nr.h>
+#include "threads/malloc.h"
+#include "devices/input.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "userprog/process.h"
@@ -8,10 +11,16 @@
 #include "threads/vaddr.h"
 #include "userprog/pagedir.h"
 #include "devices/shutdown.h"
+#include "filesys/filesys.h"
 
 static void syscall_handler(struct intr_frame*);
 
-void syscall_init(void) { intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall"); }
+static struct lock global_fs_lock;
+
+void syscall_init(void) { 
+  intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall"); 
+  lock_init(&global_fs_lock);
+}
 
 static bool validate_pointer(void* arg) {
   char *byte_ptr = (char *)(arg); 
@@ -81,6 +90,13 @@ static void validate_buffer_and_exit_if_false(struct intr_frame* f, char* buffer
   }
 }
 
+static int read_from_input(char *buffer, unsigned size) {
+  for (unsigned i = 0; i < size; i++) {
+    buffer[i] = input_getc();
+  }
+  return size;
+}
+
 static void syscall_handler(struct intr_frame* f) {
   uint32_t* args = ((uint32_t*)f->esp);
 
@@ -113,6 +129,7 @@ static void syscall_handler(struct intr_frame* f) {
   }
 
   if (args[0] == SYS_PRACTICE) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
     f->eax = args[1] + 1;
   }
 
@@ -133,4 +150,60 @@ static void syscall_handler(struct intr_frame* f) {
     int exit_code = process_wait(child_pid);
     f->eax = exit_code;
   }
+
+  if (args[0] == SYS_CREATE) {
+    lock_acquire(&global_fs_lock);
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    char* file_name = (char *)args[1];
+    validate_string_and_exit_if_false(f, file_name);
+
+    unsigned initial_size = args[2];
+    bool success = filesys_create(file_name, initial_size);
+    f->eax = success;
+    lock_release(&global_fs_lock);
+  }
+
+  if (args[0] == SYS_READ) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    int fd = args[1];
+    validate_pointer_and_exit_if_false(f, &args[2]);
+    char *buffer = (char *)args[2];
+    int size = args[3];
+    validate_buffer_and_exit_if_false(f, buffer, size);
+
+    lock_acquire(&global_fs_lock);
+
+    if (fd == STDIN_FILENO) {
+      f->eax = read_from_input(buffer, size);
+      lock_release(&global_fs_lock);
+      return;
+    }
+
+    if (fd == STDOUT_FILENO) {
+      f->eax = -1;
+      lock_release(&global_fs_lock);
+      return;
+    }
+
+    if (fd < 0 || fd >= MAX_FILE_DESCRIPTOR) {
+      f->eax = -1;
+      lock_release(&global_fs_lock);
+      return;
+    }
+
+    struct file **fd_table = thread_current()->pcb->fd_table;
+    if (fd_table[fd] == NULL) {
+      f->eax = -1;
+      lock_release(&global_fs_lock);
+      return;
+    }
+  
+    f->eax = file_read(fd_table[fd], buffer, size);
+    lock_release(&global_fs_lock);
+  }
+
+  if (args[0] == SYS_OPEN) {
+
+  }
+
 }

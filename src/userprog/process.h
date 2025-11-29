@@ -23,6 +23,8 @@ typedef void (*stub_fun)(pthread_fun, void*);
    PCB from the TCB. All TCBs in a process will have a pointer
    to the PCB, and the PCB will have a pointer to the main thread
    of the process, which is `special`. */
+#define MAX_FILE_DESCRIPTOR 128
+
 struct process {
   /* Owned by process.c. */
   uint32_t* pagedir;          /* Page directory. */
@@ -30,7 +32,9 @@ struct process {
   struct thread* main_thread; /* Pointer to main thread */
   struct list children_status;        /* List of children process */
   struct process_status *my_status; /* My own status shared with parent */
-  struct process* parent_process;
+  struct process* parent_process; /* Point to parent process */
+  struct file *fd_table[MAX_FILE_DESCRIPTOR]; /* Array of file pointers */
+  struct file *exec_file;     /* Pointer to executable file to deny writes */
 };
 
 struct process_status {

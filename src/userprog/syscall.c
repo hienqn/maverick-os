@@ -83,6 +83,13 @@ static void validate_buffer_and_exit_if_false(struct intr_frame* f, char* buffer
 
 static void syscall_handler(struct intr_frame* f) {
   uint32_t* args = ((uint32_t*)f->esp);
+
+  if (!validate_pointer(&args[0])) {
+    thread_current()->pcb->my_status->exit_code = -1;
+    printf("%s: exit(%d)\n", thread_current()->pcb->process_name, -1);
+    process_exit();
+    NOT_REACHED();
+  }
   
   /*
    * The following print statement, if uncommented, will print out the syscall
@@ -91,9 +98,8 @@ static void syscall_handler(struct intr_frame* f) {
    * include it in your final submission.
    */
 
-  // printf("System call number: %d\n", args[0]);
-
   if (args[0] == SYS_EXIT) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
     exit_process(f, args[1]);
   }
 

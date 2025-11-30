@@ -325,7 +325,6 @@ static void syscall_handler(struct intr_frame* f) {
     }
     
     f->eax = file_tell(current_file);
-
   }
 
   if (args[0] == SYS_SEEK) {

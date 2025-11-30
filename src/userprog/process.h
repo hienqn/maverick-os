@@ -34,7 +34,7 @@ struct process {
   struct process_status *my_status; /* My own status shared with parent */
   struct process* parent_process; /* Point to parent process */
   struct file *fd_table[MAX_FILE_DESCRIPTOR]; /* Array of file pointers */
-  struct file *exec_file;     /* Pointer to executable file to deny writes */
+  struct file* executable;    /* Executable file (deny writes while running) */
 };
 
 struct process_status {

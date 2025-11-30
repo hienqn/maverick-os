@@ -154,6 +154,7 @@ static void start_process(void* aux) {
     for (int i = 0; i < MAX_FILE_DESCRIPTOR; i++) {
       t->pcb->fd_table[i] = NULL;
     }
+    t->pcb->executable = NULL;
 
     // Continue initializing the PCB as normal
     t->pcb->main_thread = t;
@@ -308,6 +309,11 @@ void process_exit(void) {
     }
   }
 
+  /* Close the executable (also re-enables writes via file_allow_write) */
+  if (pcb_to_free->executable != NULL) {
+    file_close(pcb_to_free->executable);
+  }
+
   if (pcb_to_free->my_status != NULL) {
     sema_up(&pcb_to_free->my_status->wait_sem);
 
@@ -350,6 +356,8 @@ int is_fd_table_full(void) {
   }
   return -1;
 }
+
+
 /* We load ELF binaries.  The following definitions are taken
    from the ELF specification, [ELF1], more-or-less verbatim.  */
 
@@ -438,10 +446,6 @@ bool load(char* file_name, void (**eip)(void), void** esp, int argc, char**argv)
   /* Open executable file. */
   file = filesys_open(file_name);
 
-  /* Prevent write to this file */
-  file_deny_write(file);
-  t->pcb->exec_file = file;
-
   if (file == NULL) {
     printf("load: %s: open failed\n", file_name);
     goto done;
@@ -515,7 +519,13 @@ bool load(char* file_name, void (**eip)(void), void** esp, int argc, char**argv)
   success = true;
 
 done:
-  file_close(file);
+  if (success) {
+    /* Store executable in PCB and deny writes while running */
+    file_deny_write(file);
+    t->pcb->executable = file;
+  } else {
+    file_close(file);
+  }
   return success;
 }
 

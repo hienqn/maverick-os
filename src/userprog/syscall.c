@@ -120,12 +120,41 @@ static void syscall_handler(struct intr_frame* f) {
   }
 
   if (args[0] == SYS_WRITE) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    int fd = args[1];
     validate_pointer_and_exit_if_false(f, &args[2]);
     void* buffer = (void*) args[2];
     uint32_t size = args[3];
     validate_buffer_and_exit_if_false(f, buffer, size);
-    putbuf(buffer, size);
-    f->eax = size;
+
+    if (fd == STDIN_FILENO) {
+      f->eax = -1;
+      return;
+    }
+
+    if (fd < 0 || fd >= MAX_FILE_DESCRIPTOR) {
+      f->eax = -1;
+      return;
+    }
+
+    if (fd == STDOUT_FILENO) {
+      putbuf(buffer, size);
+      f->eax = size;
+      return;
+    }
+
+    if (thread_current()->pcb->fd_table[fd] == NULL) {
+      f->eax = -1;
+      return;
+    }
+
+    lock_acquire(&global_fs_lock);
+
+    struct file* file_to_write = thread_current()->pcb->fd_table[fd];
+
+    f->eax = file_write(file_to_write, buffer, size);
+
+    lock_release(&global_fs_lock);
   }
 
   if (args[0] == SYS_PRACTICE) {
@@ -200,10 +229,137 @@ static void syscall_handler(struct intr_frame* f) {
   
     f->eax = file_read(fd_table[fd], buffer, size);
     lock_release(&global_fs_lock);
+    return;
   }
 
   if (args[0] == SYS_OPEN) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    char* file_name = (char *)args[1];
+    validate_string_and_exit_if_false(f, file_name);
+    
+    struct thread* curr_thread = thread_current();
+    
+    lock_acquire(&global_fs_lock);
+    struct file* open_file = filesys_open(file_name);
+
+    if (open_file == NULL) {
+      f->eax = -1;
+      lock_release(&global_fs_lock);
+      return;
+    }
+
+    int free_fd = is_fd_table_full();
+    
+    if (free_fd == -1) {
+      file_close(open_file);
+      f->eax = -1;
+      lock_release(&global_fs_lock);
+      return;
+    }
+
+    curr_thread->pcb->fd_table[free_fd] = open_file;
+    
+    f->eax = free_fd;
+    lock_release(&global_fs_lock);
+  }
+
+  if (args[0] == SYS_FILESIZE) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    int fd = args[1];
+
+    lock_acquire(&global_fs_lock);
+
+    if (fd < 2 || fd >= MAX_FILE_DESCRIPTOR) {
+      f->eax = -1;
+      lock_release(&global_fs_lock);
+      return;
+    }
+
+    struct file **fd_table = thread_current()->pcb->fd_table;
+    if (fd_table[fd] == NULL) {
+      f->eax = -1;
+      lock_release(&global_fs_lock);
+      return;
+    }
+
+    f->eax = file_length(fd_table[fd]);
+    lock_release(&global_fs_lock);
+  }
+
+  if (args[0] == SYS_CLOSE) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+  
+    int fd = args[1];
+
+    lock_acquire(&global_fs_lock);
+
+    if (fd < 0 || fd >= MAX_FILE_DESCRIPTOR) {
+      f->eax = -1;
+      lock_release(&global_fs_lock);
+      return;
+    }
+    
+    struct thread *t = thread_current();
+    if (t->pcb->fd_table[fd] != NULL) {
+      file_close(t->pcb->fd_table[fd]);
+      t->pcb->fd_table[fd] = NULL;
+    }
+
+    lock_release(&global_fs_lock);
+  }
+
+  if (args[0] == SYS_TELL) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    int fd = args[1];
+
+    if (fd < 2 || fd >= MAX_FILE_DESCRIPTOR) {
+      f->eax = -1;
+      return;
+    }
+
+    struct file* current_file = thread_current()->pcb->fd_table[fd];
+
+    if (current_file == NULL) {
+      f->eax = -1;
+      return;
+    }
+    
+    f->eax = file_tell(current_file);
 
   }
 
+  if (args[0] == SYS_SEEK) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    int fd = args[1];
+
+    if (fd < 2 || fd >= MAX_FILE_DESCRIPTOR) {
+      f->eax = -1;
+      return;
+    }
+
+    validate_pointer_and_exit_if_false(f, &args[2]);
+
+    int pos = args[2];
+
+    struct file* current_file = thread_current()->pcb->fd_table[fd];
+
+    if (current_file == NULL) {
+      f->eax = -1;
+      return;
+    }
+    
+    file_seek(current_file, pos);
+  }
+
+  if (args[0] == SYS_REMOVE) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    char* file_name = (char *)args[1];
+    validate_string_and_exit_if_false(f, file_name);
+
+    lock_acquire(&global_fs_lock);
+
+    f->eax = filesys_remove(file_name);
+
+    lock_release(&global_fs_lock);
+  }
 }

@@ -24,7 +24,7 @@ static thread_func start_process NO_RETURN;
 static thread_func start_pthread NO_RETURN;
 static bool load(char* cmd_line, void (**eip)(void), void** esp, int argc, char** argv);
 bool setup_thread(void (**eip)(void), void** esp);
-
+int is_fd_table_full(void);
 /* Initializes user programs in the system by ensuring the main
    thread has a minimal PCB so that it can execute and wait for
    the first user process. Any additions to the PCB should be also
@@ -149,6 +149,11 @@ static void start_process(void* aux) {
     new_pcb->pagedir = NULL;
     t->pcb = new_pcb;
     list_init(&t->pcb->children_status);
+
+    // Initialize fd_table to NULL
+    for (int i = 0; i < MAX_FILE_DESCRIPTOR; i++) {
+      t->pcb->fd_table[i] = NULL;
+    }
 
     // Continue initializing the PCB as normal
     t->pcb->main_thread = t;
@@ -295,6 +300,14 @@ void process_exit(void) {
      can try to activate the pagedir, but it is now freed memory */
   struct process* pcb_to_free = cur->pcb;
 
+  /* Close all open file descriptors */
+  for (int i = 2; i < MAX_FILE_DESCRIPTOR; i++) {
+    if (pcb_to_free->fd_table[i] != NULL) {
+      file_close(pcb_to_free->fd_table[i]);
+      pcb_to_free->fd_table[i] = NULL;
+    }
+  }
+
   if (pcb_to_free->my_status != NULL) {
     sema_up(&pcb_to_free->my_status->wait_sem);
 
@@ -327,6 +340,16 @@ void process_activate(void) {
   tss_update();
 }
 
+int is_fd_table_full(void) {
+  struct thread* t = thread_current();
+  struct file** fd_table = t->pcb->fd_table;
+  for (int i = 2; i < MAX_FILE_DESCRIPTOR; i++) {
+    if (fd_table[i] == NULL) {
+      return i;
+    }
+  }
+  return -1;
+}
 /* We load ELF binaries.  The following definitions are taken
    from the ELF specification, [ELF1], more-or-less verbatim.  */
 
@@ -414,6 +437,11 @@ bool load(char* file_name, void (**eip)(void), void** esp, int argc, char**argv)
 
   /* Open executable file. */
   file = filesys_open(file_name);
+
+  /* Prevent write to this file */
+  file_deny_write(file);
+  t->pcb->exec_file = file;
+
   if (file == NULL) {
     printf("load: %s: open failed\n", file_name);
     goto done;
@@ -487,7 +515,6 @@ bool load(char* file_name, void (**eip)(void), void** esp, int argc, char**argv)
   success = true;
 
 done:
-  /* We arrive here whether the load is successful or not. */
   file_close(file);
   return success;
 }

@@ -361,4 +361,7 @@ static void syscall_handler(struct intr_frame* f) {
 
     lock_release(&global_fs_lock);
   }
+
+  if (args[0] == SYS_FORK) {
+  }
 }

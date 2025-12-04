@@ -119,6 +119,65 @@ void* pagedir_get_page(uint32_t* pd, const void* uaddr) {
     return NULL;
 }
 
+/* Copy the mapping between parent_pd to the child_pd
+When this function is called, the context is in the child, but
+the table of the child is not fully built yet. We will do it in this
+function
+*/
+bool pagedir_dup(uint32_t *child_pd, uint32_t *parent_pd) {
+  // Assert child_pd is not NULL - it must be created via pagedir_create() before calling this function
+  ASSERT(child_pd != NULL);
+  // Assert child_pd not init_page_dir because init_page_dir is a shared kernel resource
+  // and should not be used as a process page directory
+  ASSERT(child_pd != init_page_dir);
+  
+  // Assert parent_pd is not NULL - it must be created via pagedir_create() before calling this function
+  ASSERT(parent_pd != NULL);
+  // Assert parent_pd not init_page_dir because init_page_dir is a shared kernel resource
+  // and should not be used as a process page directory
+  ASSERT(parent_pd != init_page_dir);
+
+  // pde is a pointer. It's important to note that it is a pointer
+  // User space is between 0x00000000 and 0xBFFFFFFFF
+  // Kernel space is between 0xC0000000 and 0xFFFFFFFF
+  // Each page directory is a potential mapping the entire user space
+  // There are 10 bits in total for page directory, meaning we have 1024 page directory entry in total
+  // So that means only an amount of page directory entry would maps to user space and the rest maps to 
+  // kernel space. pd_no(PHYS_BASE) allows you to do that. It gets the index from a virtual address
+  // If the virtual address is PHYS_BASE, then the index is 768
+  for (uint32_t* pde = parent_pd; pde < parent_pd + pd_no(PHYS_BASE); pde++) {
+    // We get the value at the pointer pde, perform AND with PTE_P to see
+    // if this entry is present or not, if it is, then it means that this is mapped
+    if (*pde & PTE_P) {
+      // We get the value at address pde, and this is a physical address value
+      // because of how MMU works
+      uint32_t *pt = ptov(*pde & PTE_ADDR);
+        // We need to interate through this 2nd layer
+        // We know at this layer, we must have  
+      for (uint32_t* pte = pt; pte < pt + PGSIZE / sizeof(*pte); pte++) {
+        if (*pte & PTE_P) {
+          void* parent_page = pte_get_page(*pte);
+          void* user_page = palloc_get_page(PAL_ZERO | PAL_USER);
+          if (user_page == NULL) {
+            return false;
+          }
+          memcpy(user_page, parent_page, PGSIZE);
+          int pd_index = pde - parent_pd;
+          int pt_index = pte - pt;
+          void* uadd = (void *)(pd_index << PDSHIFT | pt_index << PTSHIFT);
+          bool writable = *pte & PTE_W;
+          bool set_result;
+          set_result = pagedir_set_page(child_pd, uadd, user_page, writable);
+          if (!set_result) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+  return true;
+}
+
 /* Marks user virtual page UPAGE "not present" in page
    directory PD.  Later accesses to the page will fault.  Other
    bits in the page table entry are preserved.
@@ -137,7 +196,7 @@ void pagedir_clear_page(uint32_t* pd, void* upage) {
 }
 
 /* Returns true if the PTE for virtual page VPAGE in PD is dirty,
-   that is, if the page has been modified since the PTE was
+   that is, if the page has been modified since the PTE wa
    installed.
    Returns false if PD contains no PTE for VPAGE. */
 bool pagedir_is_dirty(uint32_t* pd, const void* vpage) {
@@ -153,7 +212,7 @@ void pagedir_set_dirty(uint32_t* pd, const void* vpage, bool dirty) {
     if (dirty)
       *pte |= PTE_D;
     else {
-      *pte &= ~(uint32_t)PTE_D;
+      *pte &= ~(uint32_t)PTE_D; 
       invalidate_pagedir(pd);
     }
   }

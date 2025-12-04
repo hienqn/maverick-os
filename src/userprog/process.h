@@ -9,6 +9,7 @@
 #define MAX_STACK_PAGES (1 << 11)
 #define MAX_THREADS 127
 #define MAX_ARGS 64
+#define MAX_FILE_DESCRIPTOR 128
 
 /* PIDs and TIDs are the same type. PID should be
    the TID of the main thread of the process */
@@ -23,8 +24,6 @@ typedef void (*stub_fun)(pthread_fun, void*);
    PCB from the TCB. All TCBs in a process will have a pointer
    to the PCB, and the PCB will have a pointer to the main thread
    of the process, which is `special`. */
-#define MAX_FILE_DESCRIPTOR 128
-
 struct process {
   /* Owned by process.c. */
   uint32_t* pagedir;          /* Page directory. */
@@ -63,6 +62,7 @@ pid_t process_execute(const char* cmd_line);
 int process_wait(pid_t);
 void process_exit(void);
 void process_activate(void);
+pid_t process_fork(void);
 
 bool is_main_thread(struct thread*, struct process*);
 pid_t get_pid(struct process*);

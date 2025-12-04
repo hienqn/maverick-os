@@ -21,6 +21,7 @@
 #include "threads/vaddr.h"
 
 static thread_func start_process NO_RETURN;
+static thread_func fork_process NO_RETURN;
 static thread_func start_pthread NO_RETURN;
 static bool load(char* cmd_line, void (**eip)(void), void** esp, int argc, char** argv);
 bool setup_thread(void (**eip)(void), void** esp);
@@ -47,6 +48,152 @@ void userprog_init(void) {
   /* Initialize the children status list for the main process */
   list_init(&t->pcb->children_status);
 }
+
+pid_t process_fork(void) {
+  char* fn_copy;
+  tid_t tid;
+  struct process_load_info load_info;
+  memset(&load_info, 0, sizeof(load_info));  // Zero everything first
+  load_info.load_success = false;
+  sema_init(&load_info.loaded_signal, 0);
+  load_info.argc = 0;
+  load_info.parent_process = thread_current()->pcb;
+  
+  struct process_status* child_status = malloc(sizeof(struct process_status));
+  if (!child_status) {
+    return TID_ERROR;
+  }
+  load_info.child_status = child_status;
+  load_info.child_status->exit_code = -1;
+  load_info.child_status->is_waited_on = false;
+  load_info.child_status->ref_count = 0;
+  load_info.child_status->tid = -1;
+  sema_init(&load_info.child_status->wait_sem, 0);
+
+  /* Make a copy of FILE_NAME.
+     Otherwise there's a race between the caller and load(). */
+  fn_copy = palloc_get_page(0);
+  if (fn_copy == NULL)
+    return TID_ERROR;
+  strlcpy(fn_copy, thread_current()->pcb->process_name, PGSIZE);
+  load_info.cmd_line = fn_copy;
+
+  /* Create a new thread to execute FILE_NAME. */
+  tid = thread_create(load_info.file_name, PRI_DEFAULT, start_process, &load_info);
+  if (tid == TID_ERROR)
+    palloc_free_page(fn_copy);
+
+  // Wait until the program is loaded successfully
+  sema_down(&load_info.loaded_signal);
+
+  // This mean that it's not loaded successfully, we should consider this as failure
+  // If it's not success, a thread is scheduled to be exited already
+  if (load_info.load_success == false) {
+    return TID_ERROR;  
+  }
+
+  return tid;
+}
+
+static void fork_process(void *aux){
+  struct process_load_info* load_info = (struct process_load_info*)aux;
+  char* file_name = (char*)load_info->file_name;
+
+  struct thread* t = thread_current();
+  struct intr_frame if_;
+  bool success, pcb_success;
+
+  /* Allocate process control block */
+  struct process* new_pcb = malloc(sizeof(struct process));
+  success = pcb_success = new_pcb != NULL;
+
+  /* Initialize process control block */
+  if (success) {
+    // Ensure that timer_interrupt() -> schedule() -> process_activate()
+    // does not try to activate our uninitialized pagedir
+    new_pcb->pagedir = NULL;
+    t->pcb = new_pcb;
+    list_init(&t->pcb->children_status);
+
+    // Initialize fd_table to NULL
+    for (int i = 2; i < MAX_FILE_DESCRIPTOR; i++) {
+      // Copy from parents
+      t->pcb->fd_table[i] = load_info->parent_process->fd_table[i];
+    }
+    t->pcb->executable = NULL;
+
+    // Continue initializing the PCB as normal
+    t->pcb->main_thread = t;
+    strlcpy(t->pcb->process_name, file_name, sizeof t->pcb->process_name);
+  }
+
+  /* Initialize interrupt frame and load executable. */
+  // if (success) {
+  //   memset(&if_, 0, sizeof if_);
+  //   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
+  //   if_.cs = SEL_UCSEG;
+  //   if_.eflags = FLAG_IF | FLAG_MBS;
+
+  //   success = load(file_name, &if_.eip, &if_.esp, load_info->argc, load_info->argv);
+  // }
+
+  if (success) {
+    memset(&if_, 0, sizeof if_);
+    if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
+    if_.cs = SEL_UCSEG;
+    if_.eflags = FLAG_IF | FLAG_MBS;
+    // we need to bring if_ here
+
+    success = pagedir_dup(t->pcb->pagedir, load_info->parent_process->pagedir);
+  }
+
+  /* Handle failure with succesful PCB malloc. Must free the PCB */
+  if (!success && pcb_success) {
+    // Avoid race where PCB is freed before t->pcb is set to NULL
+    // If this happens, then an unfortuantely timed timer interrupt
+    // can try to activate the pagedir, but it is now freed memory
+    struct process* pcb_to_free = t->pcb;
+    t->pcb = NULL;
+    free(pcb_to_free);
+  }
+
+  /* Clean up. Exit on failure or jump to userspace */
+  palloc_free_page(load_info->cmd_line);
+  if (!success) {
+    load_info->load_success = success;
+    sema_up(&load_info->loaded_signal);
+    thread_exit();
+  }
+
+  /* At this stage, the process has successfully initialized */
+  /* Assigned this process its own status to the memory that the parent process created */
+  t->pcb->my_status = load_info->child_status;
+  /* Increment reference count because this current thread points to this*/
+  t->pcb->my_status->ref_count += 1;
+  /* Initialized my status (this current thread) */
+  t->pcb->my_status->tid = t->tid;
+  /* This thread hasn't been waited on */
+  t->pcb->my_status->is_waited_on = false;
+
+  struct process *parent_process = load_info->parent_process;
+  list_push_front(&parent_process->children_status, &t->pcb->my_status->elem);
+  t->pcb->my_status->ref_count += 1;
+  
+  t->pcb->parent_process = parent_process;
+
+  load_info->load_success = success;
+  sema_up(&load_info->loaded_signal);
+
+  /* Start the user process by simulating a return from an
+     interrupt, implemented by intr_exit (in
+     threads/intr-stubs.S).  Because intr_exit takes all of its
+     arguments on the stack in the form of a `struct intr_frame',
+     we just point the stack pointer (%esp) to our stack frame
+     and jump to it. */
+  asm volatile("movl %0, %%esp; jmp intr_exit" : : "g"(&if_) : "memory");
+  NOT_REACHED();
+}
+
 
 static void parse_cmd_line(char *cmd_line, char** file_name, int* argc, char** argv) {
   char *token, *save_ptr;
@@ -82,10 +229,7 @@ pid_t process_execute(const char* cmd_line) {
   struct process_load_info load_info;
   memset(&load_info, 0, sizeof(load_info));  // Zero everything first
   load_info.load_success = false;
-  // loaded_signal is allocated on stack which is fine because its lifetime is in this function scope
   sema_init(&load_info.loaded_signal, 0);
-  // Child staus is null for now, we'll implement later
-  load_info.child_status = NULL;
   load_info.argc = 0;
   load_info.parent_process = thread_current()->pcb;
   

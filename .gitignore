@@ -286,3 +286,7 @@ pintos/**/build
 
 ./cache/*
 ./clangd
+
+# Cache files and directories
+**/.cache
+**/.cache/

@@ -41,6 +41,71 @@ void pagedir_destroy(uint32_t* pd) {
   palloc_free_page(pd);
 }
 
+/* Copy the entire memory space of a child process to the parent process.
+  Return true if copied successfully
+*/
+bool pagedir_dup(uint32_t* child_pagedir, uint32_t* parent_pagedir) {
+
+  ASSERT(child_pagedir != NULL);
+  ASSERT(parent_pagedir != NULL);
+  ASSERT(child_pagedir != init_page_dir);
+  ASSERT(parent_pagedir != init_page_dir);
+
+  // Starting at the pointer parent_pagedir, we want to iterate through the first layer of the page table
+  // Each process virtual memory space is 4GB. The 1st GB is already mapped for kernel space
+  // The rest is reserved for user space. Since we already mapped kernel space, we will need to iterate through
+  // all user space, which is the left over 3 GB. pd_no(PHYS_BASE) returns the number of page directory entries
+  // between 0x00000000 to 0xC0000000
+  // parent_pagedir is a pointer so this is basically doing pointer arithmetic
+  for (uint32_t* pde = parent_pagedir; pde < parent_pagedir + pd_no(PHYS_BASE); pde++) {
+    // If the present bit is 1, then this PDE points to a valid page table
+    if (*pde & PTE_P) {
+      // Get page table pointer at PDE
+      // One key thing to remember is that the value *pde is the physical address
+      // What that means is that we need to convert this physical address to virtual address
+      // because the kernel always uses virtual address. pde_get_pt does that for us.
+      uint32_t* pt = pde_get_pt(*pde);
+      uint32_t* pte;
+      
+      // Iterate through all PTEs in this page table
+      for (pte = pt; pte < pt + (PGSIZE / sizeof(*pte)); pte++) {
+        // Only process PTEs that are present
+        if (*pte & PTE_P) {
+          // Get the kernel virtual address of the parent's page
+          uint32_t* parent_page = pte_get_page(*pte);
+
+          // Allocate a new page for the child
+          uint32_t* child_page = palloc_get_page(PAL_USER | PAL_ZERO);
+          if (child_page == NULL) {
+            return false;
+          }
+
+          // Copy the parent's page content to the child's page
+          memcpy(child_page, parent_page, PGSIZE);
+
+          // Calculate the PDE and PTE indices from pointer positions
+          size_t pde_index = pde - parent_pagedir;
+          size_t pte_index = pte - pt;
+          
+          // Reconstruct the user virtual address from the indices
+          uint32_t* ua = (uint32_t*) ((pde_index << PDSHIFT) | (pte_index << PTSHIFT));
+          
+          // Preserve the writable bit from the parent's PTE
+          bool write = *pte & PTE_W;
+          
+          // Map the virtual address to the new physical page in the child's page directory
+          bool success = pagedir_set_page(child_pagedir, ua, child_page, write);
+          
+          if (!success) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+  return true;
+}
+
 /* Returns the address of the page table entry for virtual
    address VADDR in page directory PD.
    If PD does not have a page table for VADDR, behavior depends

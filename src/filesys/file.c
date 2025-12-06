@@ -8,6 +8,7 @@ struct file {
   struct inode* inode; /* File's inode. */
   off_t pos;           /* Current position. */
   bool deny_write;     /* Has file_deny_write() been called? */
+  int ref_count;       /* Reference count for shared file descriptors. */
 };
 
 /* Opens a file for the given INODE, of which it takes ownership,
@@ -19,6 +20,7 @@ struct file* file_open(struct inode* inode) {
     file->inode = inode;
     file->pos = 0;
     file->deny_write = false;
+    file->ref_count = 1;
     return file;
   } else {
     inode_close(inode);
@@ -33,12 +35,26 @@ struct file* file_reopen(struct file* file) {
   return file_open(inode_reopen(file->inode));
 }
 
-/* Closes FILE. */
+/* Duplicates FILE by incrementing its reference count.
+   Returns the same file pointer. Used for fork() to share
+   file descriptors between parent and child. */
+struct file* file_dup(struct file* file) {
+  if (file != NULL) {
+    file->ref_count++;
+  }
+  return file;
+}
+
+/* Closes FILE. Decrements reference count and only frees
+   when count reaches 0. */
 void file_close(struct file* file) {
   if (file != NULL) {
-    file_allow_write(file);
-    inode_close(file->inode);
-    free(file);
+    file->ref_count--;
+    if (file->ref_count == 0) {
+      file_allow_write(file);
+      inode_close(file->inode);
+      free(file);
+    }
   }
 }
 

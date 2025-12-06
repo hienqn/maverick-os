@@ -295,11 +295,12 @@ static void fork_process(void*aux) {
 
     if (t->pcb->pagedir == NULL) {
       success = pagedir_success = false;
+    } else {
+      /* Only call pagedir_dup if pagedir_create succeeded */
+      uint32_t* child_pagedir = t->pcb->pagedir;
+      uint32_t* parent_pagedir = load_info->parent_process->pagedir;
+      success = pagedup_success = pagedir_dup(child_pagedir, parent_pagedir);
     }
-    /* Allocate and activate page directory. */
-    uint32_t* child_pagedir = t->pcb->pagedir;
-    uint32_t* parent_pagedir = load_info->parent_process->pagedir;
-    success = pagedup_success = pagedir_dup(child_pagedir, parent_pagedir);
   }
 
   /* Duplicate all file descriptor */
@@ -315,8 +316,9 @@ static void fork_process(void*aux) {
       }
     }
   }
-  /* Failed to duplicate file descriptor, close all the files already opened*/
-  if (!success) {
+  /* Failed to duplicate file descriptor, close all the files already opened */
+  /* Only cleanup if PCB was successfully allocated (t->pcb is not NULL) */
+  if (!success && pcb_success) {
     for (int i = 2; i < MAX_FILE_DESCRIPTOR; i++) {
       if (t->pcb->fd_table[i] != NULL) {
         file_close(t->pcb->fd_table[i]);
@@ -324,10 +326,8 @@ static void fork_process(void*aux) {
     }
   }
 
-  /* Failed to duplicate file descriptor, but succeed in duplicate page 
-    we must release resources because this function fails atomically
-  */
-  if (!success && pagedup_success) {
+  /* If we failed but created a pagedir, destroy it to free resources */
+  if (!success && pcb_success && t->pcb->pagedir != NULL) {
     pagedir_destroy(t->pcb->pagedir);
   }
 

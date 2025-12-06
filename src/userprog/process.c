@@ -21,6 +21,7 @@
 #include "threads/vaddr.h"
 
 static thread_func start_process NO_RETURN;
+static thread_func fork_process NO_RETURN;
 static thread_func start_pthread NO_RETURN;
 static bool load(char* cmd_line, void (**eip)(void), void** esp, int argc, char** argv);
 bool setup_thread(void (**eip)(void), void** esp);
@@ -207,6 +208,187 @@ static void start_process(void* aux) {
 
   load_info->load_success = success;
   sema_up(&load_info->loaded_signal);
+
+  /* Start the user process by simulating a return from an
+     interrupt, implemented by intr_exit (in
+     threads/intr-stubs.S).  Because intr_exit takes all of its
+     arguments on the stack in the form of a `struct intr_frame',
+     we just point the stack pointer (%esp) to our stack frame
+     and jump to it. */
+  asm volatile("movl %0, %%esp; jmp intr_exit" : : "g"(&if_) : "memory");
+  NOT_REACHED();
+}
+
+pid_t process_fork(struct intr_frame* parent_interrupt_frame) {
+  tid_t tid;
+  struct process_load_info load_info;
+  memset(&load_info, 0, sizeof(load_info));  // Zero everything first
+  load_info.load_success = false;
+  // loaded_signal is allocated on stack which is fine because its lifetime is in this function scope
+  sema_init(&load_info.loaded_signal, 0);
+  // Child staus is null for now, we'll implement later
+  load_info.child_status = NULL;
+  load_info.argc = 0;
+  load_info.parent_process = thread_current()->pcb;
+  
+  struct process_status* child_status = malloc(sizeof(struct process_status));
+  if (!child_status) {
+    return TID_ERROR;
+  }
+  load_info.child_status = child_status;
+  load_info.child_status->exit_code = -1;
+  load_info.child_status->is_waited_on = false;
+  load_info.child_status->ref_count = 0;
+  load_info.child_status->tid = -1;
+  load_info.parent_if = parent_interrupt_frame;
+  sema_init(&load_info.child_status->wait_sem, 0);
+  load_info.file_name = thread_current()->pcb->process_name;
+  
+  /* Create a new thread to execute FILE_NAME. */
+  tid = thread_create(load_info.file_name, PRI_DEFAULT, fork_process, &load_info);
+
+  // Wait until the program is loaded successfully
+  sema_down(&load_info.loaded_signal);
+
+  // This mean that it's not loaded successfully, we should consider this as failure
+  // If it's not success, a thread is scheduled to be exited already
+  if (load_info.load_success == false) {
+    return TID_ERROR;  
+  }
+
+  return tid;
+}
+
+static void fork_process(void*aux) {
+  struct process_load_info* load_info = (struct process_load_info*)aux;
+
+  struct thread* t = thread_current();
+  struct intr_frame if_;
+  bool success, pcb_success, pagedir_success, pagedup_success, fdcopy_success;
+
+  /* Allocate process control block */
+  struct process* new_pcb = malloc(sizeof(struct process));
+  success = pcb_success = pagedup_success = fdcopy_success= new_pcb != NULL;
+  
+  /* Initialize process control block */
+  if (success) {
+    // Ensure that timer_interrupt() -> schedule() -> process_activate()
+    // does not try to activate our uninitialized pagedir
+    new_pcb->pagedir = NULL;
+    t->pcb = new_pcb;
+    list_init(&t->pcb->children_status);
+
+    // Initialize fd_table to NULL
+    for (int i = 0; i < MAX_FILE_DESCRIPTOR; i++) {
+      t->pcb->fd_table[i] = NULL;
+    }
+    t->pcb->executable = NULL;
+
+    // Continue initializing the PCB as normal
+    t->pcb->main_thread = t;
+    strlcpy(t->pcb->process_name, load_info->file_name, sizeof t->pcb->process_name);
+  }
+
+  /* Duplicate process address space */
+  if (success) {
+    t->pcb->pagedir = pagedir_create();
+
+    if (t->pcb->pagedir == NULL) {
+      success = pagedir_success = false;
+    }
+    /* Allocate and activate page directory. */
+    uint32_t* child_pagedir = t->pcb->pagedir;
+    uint32_t* parent_pagedir = load_info->parent_process->pagedir;
+    success = pagedup_success = pagedir_dup(child_pagedir, parent_pagedir);
+  }
+
+  /* Duplicate all file descriptor */
+  /* Use file_dup() to share file pointers between parent and child.
+     This implements POSIX fork semantics where parent and child share
+     the same file description (position, flags, etc.). */
+  if (success) {
+    struct file** parent_fd = load_info->parent_process->fd_table;
+    for (int i = 2; i < MAX_FILE_DESCRIPTOR; i++) {
+      if (parent_fd[i] != NULL) {
+        /* Share the same file struct - increments reference count */
+        t->pcb->fd_table[i] = file_dup(parent_fd[i]);
+      }
+    }
+  }
+  /* Failed to duplicate file descriptor, close all the files already opened*/
+  if (!success) {
+    for (int i = 2; i < MAX_FILE_DESCRIPTOR; i++) {
+      if (t->pcb->fd_table[i] != NULL) {
+        file_close(t->pcb->fd_table[i]);
+      }
+    }
+  }
+
+  /* Failed to duplicate file descriptor, but succeed in duplicate page 
+    we must release resources because this function fails atomically
+  */
+  if (!success && pagedup_success) {
+    pagedir_destroy(t->pcb->pagedir);
+  }
+
+  /* Handle failure with succesful PCB malloc. Must free the PCB */
+  if (!success && pcb_success) {
+    // Avoid race where PCB is freed before t->pcb is set to NULL
+    // If this happens, then an unfortuantely timed timer interrupt
+    // can try to activate the pagedir, but it is now freed memory
+    struct process* pcb_to_free = t->pcb;
+    t->pcb = NULL;
+    free(pcb_to_free);
+  }
+
+  /* Last step, signal parent process they can go and exit */
+  if (!success) {
+    load_info->load_success = success;
+    sema_up(&load_info->loaded_signal);
+    thread_exit();
+  }
+  
+  /* Store executable in PCB and deny writes while running */
+  /* Use file_reopen to get a separate file handle for the child */
+  /* This ensures that when the child closes the file, it doesn't affect the parent */
+  if (load_info->parent_process->executable != NULL) {
+    t->pcb->executable = file_reopen(load_info->parent_process->executable);
+    if (t->pcb->executable != NULL) {
+      file_deny_write(t->pcb->executable);
+    }
+  } else {
+    t->pcb->executable = NULL;
+  }
+
+   // Copy the parent's interrupt frame to the child
+   memcpy(&if_, load_info->parent_if, sizeof(if_));
+   // CRITICAL: Child process must return 0 from fork()
+   // The parent's interrupt frame may have a different value in eax
+   if_.eax = 0;
+
+  /* At this stage, the process has successfully initialized */
+  /* Assigned this process its own status to the memory that the parent process created */
+  t->pcb->my_status = load_info->child_status;
+  /* Increment reference count because this current thread points to this*/
+  t->pcb->my_status->ref_count += 1;
+  /* Initialized my status (this current thread) */
+  t->pcb->my_status->tid = t->tid;
+  /* This thread hasn't been waited on */
+  t->pcb->my_status->is_waited_on = false;
+
+  struct process *parent_process = load_info->parent_process;
+  list_push_front(&parent_process->children_status, &t->pcb->my_status->elem);
+  t->pcb->my_status->ref_count += 1;
+  
+  t->pcb->parent_process = parent_process;
+
+  load_info->load_success = success;
+  sema_up(&load_info->loaded_signal);
+
+  /* Activate the child's page directory before jumping to user space.
+     This ensures that when the child starts executing, it uses its own
+     page directory with the duplicated memory mappings. */
+  process_activate();
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in

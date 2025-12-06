@@ -361,4 +361,13 @@ static void syscall_handler(struct intr_frame* f) {
 
     lock_release(&global_fs_lock);
   }
+
+  if (args[0] == SYS_FORK) {
+    lock_acquire(&global_fs_lock);
+
+    pid_t pid = process_fork(f);  // Pass the interrupt frame
+    f->eax = pid == TID_ERROR ? -1 : pid;
+    
+    lock_release(&global_fs_lock);
+  }
 }

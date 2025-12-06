@@ -55,11 +55,13 @@ struct process_load_info {
    bool load_success;                /* Result of loading */
    struct process_status *child_status; /* Status struct created by parent */
    struct process *parent_process; /* A pointer to its parent */
+   struct intr_frame* parent_if;
  };
 
 void userprog_init(void);
 
 pid_t process_execute(const char* cmd_line);
+pid_t process_fork(struct intr_frame* interrupt_frame);
 int process_wait(pid_t);
 void process_exit(void);
 void process_activate(void);

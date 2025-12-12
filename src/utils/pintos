@@ -626,7 +626,8 @@ sub run_qemu {
     push (@cmd, '-hdc', $disks[2]) if defined $disks[2];
     push (@cmd, '-hdd', $disks[3]) if defined $disks[3];
     push (@cmd, '-m', $mem);
-    push (@cmd, '-net', 'none');
+    push (@cmd, '-netdev', 'user,id=net0');
+    push (@cmd, '-device', 'e1000,netdev=net0');
     push (@cmd, '-nographic') if $vga eq 'none';
     push (@cmd, '-serial', 'stdio') if $serial && $vga ne 'none';
     push (@cmd, '-S') if $debug eq 'monitor';

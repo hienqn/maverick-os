@@ -36,6 +36,8 @@ devices_SRC += devices/intq.c		# Interrupt queue.
 devices_SRC += devices/rtc.c		# Real-time clock.
 devices_SRC += devices/shutdown.c	# Reboot and power off.
 devices_SRC += devices/speaker.c	# PC speaker.
+devices_SRC += devices/pci.c		# PCI configuration space access.
+devices_SRC += devices/e1000.c		# E1000 network device.
 
 # Library code shared between kernel and user programs.
 lib_SRC  = lib/debug.c			# Debug helpers.

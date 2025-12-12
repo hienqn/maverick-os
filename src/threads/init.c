@@ -16,6 +16,7 @@
 #include "devices/timer.h"
 #include "devices/vga.h"
 #include "devices/rtc.h"
+#include "devices/e1000.h"
 #include "threads/interrupt.h"
 #include "threads/io.h"
 #include "threads/loader.h"
@@ -117,6 +118,9 @@ int main(void) {
   thread_start();
   serial_init_queue();
   timer_calibrate();
+
+  /* Initialize network device. */
+  e1000_init();
 
 #ifdef USERPROG
   /* Give main thread a minimal PCB so it can launch the first process */

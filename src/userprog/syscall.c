@@ -400,24 +400,30 @@ static void syscall_handler(struct intr_frame* f) {
   if (args[0] == SYS_LOCK_INIT) {
     validate_pointer_and_exit_if_false(f, &args[1]);
     lock_t* user_lock = (lock_t*)args[1];
-    struct process* pcb = thread_current()->pcb;
     
-    lock_acquire(&pcb->exit_lock);
-    if (pcb->next_lock_id >= MAX_LOCKS) {
-      lock_release(&pcb->exit_lock);
+    /* Validate the user pointer before dereferencing */
+    if (!validate_pointer(user_lock)) {
       f->eax = false;
     } else {
-      struct lock* k_lock = malloc(sizeof(struct lock));
-      if (k_lock == NULL) {
+      struct process* pcb = thread_current()->pcb;
+      
+      lock_acquire(&pcb->exit_lock);
+      if (pcb->next_lock_id >= MAX_LOCKS) {
         lock_release(&pcb->exit_lock);
         f->eax = false;
       } else {
-        lock_init(k_lock);
-        int id = pcb->next_lock_id++;
-        pcb->lock_table[id] = k_lock;
-        lock_release(&pcb->exit_lock);
-        *user_lock = (lock_t)id;
-        f->eax = true;
+        struct lock* k_lock = malloc(sizeof(struct lock));
+        if (k_lock == NULL) {
+          lock_release(&pcb->exit_lock);
+          f->eax = false;
+        } else {
+          lock_init(k_lock);
+          int id = pcb->next_lock_id++;
+          pcb->lock_table[id] = k_lock;
+          lock_release(&pcb->exit_lock);
+          *user_lock = (lock_t)id;
+          f->eax = true;
+        }
       }
     }
   }
@@ -463,24 +469,30 @@ static void syscall_handler(struct intr_frame* f) {
     validate_pointer_and_exit_if_false(f, &args[1]);
     sema_t* user_sema = (sema_t*)args[1];
     int val = (int)args[2];
-    struct process* pcb = thread_current()->pcb;
     
-    lock_acquire(&pcb->exit_lock);
-    if (pcb->next_sema_id >= MAX_SEMAS) {
-      lock_release(&pcb->exit_lock);
+    /* Validate the user pointer and value before proceeding */
+    if (!validate_pointer(user_sema) || val < 0) {
       f->eax = false;
     } else {
-      struct semaphore* k_sema = malloc(sizeof(struct semaphore));
-      if (k_sema == NULL) {
+      struct process* pcb = thread_current()->pcb;
+      
+      lock_acquire(&pcb->exit_lock);
+      if (pcb->next_sema_id >= MAX_SEMAS) {
         lock_release(&pcb->exit_lock);
         f->eax = false;
       } else {
-        sema_init(k_sema, val);
-        int id = pcb->next_sema_id++;
-        pcb->sema_table[id] = k_sema;
-        lock_release(&pcb->exit_lock);
-        *user_sema = (sema_t)id;
-        f->eax = true;
+        struct semaphore* k_sema = malloc(sizeof(struct semaphore));
+        if (k_sema == NULL) {
+          lock_release(&pcb->exit_lock);
+          f->eax = false;
+        } else {
+          sema_init(k_sema, val);
+          int id = pcb->next_sema_id++;
+          pcb->sema_table[id] = k_sema;
+          lock_release(&pcb->exit_lock);
+          *user_sema = (sema_t)id;
+          f->eax = true;
+        }
       }
     }
   }

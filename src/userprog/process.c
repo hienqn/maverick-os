@@ -512,6 +512,8 @@ void process_exit(void) {
      Set is_exiting to prevent new threads from starting, then wait. */
   lock_acquire(&cur->pcb->exit_lock);
   cur->pcb->is_exiting = true;
+  /* Wake up any threads waiting in pthread_exit_main */
+  cond_broadcast(&cur->pcb->exit_cond, &cur->pcb->exit_lock);
   while (cur->pcb->thread_count > 1) {
     cond_wait(&cur->pcb->exit_cond, &cur->pcb->exit_lock);
   }
@@ -1297,10 +1299,20 @@ void pthread_exit_main(void) {
     sema_up(&cur->my_status->exit_sema);
   }
 
-  /* Wait for all other threads to exit */
+  /* Wait for all other threads to exit, OR another thread calls exit() */
   lock_acquire(&pcb->exit_lock);
-  while (pcb->thread_count > 1) {
+  while (pcb->thread_count > 1 && !pcb->is_exiting) {
     cond_wait(&pcb->exit_cond, &pcb->exit_lock);
+  }
+  
+  /* Check if another thread initiated exit (called exit() syscall) */
+  if (pcb->is_exiting) {
+    /* Another thread is exiting the process - just exit this thread */
+    pcb->thread_count--;
+    cond_broadcast(&pcb->exit_cond, &pcb->exit_lock);
+    lock_release(&pcb->exit_lock);
+    thread_exit();
+    NOT_REACHED();
   }
   lock_release(&pcb->exit_lock);
 

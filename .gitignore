@@ -284,5 +284,5 @@ cscope.po.out
 ### PintOS ###
 pintos/**/build
 
-.Cache
+.cache
 /docs

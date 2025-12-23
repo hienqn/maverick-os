@@ -91,7 +91,7 @@ struct thread {
   int priority;              /* Priority. */
   int eff_priority;          /* Effective priority */
   struct lock* waiting_lock;  /* The lock this thread is waiting for */
-  struct lock* held_lock;    /* The locks that this thread is holing */
+  struct list held_locks;     /* List of locks this thread holds */
   
   struct list_elem allelem;  /* List element for all threads list. */
   int64_t wake_up_tick;          /* Assigned a value when timer_sleep is called, then sleep until it has to wake up */

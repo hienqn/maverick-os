@@ -191,8 +191,38 @@ void lock_acquire(struct lock* lock) {
   ASSERT(!intr_context());
   ASSERT(!lock_held_by_current_thread(lock));
 
+  if (active_sched_policy == SCHED_PRIO) {
+    // Set waiting_lock before attempting to acquire
+    thread_current()->waiting_lock = lock;
+
+    if (lock->holder != NULL) {
+      // Donate priority to the HOLDER (not waiters!)
+      struct thread* holder = lock->holder;
+      if (thread_current()->eff_priority > holder->eff_priority) {
+        holder->eff_priority = thread_current()->eff_priority;
+        
+        // Chain: if holder is waiting for another lock, propagate
+        struct lock* next_lock = holder->waiting_lock;
+        while (next_lock != NULL && next_lock->holder != NULL) {
+          struct thread* next_holder = next_lock->holder;
+          if (holder->eff_priority > next_holder->eff_priority) {
+            next_holder->eff_priority = holder->eff_priority;
+          }
+          holder = next_holder;
+          next_lock = holder->waiting_lock;
+        }
+      }
+    }
+  }
+
   sema_down(&lock->semaphore);
+  
+  // We now hold the lock
   lock->holder = thread_current();
+  if (active_sched_policy == SCHED_PRIO) {
+    thread_current()->waiting_lock = NULL;
+    list_push_back(&thread_current()->held_locks, &lock->elem);
+  }
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -208,8 +238,12 @@ bool lock_try_acquire(struct lock* lock) {
   ASSERT(!lock_held_by_current_thread(lock));
 
   success = sema_try_down(&lock->semaphore);
-  if (success)
+  if (success) {
     lock->holder = thread_current();
+    if (active_sched_policy == SCHED_PRIO) {
+      list_push_back(&thread_current()->held_locks, &lock->elem);
+    }
+  }
   return success;
 }
 
@@ -222,6 +256,33 @@ void lock_release(struct lock* lock) {
   ASSERT(lock != NULL);
   ASSERT(lock_held_by_current_thread(lock));
 
+  if (active_sched_policy == SCHED_PRIO) {
+    struct thread* cur = thread_current();
+    
+    // Remove this lock from our held_locks list
+    list_remove(&lock->elem);
+    
+    // Recalculate eff_priority from base priority + remaining held locks
+    int max_prio = cur->priority;
+    
+    for (struct list_elem* e = list_begin(&cur->held_locks);
+         e != list_end(&cur->held_locks);
+         e = list_next(e)) {
+      struct lock* held = list_entry(e, struct lock, elem);
+      
+      // Find max priority among this lock's waiters
+      if (!list_empty(&held->semaphore.waiters)) {
+        struct list_elem* max_waiter = list_max(&held->semaphore.waiters, 
+                                                 thread_priority_less, NULL);
+        struct thread* t = list_entry(max_waiter, struct thread, elem);
+        if (t->eff_priority > max_prio)
+          max_prio = t->eff_priority;
+      }
+    }
+    
+    cur->eff_priority = max_prio;
+  }
+  
   lock->holder = NULL;
   sema_up(&lock->semaphore);
 }

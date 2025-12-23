@@ -353,19 +353,43 @@ void thread_foreach(thread_action_func* func, void* aux) {
 
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void thread_set_priority(int new_priority) {
-  thread_current()->priority = new_priority;
-  thread_current()->eff_priority = new_priority;
+  struct thread* cur = thread_current();
+  cur->priority = new_priority;
   
-  /* Yield if a higher-priority thread is ready */
-  if (!list_empty(&priority_ready_list)) {
-    struct thread* front = list_entry(list_front(&priority_ready_list), struct thread, elem);
-    if (front->eff_priority > thread_current()->eff_priority)
-      thread_yield();
+  if (active_sched_policy == SCHED_PRIO) {
+    /* Recalculate eff_priority: max of new base and any donations from held locks */
+    int max_prio = new_priority;
+    
+    for (struct list_elem* e = list_begin(&cur->held_locks);
+         e != list_end(&cur->held_locks);
+         e = list_next(e)) {
+      struct lock* held = list_entry(e, struct lock, elem);
+      
+      /* Find max priority among this lock's waiters */
+      if (!list_empty(&held->semaphore.waiters)) {
+        struct list_elem* max_waiter = list_max(&held->semaphore.waiters, 
+                                                 thread_priority_less, NULL);
+        struct thread* t = list_entry(max_waiter, struct thread, elem);
+        if (t->eff_priority > max_prio)
+          max_prio = t->eff_priority;
+      }
+    }
+    
+    cur->eff_priority = max_prio;
+    
+    /* Yield if a higher-priority thread is ready */
+    if (!list_empty(&priority_ready_list)) {
+      struct thread* front = list_entry(list_front(&priority_ready_list), struct thread, elem);
+      if (front->eff_priority > cur->eff_priority)
+        thread_yield();
+    }
+  } else {
+    cur->eff_priority = new_priority;
   }
 }
 
 /* Returns the current thread's priority. */
-int thread_get_priority(void) { return thread_current()->priority; }
+int thread_get_priority(void) { return thread_current()->eff_priority; }
 
 /* Sets the current thread's nice value to NICE. */
 void thread_set_nice(int nice UNUSED) { /* Not yet implemented. */
@@ -464,7 +488,7 @@ static void init_thread(struct thread* t, const char* name, int priority) {
   t->priority = priority;
   t->eff_priority = priority;   // Initially same as base priority
   t->waiting_lock = NULL;       // Not waiting for any lock
-  t->held_lock = NULL;          // Not holding any lock
+  list_init(&t->held_locks);    // No locks held initially
   t->pcb = NULL;
   t->pcb = NULL;
   t->magic = THREAD_MAGIC;

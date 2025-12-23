@@ -155,4 +155,8 @@ void thread_set_nice(int);
 int thread_get_recent_cpu(void);
 int thread_get_load_avg(void);
 
+/* Thread priority comparison for list operations */
+bool thread_priority_less(const struct list_elem* a, const struct list_elem* b, void* aux);
+
+bool thread_priority_greater(const struct list_elem* a, const struct list_elem* b, void* aux);
 #endif /* threads/thread.h */

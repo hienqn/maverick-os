@@ -98,14 +98,30 @@ bool sema_try_down(struct semaphore* sema) {
    This function may be called from an interrupt handler. */
 void sema_up(struct semaphore* sema) {
   enum intr_level old_level;
+  struct thread* woken = NULL;
 
   ASSERT(sema != NULL);
 
   old_level = intr_disable();
-  if (!list_empty(&sema->waiters))
-    thread_unblock(list_entry(list_pop_front(&sema->waiters), struct thread, elem));
+  if (!list_empty(&sema->waiters)) {
+    struct thread* t;
+    if (active_sched_policy == SCHED_PRIO) {
+      struct list_elem* max_elem = list_max(&sema->waiters, thread_priority_less, NULL);
+      list_remove(max_elem);
+      t = list_entry(max_elem, struct thread, elem);
+    } else {
+      t = list_entry(list_pop_front(&sema->waiters), struct thread, elem);
+    }
+    thread_unblock(t);
+    woken = t;
+  }
   sema->value++;
   intr_set_level(old_level);
+
+  /* Only yield if NOT in interrupt context */
+  if (!intr_context() && woken != NULL && 
+      woken->eff_priority > thread_current()->eff_priority)
+    thread_yield();
 }
 
 static void sema_test_helper(void* sema_);
@@ -327,6 +343,37 @@ void cond_wait(struct condition* cond, struct lock* lock) {
   lock_acquire(lock);
 }
 
+/* Compares priority of threads waiting on condition variable semaphores.
+   Returns true if a's thread has lower priority than b's thread.
+   
+   Condition Variable Waiter Pattern:
+   ─────────────────────────────────
+   Unlike a regular semaphore where multiple threads share one wait queue,
+   condition variables use a "one semaphore per waiter" pattern:
+   
+   Each thread calling cond_wait():
+   1. Creates its own semaphore_elem on the stack
+   2. Initializes its own personal semaphore (value=0)
+   3. Adds the semaphore_elem to cond->waiters
+   4. Blocks on its own personal semaphore via sema_down()
+   
+   Therefore, each semaphore_elem in cond->waiters has EXACTLY ONE thread
+   waiting on its semaphore, making list_front(&sema.waiters) always valid
+   and always returning that single waiting thread.
+   
+   This pattern allows cond_signal to selectively wake any waiter
+   (e.g., highest priority) rather than just the first in queue. */
+static bool cond_sema_priority_less(const struct list_elem* a, const struct list_elem* b, void* aux UNUSED) {
+  struct semaphore_elem* sa = list_entry(a, struct semaphore_elem, elem);
+  struct semaphore_elem* sb = list_entry(b, struct semaphore_elem, elem);
+
+  /* Each semaphore has exactly one waiter (the thread waiting on this cond) */
+  struct thread* ta = list_entry(list_front(&sa->semaphore.waiters), struct thread, elem);
+  struct thread* tb = list_entry(list_front(&sb->semaphore.waiters), struct thread, elem);
+
+  return ta->eff_priority < tb->eff_priority;
+}
+
 /* If any threads are waiting on COND (protected by LOCK), then
    this function signals one of them to wake up from its wait.
    LOCK must be held before calling this function.
@@ -334,15 +381,24 @@ void cond_wait(struct condition* cond, struct lock* lock) {
    An interrupt handler cannot acquire a lock, so it does not
    make sense to try to signal a condition variable within an
    interrupt handler. */
-void cond_signal(struct condition* cond, struct lock* lock UNUSED) {
-  ASSERT(cond != NULL);
-  ASSERT(lock != NULL);
-  ASSERT(!intr_context());
-  ASSERT(lock_held_by_current_thread(lock));
-
-  if (!list_empty(&cond->waiters))
-    sema_up(&list_entry(list_pop_front(&cond->waiters), struct semaphore_elem, elem)->semaphore);
-}
+   void cond_signal(struct condition* cond, struct lock* lock UNUSED) {
+    ASSERT(cond != NULL);
+    ASSERT(lock != NULL);
+    ASSERT(!intr_context());
+    ASSERT(lock_held_by_current_thread(lock));
+  
+    if (!list_empty(&cond->waiters)) {
+      if (active_sched_policy == SCHED_PRIO) {
+        /* Wake highest priority waiter */
+        struct list_elem* max_elem = list_max(&cond->waiters, cond_sema_priority_less, NULL);
+        list_remove(max_elem);
+        sema_up(&list_entry(max_elem, struct semaphore_elem, elem)->semaphore);
+      } else {
+        /* FIFO: wake front waiter */
+        sema_up(&list_entry(list_pop_front(&cond->waiters), struct semaphore_elem, elem)->semaphore);
+      }
+    }
+  }
 
 /* Wakes up all threads, if any, waiting on COND (protected by
    LOCK).  LOCK must be held before calling this function.

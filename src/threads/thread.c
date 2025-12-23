@@ -214,6 +214,9 @@ tid_t thread_create(const char* name, int priority, thread_func* function, void*
   /* Add to run queue. */
   thread_unblock(t);
 
+  /* Yield if new thread has higher priority than us */
+  if (t->eff_priority > thread_current()->eff_priority) thread_yield();
+
   return tid;
 }
 
@@ -231,11 +234,18 @@ void thread_block(void) {
   schedule();
 }
 
-/* Returns true if thread A has lower priority than thread B. */
-static bool thread_priority_less(const struct list_elem* a,const struct list_elem* b, void* aux UNUSED) {
+/* a < b : for list_max to find highest, list_insert_ordered for ascending */
+bool thread_priority_less(const struct list_elem* a, const struct list_elem* b, void* aux UNUSED) {
   struct thread* ta = list_entry(a, struct thread, elem);
   struct thread* tb = list_entry(b, struct thread, elem);
-  return ta->eff_priority < tb->eff_priority;  // or use eff_priority
+  return ta->eff_priority < tb->eff_priority;
+}
+
+/* a > b : for list_insert_ordered to keep highest at front */
+bool thread_priority_greater(const struct list_elem* a, const struct list_elem* b, void* aux UNUSED) {
+  struct thread* ta = list_entry(a, struct thread, elem);
+  struct thread* tb = list_entry(b, struct thread, elem);
+  return ta->eff_priority > tb->eff_priority;
 }
 
 /* Places a thread on the ready structure appropriate for the
@@ -249,7 +259,7 @@ static void thread_enqueue(struct thread* t) {
   if (active_sched_policy == SCHED_FIFO)
     list_push_back(&fifo_ready_list, &t->elem);
   else if (active_sched_policy == SCHED_PRIO)
-    list_insert_ordered(&priority_ready_list, &t->elem, thread_priority_less, NULL);
+    list_insert_ordered(&priority_ready_list, &t->elem, thread_priority_greater, NULL);
   else
       PANIC("Unimplemented scheduling policy value: %d", active_sched_policy);
 }
@@ -342,7 +352,17 @@ void thread_foreach(thread_action_func* func, void* aux) {
 }
 
 /* Sets the current thread's priority to NEW_PRIORITY. */
-void thread_set_priority(int new_priority) { thread_current()->priority = new_priority; }
+void thread_set_priority(int new_priority) {
+  thread_current()->priority = new_priority;
+  thread_current()->eff_priority = new_priority;
+  
+  /* Yield if a higher-priority thread is ready */
+  if (!list_empty(&priority_ready_list)) {
+    struct thread* front = list_entry(list_front(&priority_ready_list), struct thread, elem);
+    if (front->eff_priority > thread_current()->eff_priority)
+      thread_yield();
+  }
+}
 
 /* Returns the current thread's priority. */
 int thread_get_priority(void) { return thread_current()->priority; }

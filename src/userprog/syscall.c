@@ -370,4 +370,27 @@ static void syscall_handler(struct intr_frame* f) {
     
     lock_release(&global_fs_lock);
   }
+
+
+  if (args[0] == SYS_PT_CREATE) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    validate_pointer_and_exit_if_false(f, &args[2]);
+    validate_pointer_and_exit_if_false(f, &args[3]);
+    stub_fun sfun = (stub_fun)args[1];
+    pthread_fun tfun = (pthread_fun)args[2];
+    void* arg = (void*)args[3];
+    f->eax = pthread_execute(sfun, tfun, arg);
+  }
+
+  if (args[0] == SYS_PT_EXIT) {
+    // pt_exit();
+    // Should never reach here, just in case
+    thread_exit();
+  }
+
+  if (args[0] == SYS_PT_JOIN) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    tid_t tid = args[1];
+    // f->eax = pt_join(tid);
+  }
 }

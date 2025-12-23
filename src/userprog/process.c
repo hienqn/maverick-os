@@ -26,6 +26,44 @@ static thread_func start_pthread NO_RETURN;
 static bool load(char* cmd_line, void (**eip)(void), void** esp, int argc, char** argv);
 bool setup_thread(void (**eip)(void), void** esp);
 int is_fd_table_full(void);
+
+/* Initializes all fields of a process control block.
+   Must be called after pcb is allocated and assigned to t->pcb.
+   The pcb->pagedir should be set to NULL before calling this. */
+static void pcb_init(struct process* pcb, struct thread* main_thread) {
+  /* Core process fields */
+  list_init(&pcb->children_status);
+  pcb->main_thread = main_thread;
+  pcb->my_status = NULL;
+  pcb->parent_process = NULL;
+  pcb->executable = NULL;
+
+  /* File descriptor table */
+  for (int i = 0; i < MAX_FILE_DESCRIPTOR; i++) {
+    pcb->fd_table[i] = NULL;
+  }
+
+  /* Threading support */
+  list_init(&pcb->threads);
+  list_init(&pcb->thread_statuses);
+
+  /* Exit synchronization (Mesa-style monitor) */
+  lock_init(&pcb->exit_lock);
+  cond_init(&pcb->exit_cond);
+  pcb->thread_count = 1;  /* Main thread counts as 1 */
+  pcb->is_exiting = false;
+  pcb->exit_code = 0;
+
+  /* User-level synchronization tables */
+  for (int i = 0; i < MAX_LOCKS; i++) {
+    pcb->lock_table[i] = NULL;
+  }
+  for (int i = 0; i < MAX_SEMAS; i++) {
+    pcb->sema_table[i] = NULL;
+  }
+  pcb->next_lock_id = 0;
+  pcb->next_sema_id = 0;
+}
 /* Initializes user programs in the system by ensuring the main
    thread has a minimal PCB so that it can execute and wait for
    the first user process. Any additions to the PCB should be also
@@ -45,8 +83,9 @@ void userprog_init(void) {
   /* Kill the kernel if we did not succeed */
   ASSERT(success);
 
-  /* Initialize the children status list for the main process */
-  list_init(&t->pcb->children_status);
+  /* Initialize the PCB */
+  t->pcb->pagedir = NULL;
+  pcb_init(t->pcb, t);
 }
 
 static void parse_cmd_line(char *cmd_line, char** file_name, int* argc, char** argv) {
@@ -149,16 +188,9 @@ static void start_process(void* aux) {
     // does not try to activate our uninitialized pagedir
     new_pcb->pagedir = NULL;
     t->pcb = new_pcb;
-    list_init(&t->pcb->children_status);
 
-    // Initialize fd_table to NULL
-    for (int i = 0; i < MAX_FILE_DESCRIPTOR; i++) {
-      t->pcb->fd_table[i] = NULL;
-    }
-    t->pcb->executable = NULL;
-
-    // Continue initializing the PCB as normal
-    t->pcb->main_thread = t;
+    // Initialize all PCB fields
+    pcb_init(t->pcb, t);
     strlcpy(t->pcb->process_name, load_info->file_name, sizeof t->pcb->process_name);
   }
 
@@ -276,16 +308,9 @@ static void fork_process(void*aux) {
     // does not try to activate our uninitialized pagedir
     new_pcb->pagedir = NULL;
     t->pcb = new_pcb;
-    list_init(&t->pcb->children_status);
 
-    // Initialize fd_table to NULL
-    for (int i = 0; i < MAX_FILE_DESCRIPTOR; i++) {
-      t->pcb->fd_table[i] = NULL;
-    }
-    t->pcb->executable = NULL;
-
-    // Continue initializing the PCB as normal
-    t->pcb->main_thread = t;
+    // Initialize all PCB fields
+    pcb_init(t->pcb, t);
     strlcpy(t->pcb->process_name, load_info->file_name, sizeof t->pcb->process_name);
   }
 
@@ -912,7 +937,10 @@ bool setup_thread(void (**eip)(void) UNUSED, void** esp UNUSED) { return false; 
    This function will be implemented in Project 2: Multithreading and
    should be similar to process_execute (). For now, it does nothing.
    */
-tid_t pthread_execute(stub_fun sf UNUSED, pthread_fun tf UNUSED, void* arg UNUSED) { return -1; }
+tid_t pthread_execute(stub_fun sf UNUSED, pthread_fun tf UNUSED, void* arg UNUSED) { 
+  // 
+  
+}
 
 /* A thread function that creates a new user thread and starts it
    running. Responsible for adding itself to the list of threads in

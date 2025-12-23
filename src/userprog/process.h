@@ -10,6 +10,12 @@
 #define MAX_THREADS 127
 #define MAX_ARGS 64
 
+/* User-level synchronization type definitions */
+typedef char lock_t;   /* 1 byte = supports up to 256 locks */
+typedef char sema_t;   /* 1 byte = supports up to 256 semaphores */
+#define MAX_LOCKS 256
+#define MAX_SEMAS 256
+
 /* PIDs and TIDs are the same type. PID should be
    the TID of the main thread of the process */
 typedef tid_t pid_t;
@@ -35,6 +41,23 @@ struct process {
   struct process* parent_process; /* Point to parent process */
   struct file *fd_table[MAX_FILE_DESCRIPTOR]; /* Array of file pointers */
   struct file* executable;    /* Executable file (deny writes while running) */
+
+   /* Threading support */
+   struct list threads;              /* List of all threads in this process */
+   struct list thread_statuses;      /* List of thread_status for join/cleanup */
+
+   /* Exit synchronization (Mesa-style monitor) */
+   struct lock exit_lock;            /* Protects all exit-related fields */
+   struct condition exit_cond;       /* Signals when thread_count changes */
+   int thread_count;                 /* Number of active threads (starts at 1) */
+   bool is_exiting;                  /* Process termination initiated */
+   int exit_code;                    /* Final exit code for parent */
+
+   /* User-level synchronization */
+   struct lock* lock_table[MAX_LOCKS];     /* Maps lock_t → struct lock* */
+   struct semaphore* sema_table[MAX_SEMAS]; /* Maps sema_t → struct semaphore* */
+   int next_lock_id;                        /* Next available lock ID */
+   int next_sema_id;                        /* Next available semaphore ID */
 };
 
 struct process_status {

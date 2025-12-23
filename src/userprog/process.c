@@ -46,6 +46,7 @@ static void pcb_init(struct process* pcb, struct thread* main_thread) {
   /* Threading support */
   list_init(&pcb->threads);
   list_init(&pcb->thread_statuses);
+  list_push_back(&pcb->threads, &main_thread->pcb_elem);
 
   /* Exit synchronization (Mesa-style monitor) */
   lock_init(&pcb->exit_lock);

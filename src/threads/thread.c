@@ -505,8 +505,10 @@ static void init_thread(struct thread* t, const char* name, int priority) {
   t->eff_priority = priority;   // Initially same as base priority
   t->waiting_lock = NULL;       // Not waiting for any lock
   list_init(&t->held_locks);    // No locks held initially
+#ifdef USERPROG
   t->pcb = NULL;
-  t->pcb = NULL;
+  /* pcb_elem will be added to pcb->threads when pcb_init() is called */
+#endif
   t->magic = THREAD_MAGIC;
   t->wake_up_tick = 0;
   

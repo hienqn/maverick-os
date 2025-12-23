@@ -24,6 +24,10 @@
    that are ready to run but not actually running. */
 static struct list fifo_ready_list;
 
+/* List of processes in THREAD_READY state for the MLFQS scheduler.
+   Contains threads ready to run but not currently running. */
+static struct list priority_ready_list;
+
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
 static struct list all_list;
@@ -108,6 +112,7 @@ void thread_init(void) {
 
   lock_init(&tid_lock);
   list_init(&fifo_ready_list);
+  list_init(&priority_ready_list);
   list_init(&all_list);
 
   /* Set up a thread structure for the running thread. */
@@ -226,6 +231,13 @@ void thread_block(void) {
   schedule();
 }
 
+/* Returns true if thread A has lower priority than thread B. */
+static bool thread_priority_less(const struct list_elem* a,const struct list_elem* b, void* aux UNUSED) {
+  struct thread* ta = list_entry(a, struct thread, elem);
+  struct thread* tb = list_entry(b, struct thread, elem);
+  return ta->eff_priority < tb->eff_priority;  // or use eff_priority
+}
+
 /* Places a thread on the ready structure appropriate for the
    current active scheduling policy.
    
@@ -236,8 +248,10 @@ static void thread_enqueue(struct thread* t) {
 
   if (active_sched_policy == SCHED_FIFO)
     list_push_back(&fifo_ready_list, &t->elem);
+  else if (active_sched_policy == SCHED_PRIO)
+    list_insert_ordered(&priority_ready_list, &t->elem, thread_priority_less, NULL);
   else
-    PANIC("Unimplemented scheduling policy value: %d", active_sched_policy);
+      PANIC("Unimplemented scheduling policy value: %d", active_sched_policy);
 }
 
 /* Transitions a blocked thread T to the ready-to-run state.
@@ -428,6 +442,10 @@ static void init_thread(struct thread* t, const char* name, int priority) {
   strlcpy(t->name, name, sizeof t->name);
   t->stack = (uint8_t*)t + PGSIZE;
   t->priority = priority;
+  t->eff_priority = priority;   // Initially same as base priority
+  t->waiting_lock = NULL;       // Not waiting for any lock
+  t->held_lock = NULL;          // Not holding any lock
+  t->pcb = NULL;
   t->pcb = NULL;
   t->magic = THREAD_MAGIC;
   t->wake_up_tick = 0;
@@ -458,7 +476,10 @@ static struct thread* thread_schedule_fifo(void) {
 
 /* Strict priority scheduler */
 static struct thread* thread_schedule_prio(void) {
-  PANIC("Unimplemented scheduler policy: \"-sched=prio\"");
+  if (!list_empty(&priority_ready_list))
+    return list_entry(list_pop_front(&priority_ready_list), struct thread, elem);
+  else
+    return idle_thread;
 }
 
 /* Fair priority scheduler */

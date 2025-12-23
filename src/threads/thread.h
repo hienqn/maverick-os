@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include "threads/synch.h"
 #include "threads/fixed-point.h"
+#include "synch.h"
 
 /* States in a thread's life cycle. */
 enum thread_status {
@@ -88,6 +89,10 @@ struct thread {
   char name[16];             /* Name (for debugging purposes). */
   uint8_t* stack;            /* Saved stack pointer. */
   int priority;              /* Priority. */
+  int eff_priority;          /* Effective priority */
+  struct lock* waiting_lock;  /* The lock this thread is waiting for */
+  struct lock* held_lock;    /* The locks that this thread is holing */
+  
   struct list_elem allelem;  /* List element for all threads list. */
   int64_t wake_up_tick;          /* Assigned a value when timer_sleep is called, then sleep until it has to wake up */
 

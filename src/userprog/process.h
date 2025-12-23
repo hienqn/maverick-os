@@ -58,6 +58,9 @@ struct process {
    struct semaphore* sema_table[MAX_SEMAS]; /* Maps sema_t → struct semaphore* */
    int next_lock_id;                        /* Next available lock ID */
    int next_sema_id;                        /* Next available semaphore ID */
+
+   /* Stack slot management for pthreads */
+   bool stack_slots[MAX_THREADS];          /* true = slot in use, false = free */
 };
 
 struct process_status {
@@ -67,6 +70,17 @@ struct process_status {
    struct list_elem elem;      /* Element for the parent's children list */
    int ref_count;              /* Reference count (2 initially: parent + child) */
    bool is_waited_on;          /* Prevents waiting twice */
+ };
+
+/* Status struct for pthread join/exit synchronization.
+   Outlives the thread so joiner can still access it. */
+struct pthread_status {
+   tid_t tid;                  /* Thread's ID */
+   struct semaphore exit_sema; /* Joiner waits on this */
+   struct list_elem elem;      /* Element for pcb->thread_statuses list */
+   bool is_joined;             /* Prevents double join */
+   bool has_exited;            /* Thread has called pthread_exit */
+   void* retval;               /* Return value from pthread_exit */
  };
 
 struct process_load_info {
@@ -94,8 +108,8 @@ pid_t get_pid(struct process*);
 int is_fd_table_full(void);
 
 tid_t pthread_execute(stub_fun, pthread_fun, void*);
-tid_t pthread_join(tid_t);
-void pthread_exit(void);
+tid_t pthread_join(tid_t, void**);
+void pthread_exit(void*);
 void pthread_exit_main(void);
 
 #endif /* userprog/process.h */

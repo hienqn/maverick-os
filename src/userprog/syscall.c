@@ -383,14 +383,152 @@ static void syscall_handler(struct intr_frame* f) {
   }
 
   if (args[0] == SYS_PT_EXIT) {
-    // pt_exit();
-    // Should never reach here, just in case
-    thread_exit();
+    pthread_exit(NULL);  /* User library doesn't pass retval yet */
   }
 
   if (args[0] == SYS_PT_JOIN) {
     validate_pointer_and_exit_if_false(f, &args[1]);
     tid_t tid = args[1];
-    // f->eax = pt_join(tid);
+    f->eax = pthread_join(tid, NULL);  /* User library doesn't use retval yet */
+  }
+
+  if (args[0] == SYS_GET_TID) {
+    f->eax = thread_current()->tid;
+  }
+
+  /* User-level lock syscalls */
+  if (args[0] == SYS_LOCK_INIT) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    lock_t* user_lock = (lock_t*)args[1];
+    struct process* pcb = thread_current()->pcb;
+    
+    lock_acquire(&pcb->exit_lock);
+    if (pcb->next_lock_id >= MAX_LOCKS) {
+      lock_release(&pcb->exit_lock);
+      f->eax = false;
+    } else {
+      struct lock* k_lock = malloc(sizeof(struct lock));
+      if (k_lock == NULL) {
+        lock_release(&pcb->exit_lock);
+        f->eax = false;
+      } else {
+        lock_init(k_lock);
+        int id = pcb->next_lock_id++;
+        pcb->lock_table[id] = k_lock;
+        lock_release(&pcb->exit_lock);
+        *user_lock = (lock_t)id;
+        f->eax = true;
+      }
+    }
+  }
+
+  if (args[0] == SYS_LOCK_ACQUIRE) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    lock_t* user_lock = (lock_t*)args[1];
+    struct process* pcb = thread_current()->pcb;
+    int id = (int)(unsigned char)*user_lock;
+    
+    lock_acquire(&pcb->exit_lock);
+    struct lock* k_lock = (id >= 0 && id < MAX_LOCKS) ? pcb->lock_table[id] : NULL;
+    lock_release(&pcb->exit_lock);
+    
+    if (k_lock == NULL || lock_held_by_current_thread(k_lock)) {
+      f->eax = false;  /* Invalid lock or already held (double acquire) */
+    } else {
+      lock_acquire(k_lock);
+      f->eax = true;
+    }
+  }
+
+  if (args[0] == SYS_LOCK_RELEASE) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    lock_t* user_lock = (lock_t*)args[1];
+    struct process* pcb = thread_current()->pcb;
+    int id = (int)(unsigned char)*user_lock;
+    
+    lock_acquire(&pcb->exit_lock);
+    struct lock* k_lock = (id >= 0 && id < MAX_LOCKS) ? pcb->lock_table[id] : NULL;
+    lock_release(&pcb->exit_lock);
+    
+    if (k_lock == NULL || !lock_held_by_current_thread(k_lock)) {
+      f->eax = false;  /* Invalid lock or not held by this thread */
+    } else {
+      lock_release(k_lock);
+      f->eax = true;
+    }
+  }
+
+  /* User-level semaphore syscalls */
+  if (args[0] == SYS_SEMA_INIT) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    sema_t* user_sema = (sema_t*)args[1];
+    int val = (int)args[2];
+    struct process* pcb = thread_current()->pcb;
+    
+    lock_acquire(&pcb->exit_lock);
+    if (pcb->next_sema_id >= MAX_SEMAS) {
+      lock_release(&pcb->exit_lock);
+      f->eax = false;
+    } else {
+      struct semaphore* k_sema = malloc(sizeof(struct semaphore));
+      if (k_sema == NULL) {
+        lock_release(&pcb->exit_lock);
+        f->eax = false;
+      } else {
+        sema_init(k_sema, val);
+        int id = pcb->next_sema_id++;
+        pcb->sema_table[id] = k_sema;
+        lock_release(&pcb->exit_lock);
+        *user_sema = (sema_t)id;
+        f->eax = true;
+      }
+    }
+  }
+
+  if (args[0] == SYS_SEMA_DOWN) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    sema_t* user_sema = (sema_t*)args[1];
+    struct process* pcb = thread_current()->pcb;
+    int id = (int)(unsigned char)*user_sema;
+    
+    lock_acquire(&pcb->exit_lock);
+    struct semaphore* k_sema = (id >= 0 && id < MAX_SEMAS) ? pcb->sema_table[id] : NULL;
+    lock_release(&pcb->exit_lock);
+    
+    if (k_sema == NULL) {
+      f->eax = false;
+    } else {
+      sema_down(k_sema);
+      f->eax = true;
+    }
+  }
+
+  if (args[0] == SYS_SEMA_UP) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    sema_t* user_sema = (sema_t*)args[1];
+    struct process* pcb = thread_current()->pcb;
+    int id = (int)(unsigned char)*user_sema;
+    
+    lock_acquire(&pcb->exit_lock);
+    struct semaphore* k_sema = (id >= 0 && id < MAX_SEMAS) ? pcb->sema_table[id] : NULL;
+    lock_release(&pcb->exit_lock);
+    
+    if (k_sema == NULL) {
+      f->eax = false;
+    } else {
+      sema_up(k_sema);
+      f->eax = true;
+    }
+  }
+
+  /* Check if process is exiting - thread should exit instead of returning to user */
+  struct thread* cur = thread_current();
+  if (cur->pcb != NULL && cur->pcb->is_exiting) {
+    if (is_main_thread(cur, cur->pcb)) {
+      process_exit();  /* Main thread handles cleanup */
+    } else {
+      pthread_exit(NULL);  /* Non-main threads just exit */
+    }
+    NOT_REACHED();
   }
 }

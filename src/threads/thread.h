@@ -109,8 +109,10 @@ struct thread {
 
 #ifdef USERPROG
   /* Owned by process.c. */
-  struct process* pcb;      /* Process control block if this thread is a userprog */
-  struct list_elem pcb_elem; /* List element for process's thread list */
+  struct process* pcb;               /* Process control block if this thread is a userprog */
+  struct list_elem pcb_elem;         /* List element for process's thread list */
+  void* user_stack;                  /* Base of user stack page (for cleanup) */
+  struct pthread_status* my_status;  /* Status struct for join synchronization */
 #endif
 
   /* Owned by thread.c. */

@@ -430,6 +430,7 @@ static void init_thread(struct thread* t, const char* name, int priority) {
   t->priority = priority;
   t->pcb = NULL;
   t->magic = THREAD_MAGIC;
+  t->wake_up_tick = 0;
 
   old_level = intr_disable();
   list_push_back(&all_list, &t->allelem);

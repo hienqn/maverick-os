@@ -83,8 +83,27 @@ void timer_sleep(int64_t ticks) {
   int64_t start = timer_ticks();
 
   ASSERT(intr_get_level() == INTR_ON);
-  while (timer_elapsed(start) < ticks)
-    thread_yield();
+
+  enum intr_level old_level = intr_disable();
+
+  struct thread* current_thread = thread_current();
+  // Wake up time is the current tick plus the duration
+  current_thread->wake_up_tick = start + ticks;
+  // Insert this thread into the sleeping_threads list, ordered by wake_up_tick
+  struct list_elem *e = list_begin(&sleeping_threads);
+  while (e != list_end(&sleeping_threads)) {
+    struct thread *t = list_entry(e, struct thread, elem);
+    if (current_thread->wake_up_tick < t->wake_up_tick) {
+      break;
+    }
+    e = list_next(e);
+  }
+  list_insert(e, &current_thread->elem);
+
+  // Move this thread to a waiting queue to stop wasting CPU cycle
+  thread_block();
+
+  intr_set_level(old_level);
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -133,6 +152,15 @@ void timer_print_stats(void) { printf("Timer: %" PRId64 " ticks\n", timer_ticks(
 static void timer_interrupt(struct intr_frame* args UNUSED) {
   ticks++;
   thread_tick();
+
+  /* Wake up sleeping threads whose time has come */
+  while (!list_empty(&sleeping_threads)) {
+    struct thread *t = list_entry(list_front(&sleeping_threads), struct thread, elem);
+    if (t->wake_up_tick > ticks)
+      break;
+    list_pop_front(&sleeping_threads);
+    thread_unblock(t);
+  }
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer

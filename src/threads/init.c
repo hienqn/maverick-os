@@ -225,6 +225,7 @@ static char** read_command_line(void) {
    and returns the first non-option argument. */
 static char** parse_options(char** argv) {
   bool scheduler_flags[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+  bool fair_sched_flags[4] = {0, 0, 0, 0};
 
   for (; *argv != NULL && **argv == '-'; argv++) {
     char* save_ptr;
@@ -263,6 +264,18 @@ static char** parse_options(char** argv) {
       else
         PANIC("unknown scheduler option `%s' (use -h for help)", value);
     }
+    else if (!strcmp(name, "-fair")) {
+      if (!strcmp(value, "stride"))
+        fair_sched_flags[FAIR_SCHED_STRIDE] = 1;
+      else if (!strcmp(value, "lottery"))
+        fair_sched_flags[FAIR_SCHED_LOTTERY] = 1;
+      else if (!strcmp(value, "cfs"))
+        fair_sched_flags[FAIR_SCHED_CFS] = 1;
+      else if (!strcmp(value, "eevdf"))
+        fair_sched_flags[FAIR_SCHED_EEVDF] = 1;
+      else
+        PANIC("unknown fair scheduler option `%s' (use -h for help)", value);
+    }
 #ifdef USERPROG
     else if (!strcmp(name, "-ul"))
       user_page_limit = atoi(value);
@@ -296,6 +309,30 @@ static char** parse_options(char** argv) {
     active_sched_policy = SCHED_MLFQS;
   else
     PANIC("kernel bug in init.c: unreachable case");
+
+  /* Configure which fair scheduler implementation to use when
+   * active_sched_policy == SCHED_FAIR.
+   * These flags are mutually-exclusive.
+   * If none are set, defaults to FAIR_SCHED_STRIDE. */
+  size_t fair_flags_set = 0;
+  for (int i = 0; i < 4; i++) {
+    fair_flags_set += fair_sched_flags[i];
+  }
+  if (fair_flags_set == 0)
+    active_fair_sched_type = FAIR_SCHED_DEFAULT;
+  else if (fair_flags_set > 1)
+    PANIC("too many fair scheduler flags set: set at most one of \"-fair=stride\", "
+          "\"-fair=lottery\", \"-fair=cfs\", \"-fair=eevdf\"");
+  else if (fair_sched_flags[FAIR_SCHED_STRIDE])
+    active_fair_sched_type = FAIR_SCHED_STRIDE;
+  else if (fair_sched_flags[FAIR_SCHED_LOTTERY])
+    active_fair_sched_type = FAIR_SCHED_LOTTERY;
+  else if (fair_sched_flags[FAIR_SCHED_CFS])
+    active_fair_sched_type = FAIR_SCHED_CFS;
+  else if (fair_sched_flags[FAIR_SCHED_EEVDF])
+    active_fair_sched_type = FAIR_SCHED_EEVDF;
+  else
+    PANIC("kernel bug in init.c: unreachable case in fair scheduler selection");
 
   /* Initialize the random number generator based on the system
      time.  This has no effect if an "-rs" option was specified.
@@ -429,12 +466,16 @@ static void usage(void) {
 #endif // VM
 #endif // FILESYS
          "  -rs=SEED           Set random number seed to SEED.\n"
-         "  -sched-fair        Use alternate non-strict priority scheduler. Mutually exclusive "
-         "with \"-sched-mlfqs\", \"-sched-prio\".\n"
-         "  -sched-mlfqs       Use multi-level feedback queue scheduler. Mutually exclusive with "
-         "\"-sched-fair\", \"-sched-prio\".\n"
-         "  -sched-prio        Use strict-priority round-robin scheduler. Mutually exclusive with "
-         "\"-sched-fair\", \"-sched-mlfqs\".\n"
+         "  -sched=fifo        Use first-in-first-out scheduler.\n"
+         "  -sched=prio        Use strict-priority round-robin scheduler.\n"
+         "  -sched=fair        Use fair scheduler. Mutually exclusive with other -sched options.\n"
+         "  -sched=mlfqs       Use multi-level feedback queue scheduler.\n"
+         "\n"
+         "Fair scheduler options (only used when -sched=fair):\n"
+         "  -fair=stride       Use stride scheduling (default).\n"
+         "  -fair=lottery      Use lottery scheduling.\n"
+         "  -fair=cfs          Use Completely Fair Scheduler (CFS).\n"
+         "  -fair=eevdf        Use Earliest Eligible Virtual Deadline First (EEVDF).\n"
 #ifdef USERPROG
          "  -ul=COUNT          Limit user memory to COUNT pages.\n"
 #endif // USERPROG

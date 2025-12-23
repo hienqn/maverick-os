@@ -82,6 +82,22 @@ $(foreach TEST,$(SCHED_FAIR_TESTS), \
 $(foreach TEST,$(SCHED_MLFQS_TESTS), \
           $(eval $(TEST)_KERNELARGS = -sched=mlfqs))
 
+# Fair scheduler type tests (can be added when tests are ready)
+# Usage: add tests to the appropriate list below
+FAIR_STRIDE_TESTS  =
+FAIR_LOTTERY_TESTS =
+FAIR_CFS_TESTS     =
+FAIR_EEVDF_TESTS   =
+
+$(foreach TEST,$(FAIR_STRIDE_TESTS), \
+          $(eval $(TEST)_KERNELARGS = -sched=fair -fair=stride))
+$(foreach TEST,$(FAIR_LOTTERY_TESTS), \
+          $(eval $(TEST)_KERNELARGS = -sched=fair -fair=lottery))
+$(foreach TEST,$(FAIR_CFS_TESTS), \
+          $(eval $(TEST)_KERNELARGS = -sched=fair -fair=cfs))
+$(foreach TEST,$(FAIR_EEVDF_TESTS), \
+          $(eval $(TEST)_KERNELARGS = -sched=fair -fair=eevdf))
+
 # I honestly still do not entirely get where this is supposed to hook in
 $(MLFQS_OUTPUTS): KERNELFLAGS += -sched=mlfqs
 $(MLFQS_OUTPUTS): TIMEOUT = 480

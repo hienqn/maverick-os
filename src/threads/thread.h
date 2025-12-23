@@ -96,6 +96,14 @@ struct thread {
   struct list_elem allelem;  /* List element for all threads list. */
   int64_t wake_up_tick;          /* Assigned a value when timer_sleep is called, then sleep until it has to wake up */
 
+  /* Fair scheduler fields (used when active_sched_policy == SCHED_FAIR) */
+  int tickets;              /* Lottery: number of tickets for this thread */
+  int64_t stride;           /* Stride: stride value (inverse of tickets) */
+  int64_t pass;             /* Stride: pass value (accumulated stride) */
+  int64_t vruntime;         /* CFS/EEVDF: virtual runtime */
+  int64_t deadline;         /* EEVDF: virtual deadline */
+  int nice_fair;            /* Fair scheduler nice value (weight adjustment) */
+
   /* Shared between thread.c and synch.c. */
   struct list_elem elem; /* List element. */
 
@@ -118,11 +126,28 @@ enum sched_policy {
 };
 #define SCHED_DEFAULT SCHED_FIFO
 
+/* Types of fair scheduler implementations available when
+ * using SCHED_FAIR policy. */
+enum fair_sched_type {
+  FAIR_SCHED_STRIDE,   // Stride scheduling
+  FAIR_SCHED_LOTTERY,  // Lottery scheduling
+  FAIR_SCHED_CFS,      // Completely Fair Scheduler (Linux-style)
+  FAIR_SCHED_EEVDF,    // Earliest Eligible Virtual Deadline First
+};
+#define FAIR_SCHED_DEFAULT FAIR_SCHED_STRIDE
+
 /* Determines which scheduling policy the kernel should use.
  * Controller by the kernel command-line options
  *  "-sched-default", "-sched-fair", "-sched-mlfqs", "-sched-fifo"
  * Is equal to SCHED_FIFO by default. */
 extern enum sched_policy active_sched_policy;
+
+/* Determines which fair scheduler implementation to use when
+ * active_sched_policy == SCHED_FAIR.
+ * Controlled by kernel command-line options:
+ *  "-fair=stride", "-fair=lottery", "-fair=cfs", "-fair=eevdf"
+ * Is equal to FAIR_SCHED_STRIDE by default. */
+extern enum fair_sched_type active_fair_sched_type;
 
 void thread_init(void);
 void thread_start(void);

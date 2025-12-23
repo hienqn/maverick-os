@@ -18,8 +18,8 @@ void fpu_init_check(void*);
 void fpu_init_check(void* args UNUSED) {
   uint8_t fpu[FPU_SIZE];
   uint8_t init_fpu[FPU_SIZE];
-  asm("fsave (%0); fninit; fsave (%1)" : : "g"(&fpu), "g"(&init_fpu));
-  if (memcmp(&fpu, &init_fpu, FPU_SIZE))
+  asm("fsave (%0); fninit; fsave (%1)" : : "g"(&fpu), "g"(&init_fpu) : "memory");
+  if (memcmp(fpu, init_fpu, FPU_SIZE))
     fail("FPU not initialized correctly");
   sema_up(&check_done);
 }

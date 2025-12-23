@@ -28,6 +28,10 @@ static struct list fifo_ready_list;
    Contains threads ready to run but not currently running. */
 static struct list priority_ready_list;
 
+/* List of processes in THREAD_READY state for fair schedulers.
+   Contains threads ready to run but not currently running. */
+static struct list fair_ready_list;
+
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
 static struct list all_list;
@@ -83,6 +87,13 @@ static struct thread* thread_schedule_reserved(void);
    Is equal to SCHED_FIFO by default. */
 enum sched_policy active_sched_policy;
 
+/* Determines which fair scheduler implementation to use when
+   active_sched_policy == SCHED_FAIR.
+   Controlled by kernel command-line options:
+    "-fair=stride", "-fair=lottery", "-fair=cfs", "-fair=eevdf"
+   Is equal to FAIR_SCHED_STRIDE by default. */
+enum fair_sched_type active_fair_sched_type;
+
 /* Selects a thread to run from the ready list according to
    some scheduling policy, and returns a pointer to it. */
 typedef struct thread* scheduler_func(void);
@@ -113,6 +124,7 @@ void thread_init(void) {
   lock_init(&tid_lock);
   list_init(&fifo_ready_list);
   list_init(&priority_ready_list);
+  list_init(&fair_ready_list);
   list_init(&all_list);
 
   /* Set up a thread structure for the running thread. */
@@ -260,8 +272,12 @@ static void thread_enqueue(struct thread* t) {
     list_push_back(&fifo_ready_list, &t->elem);
   else if (active_sched_policy == SCHED_PRIO)
     list_insert_ordered(&priority_ready_list, &t->elem, thread_priority_greater, NULL);
+  else if (active_sched_policy == SCHED_FAIR)
+    list_push_back(&fair_ready_list, &t->elem);  /* Fair schedulers will sort/select appropriately */
+  else if (active_sched_policy == SCHED_MLFQS)
+    PANIC("Unimplemented scheduling policy: MLFQS");
   else
-      PANIC("Unimplemented scheduling policy value: %d", active_sched_policy);
+    PANIC("Unknown scheduling policy value: %d", active_sched_policy);
 }
 
 /* Transitions a blocked thread T to the ready-to-run state.
@@ -493,6 +509,14 @@ static void init_thread(struct thread* t, const char* name, int priority) {
   t->pcb = NULL;
   t->magic = THREAD_MAGIC;
   t->wake_up_tick = 0;
+  
+  /* Fair scheduler fields initialization */
+  t->tickets = 100;             // Default ticket count for lottery
+  t->stride = 0;                // Will be computed from tickets
+  t->pass = 0;                  // Initial pass value
+  t->vruntime = 0;              // Initial virtual runtime
+  t->deadline = 0;              // Initial virtual deadline
+  t->nice_fair = 0;             // Default nice value (neutral weight)
 
   old_level = intr_disable();
   list_push_back(&all_list, &t->allelem);
@@ -526,9 +550,79 @@ static struct thread* thread_schedule_prio(void) {
     return idle_thread;
 }
 
-/* Fair priority scheduler */
+/* Fair scheduler implementations */
+
+/* Stride scheduler:
+   - Each thread has a stride = STRIDE_LARGE / tickets
+   - Each thread has a pass value that starts at 0
+   - Pick thread with minimum pass, run it, then add stride to its pass
+   - Provides proportional share based on ticket allocation */
+static struct thread* thread_schedule_stride(void) {
+  if (list_empty(&fair_ready_list))
+    return idle_thread;
+  /* TODO: Implement stride scheduling
+     - Find thread with minimum pass value
+     - Update pass value after selection */
+  PANIC("Unimplemented fair scheduler: stride");
+}
+
+/* Lottery scheduler:
+   - Each thread has a number of tickets
+   - Randomly select a ticket number from total pool
+   - Run the thread holding that ticket
+   - Provides probabilistic proportional share */
+static struct thread* thread_schedule_lottery(void) {
+  if (list_empty(&fair_ready_list))
+    return idle_thread;
+  /* TODO: Implement lottery scheduling
+     - Count total tickets in ready list
+     - Generate random number in [0, total_tickets)
+     - Find and return winning thread */
+  PANIC("Unimplemented fair scheduler: lottery");
+}
+
+/* Completely Fair Scheduler (CFS):
+   - Each thread tracks vruntime (virtual runtime)
+   - vruntime increases based on actual runtime / weight
+   - Always pick thread with smallest vruntime
+   - Uses red-black tree in Linux, can use sorted list here */
+static struct thread* thread_schedule_cfs(void) {
+  if (list_empty(&fair_ready_list))
+    return idle_thread;
+  /* TODO: Implement CFS
+     - Find thread with minimum vruntime
+     - Update vruntime after running */
+  PANIC("Unimplemented fair scheduler: CFS");
+}
+
+/* Earliest Eligible Virtual Deadline First (EEVDF):
+   - Extension of CFS with deadline awareness
+   - Each thread has vruntime and virtual deadline
+   - Only consider "eligible" threads (vruntime <= current time)
+   - Among eligible, pick earliest virtual deadline
+   - Better latency guarantees than pure CFS */
+static struct thread* thread_schedule_eevdf(void) {
+  if (list_empty(&fair_ready_list))
+    return idle_thread;
+  /* TODO: Implement EEVDF
+     - Filter eligible threads (vruntime <= min_vruntime)
+     - Among eligible, find earliest virtual deadline
+     - Update vruntime and deadline after running */
+  PANIC("Unimplemented fair scheduler: EEVDF");
+}
+
+/* Jump table for fair scheduler implementations */
+typedef struct thread* fair_scheduler_func(void);
+static fair_scheduler_func* fair_scheduler_jump_table[4] = {
+  thread_schedule_stride,   /* FAIR_SCHED_STRIDE */
+  thread_schedule_lottery,  /* FAIR_SCHED_LOTTERY */
+  thread_schedule_cfs,      /* FAIR_SCHED_CFS */
+  thread_schedule_eevdf,    /* FAIR_SCHED_EEVDF */
+};
+
+/* Fair priority scheduler - dispatches to the active fair scheduler implementation */
 static struct thread* thread_schedule_fair(void) {
-  PANIC("Unimplemented scheduler policy: \"-sched=fair\"");
+  return (fair_scheduler_jump_table[active_fair_sched_type])();
 }
 
 /* Multi-level feedback queue scheduler */

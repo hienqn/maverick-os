@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "threads/flags.h"
+#include "threads/fixed-point.h"
 #include "threads/interrupt.h"
 #include "threads/intr-stubs.h"
 #include "threads/palloc.h"
@@ -57,6 +58,9 @@ static long long idle_ticks;   /* # of timer ticks spent idle. */
 static long long kernel_ticks; /* # of timer ticks in kernel threads. */
 static long long user_ticks;   /* # of timer ticks in user programs. */
 
+/* MLFQS scheduler state. */
+static int load_avg;           /* System load average (fixed-point, 17.14 format) */
+
 /* Scheduling. */
 #define TIME_SLICE 4          /* # of timer ticks to give each thread. */
 static unsigned thread_ticks; /* # of timer ticks since last yield. */
@@ -79,6 +83,11 @@ static struct thread* thread_schedule_prio(void);
 static struct thread* thread_schedule_fair(void);
 static struct thread* thread_schedule_mlfqs(void);
 static struct thread* thread_schedule_reserved(void);
+
+/* MLFQS helper functions */
+static void mlfqs_update_priority(struct thread* t);
+static void mlfqs_update_recent_cpu(struct thread* t);
+static void mlfqs_update_load_avg(void);
 
 /* Determines which scheduler the kernel should use.
    Controlled by the kernel command-line options
@@ -126,6 +135,9 @@ void thread_init(void) {
   list_init(&priority_ready_list);
   list_init(&fair_ready_list);
   list_init(&all_list);
+
+  /* Initialize MLFQS global state */
+  load_avg = 0;  /* Fixed-point 0 */
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread();
@@ -275,7 +287,7 @@ static void thread_enqueue(struct thread* t) {
   else if (active_sched_policy == SCHED_FAIR)
     list_push_back(&fair_ready_list, &t->elem);  /* Fair schedulers will sort/select appropriately */
   else if (active_sched_policy == SCHED_MLFQS)
-    PANIC("Unimplemented scheduling policy: MLFQS");
+    list_insert_ordered(&priority_ready_list, &t->elem, thread_priority_greater, NULL);
   else
     PANIC("Unknown scheduling policy value: %d", active_sched_policy);
 }
@@ -367,8 +379,13 @@ void thread_foreach(thread_action_func* func, void* aux) {
   }
 }
 
-/* Sets the current thread's priority to NEW_PRIORITY. */
+/* Sets the current thread's priority to NEW_PRIORITY.
+   Ignored when MLFQS is active (priorities are calculated automatically). */
 void thread_set_priority(int new_priority) {
+  /* MLFQS calculates priorities automatically - ignore manual changes */
+  if (active_sched_policy == SCHED_MLFQS)
+    return;
+  
   struct thread* cur = thread_current();
   cur->priority = new_priority;
   
@@ -408,25 +425,135 @@ void thread_set_priority(int new_priority) {
 int thread_get_priority(void) { return thread_current()->eff_priority; }
 
 /* Sets the current thread's nice value to NICE. */
-void thread_set_nice(int nice UNUSED) { /* Not yet implemented. */
+void thread_set_nice(int nice) {
+  ASSERT(nice >= -20 && nice <= 20);
+  
+  enum intr_level old_level = intr_disable();
+  struct thread* cur = thread_current();
+  cur->nice = nice;
+  
+  /* Recalculate priority if using MLFQS */
+  if (active_sched_policy == SCHED_MLFQS) {
+    mlfqs_update_priority(cur);
+    /* Yield if we're no longer highest priority */
+    thread_yield();
+  }
+  intr_set_level(old_level);
 }
 
 /* Returns the current thread's nice value. */
 int thread_get_nice(void) {
-  /* Not yet implemented. */
-  return 0;
+  enum intr_level old_level = intr_disable();
+  int nice = thread_current()->nice;
+  intr_set_level(old_level);
+  return nice;
 }
 
 /* Returns 100 times the system load average. */
 int thread_get_load_avg(void) {
-  /* Not yet implemented. */
-  return 0;
+  enum intr_level old_level = intr_disable();
+  int result = fix_round(fix_scale(__mk_fix(load_avg), 100));
+  intr_set_level(old_level);
+  return result;
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
 int thread_get_recent_cpu(void) {
-  /* Not yet implemented. */
-  return 0;
+  enum intr_level old_level = intr_disable();
+  int result = fix_round(fix_scale(__mk_fix(thread_current()->recent_cpu), 100));
+  intr_set_level(old_level);
+  return result;
+}
+
+/* MLFQS: Updates the priority of thread T based on recent_cpu and nice.
+   priority = PRI_MAX - (recent_cpu / 4) - (nice * 2)
+   Result is clamped to [PRI_MIN, PRI_MAX]. */
+static void mlfqs_update_priority(struct thread* t) {
+  if (t == idle_thread)
+    return;
+  
+  /* recent_cpu / 4 in fixed-point, then truncate to int */
+  int recent_cpu_term = fix_trunc(fix_unscale(__mk_fix(t->recent_cpu), 4));
+  int nice_term = t->nice * 2;
+  int new_priority = PRI_MAX - recent_cpu_term - nice_term;
+  
+  /* Clamp to valid priority range */
+  if (new_priority < PRI_MIN)
+    new_priority = PRI_MIN;
+  if (new_priority > PRI_MAX)
+    new_priority = PRI_MAX;
+  
+  t->priority = new_priority;
+}
+
+/* MLFQS: Updates recent_cpu for thread T.
+   recent_cpu = (2*load_avg)/(2*load_avg + 1) * recent_cpu + nice */
+static void mlfqs_update_recent_cpu(struct thread* t) {
+  if (t == idle_thread)
+    return;
+  
+  /* coefficient = (2*load_avg) / (2*load_avg + 1) */
+  fixed_point_t load = __mk_fix(load_avg);
+  fixed_point_t twice_load = fix_scale(load, 2);
+  fixed_point_t twice_load_plus_1 = fix_add(twice_load, fix_int(1));
+  fixed_point_t coefficient = fix_div(twice_load, twice_load_plus_1);
+  
+  /* recent_cpu = coefficient * recent_cpu + nice */
+  fixed_point_t recent = __mk_fix(t->recent_cpu);
+  fixed_point_t new_recent = fix_add(fix_mul(coefficient, recent), fix_int(t->nice));
+  t->recent_cpu = new_recent.f;
+}
+
+/* MLFQS: Updates the system load average.
+   load_avg = (59/60)*load_avg + (1/60)*ready_threads
+   ready_threads = number of running + ready threads (excluding idle) */
+static void mlfqs_update_load_avg(void) {
+  int ready_threads = (int)list_size(&priority_ready_list);
+  
+  /* Add 1 if current thread is not idle (it's running) */
+  if (thread_current() != idle_thread)
+    ready_threads++;
+  
+  /* load_avg = (59/60)*load_avg + (1/60)*ready_threads */
+  fixed_point_t load = __mk_fix(load_avg);
+  fixed_point_t coef_59_60 = fix_frac(59, 60);
+  fixed_point_t coef_1_60 = fix_frac(1, 60);
+  
+  fixed_point_t term1 = fix_mul(coef_59_60, load);
+  fixed_point_t term2 = fix_mul(coef_1_60, fix_int(ready_threads));
+  fixed_point_t new_load = fix_add(term1, term2);
+  
+  load_avg = new_load.f;
+}
+
+/* MLFQS: Called every timer tick to update the running thread's recent_cpu.
+   Increments recent_cpu by 1 for the running thread (if not idle). */
+void thread_mlfqs_tick(void) {
+  struct thread* cur = thread_current();
+  if (cur != idle_thread) {
+    cur->recent_cpu = fix_add(__mk_fix(cur->recent_cpu), fix_int(1)).f;
+  }
+}
+
+/* MLFQS: Called every 4 ticks to recalculate priorities for all threads. */
+void thread_mlfqs_update_priorities(void) {
+  struct list_elem* e;
+  for (e = list_begin(&all_list); e != list_end(&all_list); e = list_next(e)) {
+    struct thread* t = list_entry(e, struct thread, allelem);
+    mlfqs_update_priority(t);
+  }
+}
+
+/* MLFQS: Called every second (TIMER_FREQ ticks) to update load_avg and recent_cpu. */
+void thread_mlfqs_update_stats(void) {
+  mlfqs_update_load_avg();
+  
+  struct list_elem* e;
+  for (e = list_begin(&all_list); e != list_end(&all_list); e = list_next(e)) {
+    struct thread* t = list_entry(e, struct thread, allelem);
+    mlfqs_update_recent_cpu(t);
+    mlfqs_update_priority(t);
+  }
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -519,6 +646,10 @@ static void init_thread(struct thread* t, const char* name, int priority) {
   t->vruntime = 0;              // Initial virtual runtime
   t->deadline = 0;              // Initial virtual deadline
   t->nice_fair = 0;             // Default nice value (neutral weight)
+
+  /* MLFQS scheduler fields initialization */
+  t->nice = 0;                  // Default nice value (neutral)
+  t->recent_cpu = 0;            // No recent CPU usage (fixed-point 0)
 
   old_level = intr_disable();
   list_push_back(&all_list, &t->allelem);
@@ -627,9 +758,15 @@ static struct thread* thread_schedule_fair(void) {
   return (fair_scheduler_jump_table[active_fair_sched_type])();
 }
 
-/* Multi-level feedback queue scheduler */
+/* Multi-level feedback queue scheduler.
+   Returns the highest-priority thread from priority_ready_list.
+   Similar to SCHED_PRIO but priorities are calculated automatically. */
 static struct thread* thread_schedule_mlfqs(void) {
-  PANIC("Unimplemented scheduler policy: \"-sched=mlfqs\"");
+  if (list_empty(&priority_ready_list))
+    return idle_thread;
+  
+  /* List is ordered by priority, so front has highest priority */
+  return list_entry(list_pop_front(&priority_ready_list), struct thread, elem);
 }
 
 /* Not an actual scheduling policy — placeholder for empty

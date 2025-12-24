@@ -153,6 +153,21 @@ static void timer_interrupt(struct intr_frame* args UNUSED) {
   ticks++;
   thread_tick();
 
+  /* MLFQS updates */
+  if (active_sched_policy == SCHED_MLFQS) {
+    /* Every tick: increment recent_cpu for running thread */
+    thread_mlfqs_tick();
+    
+    /* Every second (TIMER_FREQ ticks): update load_avg and recent_cpu */
+    if (ticks % TIMER_FREQ == 0) {
+      thread_mlfqs_update_stats();
+    }
+    /* Every 4 ticks: recalculate all priorities */
+    else if (ticks % 4 == 0) {
+      thread_mlfqs_update_priorities();
+    }
+  }
+
   /* Wake up sleeping threads whose time has come */
   while (!list_empty(&sleeping_threads)) {
     struct thread *t = list_entry(list_front(&sleeping_threads), struct thread, elem);

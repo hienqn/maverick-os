@@ -104,6 +104,10 @@ struct thread {
   int64_t deadline;         /* EEVDF: virtual deadline */
   int nice_fair;            /* Fair scheduler nice value (weight adjustment) */
 
+  /* MLFQS scheduler fields (used when active_sched_policy == SCHED_MLFQS) */
+  int nice;                 /* Nice value: -20 to +20, affects priority */
+  int recent_cpu;           /* Recent CPU usage (fixed-point, 17.14 format) */
+
   /* Shared between thread.c and synch.c. */
   struct list_elem elem; /* List element. */
 
@@ -182,6 +186,11 @@ int thread_get_nice(void);
 void thread_set_nice(int);
 int thread_get_recent_cpu(void);
 int thread_get_load_avg(void);
+
+/* MLFQS scheduler functions (called from timer interrupt) */
+void thread_mlfqs_tick(void);
+void thread_mlfqs_update_priorities(void);
+void thread_mlfqs_update_stats(void);
 
 /* Thread priority comparison for list operations */
 bool thread_priority_less(const struct list_elem* a, const struct list_elem* b, void* aux);

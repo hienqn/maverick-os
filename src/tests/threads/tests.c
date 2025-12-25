@@ -21,6 +21,7 @@ static const struct test threads_tests[] = {
     {"priority-fifo", test_priority_fifo},
     {"priority-preempt", test_priority_preempt},
     {"priority-sema", test_priority_sema},
+    {"priority-sema-effective", test_priority_sema_effective_priority},
     {"priority-condvar", test_priority_condvar},
     {"priority-starve", test_priority_starve},
     {"priority-starve-sema", test_priority_starve_sema},

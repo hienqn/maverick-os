@@ -22,6 +22,7 @@ extern test_func test_priority_donate_chain;
 extern test_func test_priority_fifo;
 extern test_func test_priority_preempt;
 extern test_func test_priority_sema;
+extern test_func test_priority_sema_effective_priority;
 extern test_func test_priority_condvar;
 extern test_func test_priority_starve;
 extern test_func test_priority_starve_sema;

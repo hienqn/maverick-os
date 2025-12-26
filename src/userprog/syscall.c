@@ -8,6 +8,7 @@
 #include "threads/thread.h"
 #include "userprog/process.h"
 #include "filesys/file.h"
+#include "filesys/inode.h"
 #include "threads/vaddr.h"
 #include "userprog/pagedir.h"
 #include "devices/shutdown.h"
@@ -360,6 +361,25 @@ static void syscall_handler(struct intr_frame* f) {
     f->eax = filesys_remove(file_name);
 
     lock_release(&global_fs_lock);
+  }
+
+  if (args[0] == SYS_INUMBER) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    int fd = args[1];
+
+    if (fd < 2 || fd >= MAX_FILE_DESCRIPTOR) {
+      f->eax = -1;
+      return;
+    }
+
+    struct file* file = thread_current()->pcb->fd_table[fd];
+    if (file == NULL) {
+      f->eax = -1;
+      return;
+    }
+
+    struct inode* inode = file_get_inode(file);
+    f->eax = (int)inode_get_inumber(inode);
   }
 
   if (args[0] == SYS_FORK) {

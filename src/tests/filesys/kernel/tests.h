@@ -43,6 +43,12 @@ extern test_func test_cache_hit;         /* Repeated reads = cache hits */
 extern test_func test_cache_evict;       /* Fill cache, trigger eviction */
 extern test_func test_cache_concurrent;  /* Multi-threaded cache access */
 extern test_func test_cache_write;       /* Partial sector writes */
+extern test_func test_cache_read_at;     /* Partial sector reads */
+extern test_func test_cache_dirty;       /* Dirty writeback on eviction */
+extern test_func test_cache_flush_fn;    /* Explicit cache flush */
+extern test_func test_cache_overwrite;   /* Overwriting same sector */
+extern test_func test_cache_mixed_rw;    /* Mixed concurrent read/write */
+extern test_func test_cache_stress;      /* Stress test with many ops */
 
 #endif /* tests/filesys/kernel/tests.h */
 

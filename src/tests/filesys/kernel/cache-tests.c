@@ -61,6 +61,7 @@
 #include "threads/thread.h"
 #include "threads/synch.h"
 #include <test-lib.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -243,6 +244,268 @@ void test_cache_write(void) {
   }
   msg("Zeros between patterns: %s", zeros_ok ? "PASSED" : "FAILED");
   
+  cache_print_stats();
+}
+
+/* Test: Partial reads using cache_read_at. */
+void test_cache_read_at(void) {
+  char write_buf[BLOCK_SECTOR_SIZE];
+  char read_buf[128];
+  block_sector_t test_sector = 400;
+  
+  cache_reset_stats();
+  
+  /* Initialize sector with known pattern: 0, 1, 2, ..., 255, 0, 1, ... */
+  for (int i = 0; i < BLOCK_SECTOR_SIZE; i++) {
+    write_buf[i] = (char)(i % 256);
+  }
+  cache_write(test_sector, write_buf, 0, BLOCK_SECTOR_SIZE);
+  msg("Initialized sector with sequential pattern");
+  
+  /* Read first 10 bytes. */
+  memset(read_buf, 0xFF, sizeof(read_buf));
+  cache_read_at(test_sector, read_buf, 0, 10);
+  bool ok = true;
+  for (int i = 0; i < 10; i++) {
+    if (read_buf[i] != (char)i) {
+      ok = false;
+      break;
+    }
+  }
+  msg("Read bytes 0-9: %s", ok ? "PASSED" : "FAILED");
+  
+  /* Read middle portion (bytes 100-149). */
+  memset(read_buf, 0xFF, sizeof(read_buf));
+  cache_read_at(test_sector, read_buf, 100, 50);
+  ok = true;
+  for (int i = 0; i < 50; i++) {
+    if (read_buf[i] != (char)(100 + i)) {
+      ok = false;
+      break;
+    }
+  }
+  msg("Read bytes 100-149: %s", ok ? "PASSED" : "FAILED");
+  
+  /* Read last 20 bytes of sector. */
+  memset(read_buf, 0xFF, sizeof(read_buf));
+  cache_read_at(test_sector, read_buf, BLOCK_SECTOR_SIZE - 20, 20);
+  ok = true;
+  for (int i = 0; i < 20; i++) {
+    int expected = (BLOCK_SECTOR_SIZE - 20 + i) % 256;
+    if (read_buf[i] != (char)expected) {
+      ok = false;
+      break;
+    }
+  }
+  msg("Read last 20 bytes: %s", ok ? "PASSED" : "FAILED");
+  
+  cache_print_stats();
+}
+
+/* Test: Verify dirty data survives eviction and is written back. */
+void test_cache_dirty(void) {
+  char write_buf[BLOCK_SECTOR_SIZE];
+  char read_buf[BLOCK_SECTOR_SIZE];
+  block_sector_t target_sector = 500;
+  
+  cache_reset_stats();
+  
+  /* Write distinctive pattern to target sector. */
+  memset(write_buf, 'D', BLOCK_SECTOR_SIZE);
+  write_buf[0] = 'S';  /* Start marker */
+  write_buf[BLOCK_SECTOR_SIZE - 1] = 'E';  /* End marker */
+  cache_write(target_sector, write_buf, 0, BLOCK_SECTOR_SIZE);
+  msg("Wrote distinctive pattern to sector %d", target_sector);
+  
+  /* Fill cache with other sectors to evict our target. */
+  msg("Filling cache with 70 other sectors to force eviction...");
+  for (int i = 0; i < 70; i++) {
+    char tmp[BLOCK_SECTOR_SIZE];
+    memset(tmp, 'X', BLOCK_SECTOR_SIZE);
+    cache_write(600 + i, tmp, 0, BLOCK_SECTOR_SIZE);
+  }
+  
+  cache_print_stats();
+  msg("Target sector should have been evicted and written to disk");
+  
+  /* Read target sector back - should come from disk. */
+  cache_read(target_sector, read_buf);
+  
+  bool ok = (read_buf[0] == 'S') && 
+            (read_buf[BLOCK_SECTOR_SIZE - 1] == 'E') &&
+            (read_buf[1] == 'D') && (read_buf[2] == 'D');
+  msg("Data integrity after eviction: %s", ok ? "PASSED" : "FAILED");
+  
+  cache_print_stats();
+}
+
+/* Test: Explicit cache flush. */
+void test_cache_flush_fn(void) {
+  char write_buf[BLOCK_SECTOR_SIZE];
+  char read_buf[BLOCK_SECTOR_SIZE];
+  block_sector_t test_sector = 700;
+  
+  cache_reset_stats();
+  
+  /* Write data to cache. */
+  memset(write_buf, 'F', BLOCK_SECTOR_SIZE);
+  write_buf[0] = '@';
+  cache_write(test_sector, write_buf, 0, BLOCK_SECTOR_SIZE);
+  msg("Wrote data to sector %d", test_sector);
+  
+  /* Explicitly flush cache. */
+  cache_flush();
+  msg("Called cache_flush()");
+  
+  cache_print_stats();
+  msg("Writebacks should be >= 1 (our dirty sector was flushed)");
+  
+  /* Read back and verify. */
+  cache_read(test_sector, read_buf);
+  bool ok = (read_buf[0] == '@') && (read_buf[1] == 'F');
+  msg("Data after flush: %s", ok ? "PASSED" : "FAILED");
+}
+
+/* Test: Overwriting same sector multiple times. */
+void test_cache_overwrite(void) {
+  char buf[BLOCK_SECTOR_SIZE];
+  block_sector_t test_sector = 800;
+  
+  cache_reset_stats();
+  
+  /* Write different patterns to same sector. */
+  for (int round = 0; round < 10; round++) {
+    memset(buf, 'A' + round, BLOCK_SECTOR_SIZE);
+    cache_write(test_sector, buf, 0, BLOCK_SECTOR_SIZE);
+  }
+  msg("Wrote 10 different patterns to same sector");
+  
+  /* Read back - should see last pattern ('J'). */
+  cache_read(test_sector, buf);
+  
+  bool ok = true;
+  for (int i = 0; i < BLOCK_SECTOR_SIZE; i++) {
+    if (buf[i] != 'J') {
+      ok = false;
+      break;
+    }
+  }
+  msg("Final read shows last pattern ('J'): %s", ok ? "PASSED" : "FAILED");
+  
+  cache_print_stats();
+  msg("Expected: Only 1 miss (first write), rest are hits");
+}
+
+/* Mixed read/write concurrency test data. */
+static struct semaphore mixed_start;
+static struct semaphore mixed_done;
+static block_sector_t mixed_sectors[8] = {900, 901, 902, 903, 904, 905, 906, 907};
+static volatile int mixed_errors = 0;
+
+static void mixed_worker(void *aux) {
+  int id = (int)(intptr_t)aux;
+  char buf[BLOCK_SECTOR_SIZE];
+  
+  sema_down(&mixed_start);
+  
+  for (int i = 0; i < 50; i++) {
+    int sector_idx = (id + i) % 8;
+    block_sector_t sector = mixed_sectors[sector_idx];
+    
+    if (i % 2 == 0) {
+      /* Write operation. */
+      memset(buf, 'A' + id, BLOCK_SECTOR_SIZE);
+      cache_write(sector, buf, 0, BLOCK_SECTOR_SIZE);
+    } else {
+      /* Read operation. */
+      cache_read(sector, buf);
+      /* Just verify it's a valid character pattern (A-H). */
+      if (buf[0] < 'A' || buf[0] > 'H') {
+        mixed_errors++;
+      }
+    }
+  }
+  
+  sema_up(&mixed_done);
+}
+
+/* Test: Mixed concurrent reads and writes. */
+void test_cache_mixed_rw(void) {
+  char buf[BLOCK_SECTOR_SIZE];
+  int num_threads = 4;
+  
+  cache_reset_stats();
+  mixed_errors = 0;
+  
+  sema_init(&mixed_start, 0);
+  sema_init(&mixed_done, 0);
+  
+  /* Initialize sectors with valid data. */
+  for (int i = 0; i < 8; i++) {
+    memset(buf, 'A', BLOCK_SECTOR_SIZE);
+    cache_write(mixed_sectors[i], buf, 0, BLOCK_SECTOR_SIZE);
+  }
+  msg("Initialized %d shared sectors", 8);
+  
+  /* Create worker threads. */
+  for (int i = 0; i < num_threads; i++) {
+    char name[16];
+    snprintf(name, sizeof name, "mixed-%d", i);
+    thread_create(name, PRI_DEFAULT, mixed_worker, (void *)(intptr_t)i);
+  }
+  msg("Created %d worker threads", num_threads);
+  
+  /* Start all threads. */
+  for (int i = 0; i < num_threads; i++) {
+    sema_up(&mixed_start);
+  }
+  
+  /* Wait for completion. */
+  for (int i = 0; i < num_threads; i++) {
+    sema_down(&mixed_done);
+  }
+  
+  msg("All threads completed, errors: %d", mixed_errors);
+  msg("Mixed read/write test: %s", mixed_errors == 0 ? "PASSED" : "FAILED");
+  cache_print_stats();
+}
+
+/* Test: Stress test with many rapid operations. */
+void test_cache_stress(void) {
+  char buf[BLOCK_SECTOR_SIZE];
+  int num_operations = 500;
+  int num_sectors = 100;  /* More than cache size (64) */
+  
+  cache_reset_stats();
+  msg("Starting stress test: %d operations across %d sectors", 
+      num_operations, num_sectors);
+  
+  /* Perform random-ish operations. */
+  for (int i = 0; i < num_operations; i++) {
+    int sector = 1000 + (i * 7) % num_sectors;  /* Pseudo-random sector selection */
+    
+    if (i % 3 == 0) {
+      /* Full sector write. */
+      memset(buf, 'S' + (i % 26), BLOCK_SECTOR_SIZE);
+      cache_write(sector, buf, 0, BLOCK_SECTOR_SIZE);
+    } else if (i % 3 == 1) {
+      /* Partial write. */
+      int offset = (i * 13) % 400;
+      int size = 50 + (i % 50);
+      memset(buf, 'P', size);
+      cache_write(sector, buf, offset, size);
+    } else {
+      /* Read. */
+      cache_read(sector, buf);
+    }
+  }
+  
+  msg("Stress test complete");
+  cache_print_stats();
+  
+  /* Flush to ensure all dirty data is written. */
+  cache_flush();
+  msg("Final flush complete");
   cache_print_stats();
 }
 

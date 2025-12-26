@@ -79,6 +79,9 @@ static int cache_writebacks = 0;
 /* Flag to signal the flusher thread to stop. */
 static bool flusher_running = false;
 
+/* Thread ID of the flusher thread. */
+static tid_t flusher_tid;
+
 /* The periodic flusher thread function. */
 static void cache_flusher_thread(void *aux UNUSED) {
   while (flusher_running) {
@@ -183,8 +186,7 @@ void cache_init(void) {
 
   /* Start the periodic flusher thread. */
   flusher_running = true;
-  thread_create("cache_flusher", PRI_DEFAULT, cache_flusher_thread, NULL);
-}
+  flusher_tid = thread_create("cache_flusher", PRI_DEFAULT, cache_flusher_thread, NULL);}
 
 /* Find a sector in the cache. Returns entry or NULL if not found.
    Must be called while holding cache_global_lock. */
@@ -205,6 +207,7 @@ static struct cache_entry *cache_lookup(block_sector_t sector) {
    Returns the slot to use (writes back dirty data if evicting). */
 static struct cache_entry *cache_evict(void) {
   ASSERT(lock_held_by_current_thread(&cache_global_lock));
+
   // 1. First, look for an INVALID (empty) slot
   for (int i = 0; i < CACHE_SIZE; ++i) {
     if (cache[i].state == CACHE_INVALID) {
@@ -214,23 +217,23 @@ static struct cache_entry *cache_evict(void) {
 
   // 2. No empty slot - use policy to select victim
   struct cache_entry *victim = select_victim();
-
   ASSERT(victim != NULL);
   cache_evictions++;
 
-  // 3. If victim is dirty, write it back to disk
-  if (victim->dirty) {
+  // 3. Acquire entry lock FIRST - ensures any current user has finished
+  //    and allows us to safely check/modify dirty flag
+  lock_acquire(&victim->entry_lock);
+
+  // 4. Now we can safely check dirty
+  if (victim->dirty && victim->state == CACHE_VALID) {
     cache_writebacks++;
-    lock_acquire(&victim->entry_lock);
-    // Only flush if valid (should always be the case, but double check)
-    if (victim->state == CACHE_VALID) {
-      block_write(fs_device, victim->sector, victim->data);
-      victim->dirty = false;
-    }
-    lock_release(&victim->entry_lock);
+    block_write(fs_device, victim->sector, victim->data);
+    victim->dirty = false;
   }
 
-  // 4. Return the slot
+  lock_release(&victim->entry_lock);
+
+  // 5. Return the slot (caller still holds global_lock, preventing new users)
   return victim;
 }
 
@@ -483,7 +486,7 @@ void cache_flush(void) {
 
 /* Stop the periodic flusher thread and flush remaining dirty entries. */
 void cache_shutdown(void) {
-  /* Signal the flusher thread to stop. */
+  /* Signal the flusher thread to stop FIRST */
   flusher_running = false;
   
   /* Final flush to ensure all dirty data is written. */

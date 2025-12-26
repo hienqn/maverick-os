@@ -23,6 +23,7 @@
 #include "tests/filesys/kernel/tests.h"
 #include <test-lib.h>
 #include <debug.h>
+#include <stdio.h>
 #include <string.h>
 
 /*
@@ -36,17 +37,56 @@ static const struct test filesys_kernel_tests[] = {
     {"cache-evict", test_cache_evict},         /* Eviction when full */
     {"cache-concurrent", test_cache_concurrent}, /* Multi-threaded access */
     {"cache-write", test_cache_write},         /* Partial sector writes */
+    {"cache-read-at", test_cache_read_at},     /* Partial sector reads */
+    {"cache-dirty", test_cache_dirty},         /* Dirty writeback */
+    {"cache-flush", test_cache_flush_fn},      /* Explicit flush */
+    {"cache-overwrite", test_cache_overwrite}, /* Overwrite same sector */
+    {"cache-mixed-rw", test_cache_mixed_rw},   /* Mixed concurrent R/W */
+    {"cache-stress", test_cache_stress},       /* Stress test */
 };
 
 /*
  * Runs the filesys kernel test named NAME.
  * Called from run_filesys_kernel_task() in threads/init.c.
+ * 
+ * Special names:
+ *   "all"    - Run all tests
+ *   "list"   - List all available test names
+ *
  * Panics if the test name is not found in the registry.
  */
 void run_filesys_kernel_test(const char* name) {
   const struct test* t;
   size_t num_tests = sizeof filesys_kernel_tests / sizeof *filesys_kernel_tests;
 
+  /* Special case: "all" runs every test. */
+  if (!strcmp(name, "all")) {
+    printf("Running all %d filesys kernel tests...\n\n", (int)num_tests);
+    
+    for (t = filesys_kernel_tests; t < filesys_kernel_tests + num_tests; t++) {
+      test_name = t->name;
+      printf("=== %s ===\n", t->name);
+      msg("begin");
+      t->function();
+      msg("end");
+      printf("\n");
+    }
+    
+    printf("=== ALL %d TESTS COMPLETE ===\n", (int)num_tests);
+    return;
+  }
+
+  /* Special case: "list" shows available tests. */
+  if (!strcmp(name, "list")) {
+    printf("Available filesys kernel tests:\n");
+    for (t = filesys_kernel_tests; t < filesys_kernel_tests + num_tests; t++) {
+      printf("  %s\n", t->name);
+    }
+    printf("\nUse 'rfkt all' to run all tests.\n");
+    return;
+  }
+
+  /* Normal case: run specific test by name. */
   for (t = filesys_kernel_tests; t < filesys_kernel_tests + num_tests; t++) {
     if (!strcmp(name, t->name)) {
       test_name = name;

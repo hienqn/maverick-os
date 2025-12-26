@@ -50,5 +50,12 @@ extern test_func test_cache_overwrite;   /* Overwriting same sector */
 extern test_func test_cache_mixed_rw;    /* Mixed concurrent read/write */
 extern test_func test_cache_stress;      /* Stress test with many ops */
 
+/* Prefetch tests */
+extern test_func test_cache_prefetch_basic;      /* Basic prefetch works */
+extern test_func test_cache_prefetch_seq;        /* Sequential read prefetch */
+extern test_func test_cache_prefetch_nodup;      /* No duplicate prefetch */
+extern test_func test_cache_prefetch_overflow;   /* Queue overflow handling */
+extern test_func test_cache_prefetch_concurrent; /* Prefetch with concurrent readers */
+
 #endif /* tests/filesys/kernel/tests.h */
 

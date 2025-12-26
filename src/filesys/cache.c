@@ -1,4 +1,5 @@
 #include "filesys/cache.h"
+#include "filesys/cache_prefetch.h"
 #include "filesys/filesys.h"
 #include "devices/timer.h"
 #include "threads/malloc.h"
@@ -95,6 +96,10 @@ static void cache_flusher_thread(void *aux UNUSED) {
   }
 }
 
+/* Forward declarations. */
+static struct cache_entry *cache_lookup(block_sector_t sector);
+static struct cache_entry *cache_evict(void);
+
 /* ============ Replacement Policy Indirection ============ */
 
 /* Replacement policy options. */
@@ -186,7 +191,11 @@ void cache_init(void) {
 
   /* Start the periodic flusher thread. */
   flusher_running = true;
-  flusher_tid = thread_create("cache_flusher", PRI_DEFAULT, cache_flusher_thread, NULL);}
+  flusher_tid = thread_create("cache_flusher", PRI_DEFAULT, cache_flusher_thread, NULL);
+
+  /* Initialize the prefetch subsystem. */
+  cache_prefetch_init();
+}
 
 /* Find a sector in the cache. Returns entry or NULL if not found.
    Must be called while holding cache_global_lock. */
@@ -274,6 +283,9 @@ void cache_read(block_sector_t sector, void *buffer) {
     read_from_entry(ce, buffer);
     
     lock_release(&ce->entry_lock);
+    
+    /* Prefetch next sector for sequential read patterns. */
+    cache_request_prefetch(sector + 1);
     return;
   }
   
@@ -286,6 +298,9 @@ void cache_read(block_sector_t sector, void *buffer) {
     read_from_entry(ce, buffer);
     
     lock_release(&ce->entry_lock);
+    
+    /* Prefetch next sector for sequential read patterns. */
+    cache_request_prefetch(sector + 1);
     return;
   }
   
@@ -314,6 +329,9 @@ void cache_read(block_sector_t sector, void *buffer) {
   memcpy(buffer, slot->data, BLOCK_SECTOR_SIZE);
   
   lock_release(&slot->entry_lock);
+  
+  /* Prefetch next sector for sequential read patterns. */
+  cache_request_prefetch(sector + 1);
 }
 
 /* Read partial sector data from cache at given offset.
@@ -340,6 +358,9 @@ void cache_read_at(block_sector_t sector, void *buffer,
     ce->accessed = true;
     
     lock_release(&ce->entry_lock);
+    
+    /* Prefetch next sector for sequential read patterns. */
+    cache_request_prefetch(sector + 1);
     return;
   }
   
@@ -353,6 +374,9 @@ void cache_read_at(block_sector_t sector, void *buffer,
     ce->accessed = true;
     
     lock_release(&ce->entry_lock);
+    
+    /* Prefetch next sector for sequential read patterns. */
+    cache_request_prefetch(sector + 1);
     return;
   }
   
@@ -381,6 +405,9 @@ void cache_read_at(block_sector_t sector, void *buffer,
   memcpy(buffer, (uint8_t *)slot->data + sector_ofs, chunk_size);
   
   lock_release(&slot->entry_lock);
+  
+  /* Prefetch next sector for sequential read patterns. */
+  cache_request_prefetch(sector + 1);
 }
 
 /* Write data to cache at given offset within sector. */
@@ -484,10 +511,48 @@ void cache_flush(void) {
   lock_release(&cache_global_lock);
 }
 
+/* Load a sector into cache for prefetching.
+   Does not return data - just ensures it's cached for future reads.
+   Called by the prefetch subsystem. */
+void cache_do_prefetch(block_sector_t sector) {
+  lock_acquire(&cache_global_lock);
+  struct cache_entry *ce = cache_lookup(sector);
+  
+  /* Already in cache or being loaded? Skip prefetch. */
+  if (ce != NULL) {
+    lock_release(&cache_global_lock);
+    return;
+  }
+  
+  /* Not in cache - load it. */
+  struct cache_entry *slot = cache_evict();
+  ASSERT(slot != NULL);
+  
+  slot->state = CACHE_LOADING;
+  slot->sector = sector;
+  slot->dirty = false;
+  lock_release(&cache_global_lock);
+  
+  /* Perform disk I/O. */
+  block_read(fs_device, sector, slot->data);
+  
+  /* Finalize: mark valid and notify any waiters. */
+  lock_acquire(&slot->entry_lock);
+  slot->state = CACHE_VALID;
+  /* Set accessed = false so prefetched data has lower priority than
+     explicitly accessed data in the clock eviction algorithm. */
+  slot->accessed = false;
+  cond_broadcast(&slot->loading_done, &slot->entry_lock);
+  lock_release(&slot->entry_lock);
+}
+
 /* Stop the periodic flusher thread and flush remaining dirty entries. */
 void cache_shutdown(void) {
-  /* Signal the flusher thread to stop FIRST */
+  /* Signal the flusher thread to stop. */
   flusher_running = false;
+  
+  /* Shutdown the prefetch subsystem. */
+  cache_prefetch_shutdown();
   
   /* Final flush to ensure all dirty data is written. */
   cache_flush();

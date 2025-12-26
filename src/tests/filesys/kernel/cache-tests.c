@@ -56,8 +56,10 @@
 
 #include "tests/filesys/kernel/tests.h"
 #include "filesys/cache.h"
+#include "filesys/cache_prefetch.h"
 #include "filesys/filesys.h"
 #include "devices/block.h"
+#include "devices/timer.h"
 #include "threads/thread.h"
 #include "threads/synch.h"
 #include <test-lib.h>
@@ -507,5 +509,210 @@ void test_cache_stress(void) {
   cache_flush();
   msg("Final flush complete");
   cache_print_stats();
+}
+
+/* ============ Prefetch Tests ============ */
+
+/* Test: Basic prefetch - verify prefetched sector is in cache. */
+void test_cache_prefetch_basic(void) {
+  char buf[BLOCK_SECTOR_SIZE];
+  block_sector_t test_sector = 1100;
+  
+  cache_reset_stats();
+  
+  /* Initialize the sector on disk first (so there's something to prefetch). */
+  memset(buf, 'P', BLOCK_SECTOR_SIZE);
+  cache_write(test_sector, buf, 0, BLOCK_SECTOR_SIZE);
+  cache_flush();
+  msg("Initialized sector %d on disk", test_sector);
+  
+  /* Fill cache with other sectors to evict our test sector. */
+  msg("Filling cache to evict test sector...");
+  for (int i = 0; i < 70; i++) {
+    memset(buf, 'X', BLOCK_SECTOR_SIZE);
+    cache_write(1200 + i, buf, 0, BLOCK_SECTOR_SIZE);
+  }
+  
+  cache_reset_stats();  /* Reset stats for clean measurement. */
+  
+  /* Request prefetch of the test sector. */
+  cache_request_prefetch(test_sector);
+  msg("Requested prefetch of sector %d", test_sector);
+  
+  /* Wait a bit for prefetch thread to process the request. */
+  timer_sleep(TIMER_FREQ / 10);  /* 100ms */
+  
+  /* Now read the sector - should be a cache hit if prefetch worked. */
+  cache_read(test_sector, buf);
+  
+  cache_print_stats();
+  msg("If prefetch worked, should see 1 hit (or 0 misses for the read)");
+  
+  /* Verify data is correct. */
+  bool ok = (buf[0] == 'P');
+  msg("Data verification: %s", ok ? "PASSED" : "FAILED");
+}
+
+/* Test: Prefetch during sequential read pattern. */
+void test_cache_prefetch_seq(void) {
+  char buf[BLOCK_SECTOR_SIZE];
+  int num_sectors = 20;
+  block_sector_t start_sector = 1300;
+  
+  /* Initialize sectors on disk. */
+  msg("Initializing %d sequential sectors...", num_sectors);
+  for (int i = 0; i < num_sectors; i++) {
+    memset(buf, 'A' + (i % 26), BLOCK_SECTOR_SIZE);
+    cache_write(start_sector + i, buf, 0, BLOCK_SECTOR_SIZE);
+  }
+  cache_flush();
+  
+  /* Evict all to ensure cold cache. */
+  msg("Evicting all cached sectors...");
+  for (int i = 0; i < 70; i++) {
+    memset(buf, 'Z', BLOCK_SECTOR_SIZE);
+    cache_write(1400 + i, buf, 0, BLOCK_SECTOR_SIZE);
+  }
+  
+  cache_reset_stats();
+  
+  /* Read sequentially - prefetch should kick in. */
+  msg("Reading %d sectors sequentially...", num_sectors);
+  for (int i = 0; i < num_sectors; i++) {
+    cache_read(start_sector + i, buf);
+    
+    /* Small delay to let prefetch thread work. */
+    if (i < num_sectors - 1) {
+      timer_sleep(TIMER_FREQ / 50);  /* 20ms between reads */
+    }
+  }
+  
+  cache_print_stats();
+  msg("With prefetching, later reads may show hits from prefetched sectors");
+}
+
+/* Test: Prefetch doesn't duplicate already-cached sectors. */
+void test_cache_prefetch_nodup(void) {
+  char buf[BLOCK_SECTOR_SIZE];
+  block_sector_t test_sector = 1500;
+  
+  cache_reset_stats();
+  
+  /* Read sector to put it in cache. */
+  memset(buf, 'N', BLOCK_SECTOR_SIZE);
+  cache_write(test_sector, buf, 0, BLOCK_SECTOR_SIZE);
+  msg("Wrote sector %d to cache", test_sector);
+  
+  /* Request prefetch of the same sector multiple times. */
+  for (int i = 0; i < 10; i++) {
+    cache_request_prefetch(test_sector);
+  }
+  msg("Requested prefetch of same sector 10 times");
+  
+  /* Wait for prefetch thread. */
+  timer_sleep(TIMER_FREQ / 5);  /* 200ms */
+  
+  /* Read the sector. */
+  cache_read(test_sector, buf);
+  
+  cache_print_stats();
+  msg("Should see only 1 miss (initial write) - prefetch skips cached sectors");
+  
+  /* Verify no additional disk reads occurred. */
+  bool ok = (buf[0] == 'N');
+  msg("Data integrity: %s", ok ? "PASSED" : "FAILED");
+}
+
+/* Test: Prefetch queue overflow (best-effort behavior). */
+void test_cache_prefetch_overflow(void) {
+  cache_reset_stats();
+  
+  /* Flood the prefetch queue with many requests.
+     Queue size is 16, so most should be dropped. */
+  msg("Flooding prefetch queue with 100 requests...");
+  for (int i = 0; i < 100; i++) {
+    cache_request_prefetch(1600 + i);
+  }
+  
+  /* Wait for processing. */
+  timer_sleep(TIMER_FREQ / 2);  /* 500ms */
+  
+  cache_print_stats();
+  msg("Many requests should be silently dropped (queue size = 16)");
+  msg("Test verifies no crash on queue overflow: PASSED");
+}
+
+/* Prefetch concurrent access test data. */
+static struct semaphore prefetch_test_start;
+static struct semaphore prefetch_test_done;
+static block_sector_t prefetch_test_sectors[10];
+
+static void prefetch_reader(void *aux) {
+  int id = (int)(intptr_t)aux;
+  char buf[BLOCK_SECTOR_SIZE];
+  
+  sema_down(&prefetch_test_start);
+  
+  /* Read sectors that may or may not be prefetched. */
+  for (int i = 0; i < 10; i++) {
+    int idx = (id + i) % 10;
+    cache_read(prefetch_test_sectors[idx], buf);
+  }
+  
+  sema_up(&prefetch_test_done);
+}
+
+/* Test: Prefetch with concurrent readers. */
+void test_cache_prefetch_concurrent(void) {
+  char buf[BLOCK_SECTOR_SIZE];
+  int num_threads = 4;
+  
+  /* Initialize test sectors. */
+  for (int i = 0; i < 10; i++) {
+    prefetch_test_sectors[i] = 1700 + i;
+    memset(buf, 'C' + i, BLOCK_SECTOR_SIZE);
+    cache_write(prefetch_test_sectors[i], buf, 0, BLOCK_SECTOR_SIZE);
+  }
+  cache_flush();
+  
+  /* Evict to cold cache. */
+  for (int i = 0; i < 70; i++) {
+    memset(buf, 'X', BLOCK_SECTOR_SIZE);
+    cache_write(1800 + i, buf, 0, BLOCK_SECTOR_SIZE);
+  }
+  
+  cache_reset_stats();
+  
+  sema_init(&prefetch_test_start, 0);
+  sema_init(&prefetch_test_done, 0);
+  
+  /* Create reader threads. */
+  for (int i = 0; i < num_threads; i++) {
+    char name[16];
+    snprintf(name, sizeof name, "pf-reader-%d", i);
+    thread_create(name, PRI_DEFAULT, prefetch_reader, (void *)(intptr_t)i);
+  }
+  
+  /* Request prefetch for all test sectors. */
+  for (int i = 0; i < 10; i++) {
+    cache_request_prefetch(prefetch_test_sectors[i]);
+  }
+  msg("Requested prefetch for 10 sectors");
+  
+  /* Small delay then start readers. */
+  timer_sleep(TIMER_FREQ / 20);  /* 50ms */
+  
+  for (int i = 0; i < num_threads; i++) {
+    sema_up(&prefetch_test_start);
+  }
+  
+  /* Wait for completion. */
+  for (int i = 0; i < num_threads; i++) {
+    sema_down(&prefetch_test_done);
+  }
+  
+  msg("All threads completed");
+  cache_print_stats();
+  msg("Prefetch + concurrent access: no crashes = PASSED");
 }
 

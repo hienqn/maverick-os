@@ -45,6 +45,9 @@ void cache_write(block_sector_t sector, const void *buffer,
 /* Flush all dirty entries to disk. */
 void cache_flush(void);
 
+/* Load a sector into cache for prefetching (called by prefetch subsystem). */
+void cache_do_prefetch(block_sector_t sector);
+
 /* Stop flusher thread and flush remaining entries. Call on shutdown. */
 void cache_shutdown(void);
 

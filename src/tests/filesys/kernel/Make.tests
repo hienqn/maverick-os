@@ -1,0 +1,6 @@
+# -*- makefile -*-
+
+# Filesys kernel test sources
+tests/filesys/kernel_SRC  = tests/filesys/kernel/tests.c
+tests/filesys/kernel_SRC += tests/filesys/kernel/cache-tests.c
+

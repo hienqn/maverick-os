@@ -38,6 +38,7 @@
 #ifdef FILESYS
 #include "devices/block.h"
 #include "devices/ide.h"
+#include "tests/filesys/kernel/tests.h"
 #include "filesys/filesys.h"
 #include "filesys/fsutil.h"
 #endif
@@ -380,6 +381,17 @@ static void run_threads_kernel_task(char** argv) {
 }
 #endif
 
+#ifdef FILESYS
+/* Runs the filesys kernel task specified in ARGV[1]. */
+static void run_filesys_kernel_task(char** argv) {
+  const char* task = argv[1];
+
+  printf("Executing '%s':\n", task);
+  run_filesys_kernel_test(task);
+  printf("Execution of '%s' complete.\n", task);
+}
+#endif
+
 /* Executes all of the actions specified in ARGV[]
    up to the null pointer sentinel. */
 static void run_actions(char** argv) {
@@ -405,6 +417,7 @@ static void run_actions(char** argv) {
       {"rm", 2, fsutil_rm},
       {"extract", 1, fsutil_extract},
       {"append", 2, fsutil_append},
+      {"rfkt", 2, run_filesys_kernel_task},  /* Run Filesys Kernel Test */
 #endif
       {NULL, 0, NULL},
   };

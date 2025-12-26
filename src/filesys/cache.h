@@ -33,6 +33,11 @@ void cache_init(void);
 /* Read a full sector from cache (or disk if not cached). */
 void cache_read(block_sector_t sector, void *buffer);
 
+/* Read partial sector data from cache into buffer.
+   Reads chunk_size bytes starting at sector_ofs within the sector. */
+void cache_read_at(block_sector_t sector, void *buffer,
+                   int sector_ofs, int chunk_size);
+
 /* Write data to cache. Handles partial writes correctly. */
 void cache_write(block_sector_t sector, const void *buffer, 
                  int sector_ofs, int chunk_size);

@@ -313,6 +313,73 @@ void cache_read(block_sector_t sector, void *buffer) {
   lock_release(&slot->entry_lock);
 }
 
+/* Read partial sector data from cache at given offset.
+   Copies chunk_size bytes starting at sector_ofs into buffer. */
+void cache_read_at(block_sector_t sector, void *buffer,
+                   int sector_ofs, int chunk_size) {
+  /* Validate parameters */
+  ASSERT(buffer != NULL);
+  ASSERT(sector_ofs >= 0);
+  ASSERT(sector_ofs < BLOCK_SECTOR_SIZE);
+  ASSERT(chunk_size > 0);
+  ASSERT(sector_ofs + chunk_size <= BLOCK_SECTOR_SIZE);
+  
+  lock_acquire(&cache_global_lock);
+  struct cache_entry *ce = cache_lookup(sector);
+  
+  /* Case 1: Cache hit - data is ready */
+  if (ce != NULL && ce->state == CACHE_VALID) {
+    cache_hits++;
+    lock_acquire(&ce->entry_lock);
+    lock_release(&cache_global_lock);
+    
+    memcpy(buffer, (uint8_t *)ce->data + sector_ofs, chunk_size);
+    ce->accessed = true;
+    
+    lock_release(&ce->entry_lock);
+    return;
+  }
+  
+  /* Case 2: Someone else is loading this sector - wait for them */
+  if (ce != NULL && ce->state == CACHE_LOADING) {
+    lock_acquire(&ce->entry_lock);
+    lock_release(&cache_global_lock);
+    
+    wait_for_loading(ce);
+    memcpy(buffer, (uint8_t *)ce->data + sector_ofs, chunk_size);
+    ce->accessed = true;
+    
+    lock_release(&ce->entry_lock);
+    return;
+  }
+  
+  /* Case 3: Cache miss - we must load from disk */
+  ASSERT(ce == NULL);
+  cache_misses++;
+  
+  struct cache_entry *slot = cache_evict();
+  ASSERT(slot != NULL);
+  
+  /* Reserve slot and release global lock before slow I/O */
+  slot->state = CACHE_LOADING;
+  slot->sector = sector;
+  slot->dirty = false;
+  lock_release(&cache_global_lock);
+  
+  /* Perform disk I/O without holding any locks */
+  block_read(fs_device, sector, slot->data);
+  
+  /* Finalize: mark valid and notify waiters */
+  lock_acquire(&slot->entry_lock);
+  slot->state = CACHE_VALID;
+  slot->accessed = true;
+  cond_broadcast(&slot->loading_done, &slot->entry_lock);
+  
+  memcpy(buffer, (uint8_t *)slot->data + sector_ofs, chunk_size);
+  
+  lock_release(&slot->entry_lock);
+}
+
 /* Write data to cache at given offset within sector. */
 void cache_write(block_sector_t sector, const void *buffer,
                  int sector_ofs, int chunk_size) {

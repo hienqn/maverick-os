@@ -1,3 +1,99 @@
+/*
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║                         PREFETCH SUBSYSTEM                               ║
+ * ╠══════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                          ║
+ * ║  PURPOSE:                                                                ║
+ * ║  ────────                                                                ║
+ * ║  Prefetching anticipates future disk reads by loading sectors into the  ║
+ * ║  cache BEFORE they are explicitly requested. This hides disk latency    ║
+ * ║  for sequential access patterns (e.g., reading a file from start to     ║
+ * ║  end), turning cache misses into cache hits.                            ║
+ * ║                                                                          ║
+ * ║  HOW IT WORKS:                                                           ║
+ * ║  ─────────────                                                           ║
+ * ║                                                                          ║
+ * ║    ┌──────────────┐      ┌─────────────────┐      ┌──────────────────┐  ║
+ * ║    │  cache_read  │      │ Prefetch Queue  │      │ Prefetcher Thread│  ║
+ * ║    │   (sector N) │      │  [N+1, ?, ?, ?] │      │   (background)   │  ║
+ * ║    └──────┬───────┘      └────────┬────────┘      └────────┬─────────┘  ║
+ * ║           │                       │                        │            ║
+ * ║           │ 1. Read sector N      │                        │            ║
+ * ║           │    from cache/disk    │                        │            ║
+ * ║           │                       │                        │            ║
+ * ║           │ 2. Request prefetch   │                        │            ║
+ * ║           │    of sector N+1  ────┼──► enqueue(N+1)        │            ║
+ * ║           │                       │                        │            ║
+ * ║           │ 3. Return to caller   │    3. Wake up          │            ║
+ * ║           ▼    (non-blocking)     │       (cond_signal) ───┼──►         ║
+ * ║                                   │                        │            ║
+ * ║                                   │    4. Dequeue N+1  ◄───┼────        ║
+ * ║                                   │                        │            ║
+ * ║                                   │    5. Load into cache  │            ║
+ * ║                                   │       (cache_do_prefetch)           ║
+ * ║                                   │                        ▼            ║
+ * ║                                   │                                     ║
+ * ║    Later: cache_read(N+1) ───────►│◄─── Already in cache! (HIT)        ║
+ * ║                                                                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                          ║
+ * ║  KEY DESIGN DECISIONS:                                                   ║
+ * ║  ─────────────────────                                                   ║
+ * ║                                                                          ║
+ * ║  1. ASYNCHRONOUS (Non-blocking)                                          ║
+ * ║     - cache_request_prefetch() returns immediately                       ║
+ * ║     - Disk I/O happens in background thread                              ║
+ * ║     - Caller doesn't wait for prefetch to complete                       ║
+ * ║                                                                          ║
+ * ║  2. BEST-EFFORT (Graceful degradation)                                   ║
+ * ║     - If queue is full, requests are silently dropped                    ║
+ * ║     - If sector already cached, prefetch is skipped                      ║
+ * ║     - System works correctly even if prefetch fails                      ║
+ * ║                                                                          ║
+ * ║  3. LOW PRIORITY                                                         ║
+ * ║     - Prefetcher runs at PRI_DEFAULT - 1                                 ║
+ * ║     - Explicit reads take priority over speculative prefetch             ║
+ * ║     - Prefetched sectors have accessed=false (lower eviction priority)   ║
+ * ║                                                                          ║
+ * ║  4. SEQUENTIAL HEURISTIC                                                 ║
+ * ║     - After reading sector N, prefetch sector N+1                        ║
+ * ║     - Works well for sequential file reads                               ║
+ * ║     - Could be extended with more sophisticated prediction               ║
+ * ║                                                                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                          ║
+ * ║  CIRCULAR QUEUE:                                                         ║
+ * ║  ───────────────                                                         ║
+ * ║                                                                          ║
+ * ║    prefetch_queue[16]:                                                   ║
+ * ║    ┌────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬───...   ║
+ * ║    │ 42 │ 43 │ 44 │    │    │    │    │    │    │    │    │    │        ║
+ * ║    └────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴───...   ║
+ * ║      ▲              ▲                                                    ║
+ * ║      │              │                                                    ║
+ * ║    head           tail                                                   ║
+ * ║   (dequeue)      (enqueue)                                               ║
+ * ║                                                                          ║
+ * ║    Full when: (tail + 1) % SIZE == head                                  ║
+ * ║    Empty when: head == tail                                              ║
+ * ║                                                                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                          ║
+ * ║  SYNCHRONIZATION:                                                        ║
+ * ║  ────────────────                                                        ║
+ * ║                                                                          ║
+ * ║    prefetch_lock:  Protects queue operations (enqueue/dequeue)           ║
+ * ║    prefetch_ready: Condition variable to wake prefetcher thread          ║
+ * ║                                                                          ║
+ * ║    Producer (cache_request_prefetch):                                    ║
+ * ║      lock → enqueue → signal → unlock                                    ║
+ * ║                                                                          ║
+ * ║    Consumer (prefetcher thread):                                         ║
+ * ║      lock → wait (if empty) → dequeue → unlock → do I/O                  ║
+ * ║                                                                          ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
+ */
+
 #include "filesys/cache_prefetch.h"
 #include "filesys/cache.h"
 #include "threads/synch.h"

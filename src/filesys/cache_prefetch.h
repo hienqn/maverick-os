@@ -3,6 +3,23 @@
 
 #include "devices/block.h"
 
+/*
+ * Prefetch Subsystem
+ * ==================
+ * 
+ * Provides asynchronous read-ahead for the buffer cache. After reading
+ * sector N, the cache automatically requests prefetch of sector N+1,
+ * anticipating sequential access patterns. A background thread processes
+ * the prefetch queue, loading sectors before they're explicitly needed.
+ *
+ * Key properties:
+ *   - Non-blocking: requests return immediately
+ *   - Best-effort: queue overflow silently drops requests
+ *   - Low priority: prefetched data is evicted before accessed data
+ *
+ * See cache_prefetch.c for detailed documentation.
+ */
+
 /* Initialize the prefetch subsystem. Call from cache_init(). */
 void cache_prefetch_init(void);
 

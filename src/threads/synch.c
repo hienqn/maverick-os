@@ -1,36 +1,96 @@
-/* This file is derived from source code for the Nachos
-   instructional operating system.  The Nachos copyright notice
-   is reproduced in full below. */
-
-/* Copyright (c) 1992-1996 The Regents of the University of California.
-   All rights reserved.
-
-   Permission to use, copy, modify, and distribute this software
-   and its documentation for any purpose, without fee, and
-   without written agreement is hereby granted, provided that the
-   above copyright notice and the following two paragraphs appear
-   in all copies of this software.
-
-   IN NO EVENT SHALL THE UNIVERSITY OF CALIFORNIA BE LIABLE TO
-   ANY PARTY FOR DIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR
-   CONSEQUENTIAL DAMAGES ARISING OUT OF THE USE OF THIS SOFTWARE
-   AND ITS DOCUMENTATION, EVEN IF THE UNIVERSITY OF CALIFORNIA
-   HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-   THE UNIVERSITY OF CALIFORNIA SPECIFICALLY DISCLAIMS ANY
-   WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-   WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-   PURPOSE.  THE SOFTWARE PROVIDED HEREUNDER IS ON AN "AS IS"
-   BASIS, AND THE UNIVERSITY OF CALIFORNIA HAS NO OBLIGATION TO
-   PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR
-   MODIFICATIONS.
-*/
+/*
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║                   SYNCHRONIZATION IMPLEMENTATION                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                          ║
+ * ║  This file implements synchronization primitives for the PintOS kernel.  ║
+ * ║  All primitives are built on top of the fundamental semaphore.           ║
+ * ║                                                                          ║
+ * ║  ATOMICITY MODEL:                                                        ║
+ * ║  ─────────────────                                                       ║
+ * ║  • All operations achieve atomicity by disabling interrupts              ║
+ * ║  • This is sufficient on uniprocessor systems (like PintOS)              ║
+ * ║  • On SMP systems, would need spinlocks + interrupt disable              ║
+ * ║                                                                          ║
+ * ║  PRIORITY SCHEDULING INTEGRATION:                                        ║
+ * ║  ─────────────────────────────────                                       ║
+ * ║  When SCHED_PRIO is active:                                              ║
+ * ║  • sema_up() wakes the highest-priority waiting thread                   ║
+ * ║  • lock_acquire() donates priority to lock holder                        ║
+ * ║  • lock_release() recalculates priority from remaining donations         ║
+ * ║  • cond_signal() wakes the highest-priority waiting thread               ║
+ * ║                                                                          ║
+ * ║  PRIORITY DONATION (LOCK):                                               ║
+ * ║  ──────────────────────────                                              ║
+ * ║                                                                          ║
+ * ║    Thread H (pri=60)         Thread L (pri=20)                           ║
+ * ║         │                         │                                      ║
+ * ║         │                    holds lock                                  ║
+ * ║         │                         │                                      ║
+ * ║    lock_acquire ─────────────────►│                                      ║
+ * ║         │                         │                                      ║
+ * ║         │   DONATE: L.eff_priority = 60                                  ║
+ * ║         │                         │                                      ║
+ * ║       BLOCK                   RUNS (at pri 60)                           ║
+ * ║         │                         │                                      ║
+ * ║         │                    lock_release                                ║
+ * ║         │                    L.eff_priority = 20                         ║
+ * ║         │                         │                                      ║
+ * ║      UNBLOCK ◄────────────────────┘                                      ║
+ * ║         │                                                                ║
+ * ║      RUNS (highest priority now)                                         ║
+ * ║                                                                          ║
+ * ║  CONDITION VARIABLE PATTERN:                                             ║
+ * ║  ────────────────────────────                                            ║
+ * ║  Unlike semaphores where multiple threads share one waiters list,        ║
+ * ║  condition variables use "one semaphore per waiter" pattern:             ║
+ * ║                                                                          ║
+ * ║    cond->waiters: [ sema_elem_A, sema_elem_B, sema_elem_C ]               ║
+ * ║                         │             │             │                    ║
+ * ║                         ▼             ▼             ▼                    ║
+ * ║                    sema(0)       sema(0)       sema(0)                   ║
+ * ║                         │             │             │                    ║
+ * ║                    thread_A      thread_B      thread_C                  ║
+ * ║                                                                          ║
+ * ║  This allows cond_signal to wake a specific thread (e.g., highest        ║
+ * ║  priority) rather than just the first in queue.                          ║
+ * ║                                                                          ║
+ * ║  Originally derived from Nachos instructional OS.                        ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
+ *
+ * Copyright (c) 1992-1996 The Regents of the University of California.
+ * All rights reserved.
+ *
+ * Permission to use, copy, modify, and distribute this software
+ * and its documentation for any purpose, without fee, and
+ * without written agreement is hereby granted, provided that the
+ * above copyright notice and the following two paragraphs appear
+ * in all copies of this software.
+ *
+ * IN NO EVENT SHALL THE UNIVERSITY OF CALIFORNIA BE LIABLE TO
+ * ANY PARTY FOR DIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR
+ * CONSEQUENTIAL DAMAGES ARISING OUT OF THE USE OF THIS SOFTWARE
+ * AND ITS DOCUMENTATION, EVEN IF THE UNIVERSITY OF CALIFORNIA
+ * HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * THE UNIVERSITY OF CALIFORNIA SPECIFICALLY DISCLAIMS ANY
+ * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE.  THE SOFTWARE PROVIDED HEREUNDER IS ON AN "AS IS"
+ * BASIS, AND THE UNIVERSITY OF CALIFORNIA HAS NO OBLIGATION TO
+ * PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR
+ * MODIFICATIONS.
+ */
 
 #include "threads/synch.h"
 #include <stdio.h>
 #include <string.h>
 #include "threads/interrupt.h"
 #include "threads/thread.h"
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * SEMAPHORE IMPLEMENTATION
+ * ═══════════════════════════════════════════════════════════════════════════*/
 
 /* Initializes semaphore SEMA to VALUE.  A semaphore is a
    nonnegative integer along with two atomic operators for
@@ -119,8 +179,7 @@ void sema_up(struct semaphore* sema) {
   intr_set_level(old_level);
 
   /* Only yield if NOT in interrupt context */
-  if (!intr_context() && woken != NULL && 
-      woken->eff_priority > thread_current()->eff_priority)
+  if (!intr_context() && woken != NULL && woken->eff_priority > thread_current()->eff_priority)
     thread_yield();
 }
 
@@ -154,6 +213,12 @@ static void sema_test_helper(void* sema_) {
     sema_up(&sema[1]);
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * LOCK IMPLEMENTATION
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A lock provides mutual exclusion with owner tracking and priority donation.
+ * ═══════════════════════════════════════════════════════════════════════════*/
 
 /* Initializes LOCK.  A lock can be held by at most a single
    thread at any given time.  Our locks are not "recursive", that
@@ -192,16 +257,16 @@ void lock_acquire(struct lock* lock) {
   ASSERT(!lock_held_by_current_thread(lock));
 
   if (active_sched_policy == SCHED_PRIO) {
-    // Set waiting_lock before attempting to acquire
+    /* Set waiting_lock before attempting to acquire */
     thread_current()->waiting_lock = lock;
 
     if (lock->holder != NULL) {
-      // Donate priority to the HOLDER (not waiters!)
+      /* Donate priority to the HOLDER (not waiters!) */
       struct thread* holder = lock->holder;
       if (thread_current()->eff_priority > holder->eff_priority) {
         holder->eff_priority = thread_current()->eff_priority;
-        
-        // Chain: if holder is waiting for another lock, propagate
+
+        /* Chain: if holder is waiting for another lock, propagate */
         struct lock* next_lock = holder->waiting_lock;
         while (next_lock != NULL && next_lock->holder != NULL) {
           struct thread* next_holder = next_lock->holder;
@@ -216,8 +281,8 @@ void lock_acquire(struct lock* lock) {
   }
 
   sema_down(&lock->semaphore);
-  
-  // We now hold the lock
+
+  /* We now hold the lock */
   lock->holder = thread_current();
   if (active_sched_policy == SCHED_PRIO) {
     thread_current()->waiting_lock = NULL;
@@ -258,31 +323,30 @@ void lock_release(struct lock* lock) {
 
   if (active_sched_policy == SCHED_PRIO) {
     struct thread* cur = thread_current();
-    
-    // Remove this lock from our held_locks list
+
+    /* Remove this lock from our held_locks list */
     list_remove(&lock->elem);
-    
-    // Recalculate eff_priority from base priority + remaining held locks
+
+    /* Recalculate eff_priority from base priority + remaining held locks */
     int max_prio = cur->priority;
-    
-    for (struct list_elem* e = list_begin(&cur->held_locks);
-         e != list_end(&cur->held_locks);
+
+    for (struct list_elem* e = list_begin(&cur->held_locks); e != list_end(&cur->held_locks);
          e = list_next(e)) {
       struct lock* held = list_entry(e, struct lock, elem);
-      
-      // Find max priority among this lock's waiters
+
+      /* Find max priority among this lock's waiters */
       if (!list_empty(&held->semaphore.waiters)) {
-        struct list_elem* max_waiter = list_max(&held->semaphore.waiters, 
-                                                 thread_priority_less, NULL);
+        struct list_elem* max_waiter =
+            list_max(&held->semaphore.waiters, thread_priority_less, NULL);
         struct thread* t = list_entry(max_waiter, struct thread, elem);
         if (t->eff_priority > max_prio)
           max_prio = t->eff_priority;
       }
     }
-    
+
     cur->eff_priority = max_prio;
   }
-  
+
   lock->holder = NULL;
   sema_up(&lock->semaphore);
 }
@@ -296,7 +360,13 @@ bool lock_held_by_current_thread(const struct lock* lock) {
   return lock->holder == thread_current();
 }
 
-/* Initializes a readers-writers lock */
+/* ═══════════════════════════════════════════════════════════════════════════
+ * READERS-WRITERS LOCK IMPLEMENTATION
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Writer-preferring RW lock using monitor pattern (lock + 2 condition vars).
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
+/* Initializes a readers-writers lock. */
 void rw_lock_init(struct rw_lock* rw_lock) {
   lock_init(&rw_lock->lock);
   cond_init(&rw_lock->read);
@@ -306,11 +376,11 @@ void rw_lock_init(struct rw_lock* rw_lock) {
 
 /* Acquire a writer-centric readers-writers lock */
 void rw_lock_acquire(struct rw_lock* rw_lock, bool reader) {
-  // Must hold the guard lock the entire time
+  /* Must hold the guard lock the entire time */
   lock_acquire(&rw_lock->lock);
 
   if (reader) {
-    // Reader code: Block while there are waiting or active writers
+    /* Reader code: Block while there are waiting or active writers */
     while ((rw_lock->AW + rw_lock->WW) > 0) {
       rw_lock->WR++;
       cond_wait(&rw_lock->read, &rw_lock->lock);
@@ -318,7 +388,7 @@ void rw_lock_acquire(struct rw_lock* rw_lock, bool reader) {
     }
     rw_lock->AR++;
   } else {
-    // Writer code: Block while there are any active readers/writers in the system
+    /* Writer code: Block while there are any active readers/writers in the system */
     while ((rw_lock->AR + rw_lock->AW) > 0) {
       rw_lock->WW++;
       cond_wait(&rw_lock->write, &rw_lock->lock);
@@ -327,22 +397,22 @@ void rw_lock_acquire(struct rw_lock* rw_lock, bool reader) {
     rw_lock->AW++;
   }
 
-  // Release guard lock
+  /* Release guard lock */
   lock_release(&rw_lock->lock);
 }
 
 /* Release a writer-centric readers-writers lock */
 void rw_lock_release(struct rw_lock* rw_lock, bool reader) {
-  // Must hold the guard lock the entire time
+  /* Must hold the guard lock the entire time */
   lock_acquire(&rw_lock->lock);
 
   if (reader) {
-    // Reader code: Wake any waiting writers if we are the last reader
+    /* Reader code: Wake any waiting writers if we are the last reader */
     rw_lock->AR--;
     if (rw_lock->AR == 0 && rw_lock->WW > 0)
       cond_signal(&rw_lock->write, &rw_lock->lock);
   } else {
-    // Writer code: First try to wake a waiting writer, otherwise all waiting readers
+    /* Writer code: First try to wake a waiting writer, otherwise all waiting readers */
     rw_lock->AW--;
     if (rw_lock->WW > 0)
       cond_signal(&rw_lock->write, &rw_lock->lock);
@@ -350,14 +420,22 @@ void rw_lock_release(struct rw_lock* rw_lock, bool reader) {
       cond_broadcast(&rw_lock->read, &rw_lock->lock);
   }
 
-  // Release guard lock
+  /* Release guard lock */
   lock_release(&rw_lock->lock);
 }
 
-/* One semaphore in a list. */
+/* ═══════════════════════════════════════════════════════════════════════════
+ * CONDITION VARIABLE IMPLEMENTATION
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Mesa-style condition variables using "one semaphore per waiter" pattern.
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
+/* One semaphore per waiting thread. 
+   This pattern allows us to selectively wake specific waiters (e.g., highest priority)
+   rather than just the first in queue. Each waiter allocates this on their stack. */
 struct semaphore_elem {
-  struct list_elem elem;      /* List element. */
-  struct semaphore semaphore; /* This semaphore. */
+  struct list_elem elem;      /* Element in condition's waiters list. */
+  struct semaphore semaphore; /* This waiter's personal semaphore (initialized to 0). */
 };
 
 /* Initializes condition variable COND.  A condition variable
@@ -424,7 +502,8 @@ void cond_wait(struct condition* cond, struct lock* lock) {
    
    This pattern allows cond_signal to selectively wake any waiter
    (e.g., highest priority) rather than just the first in queue. */
-static bool cond_sema_priority_less(const struct list_elem* a, const struct list_elem* b, void* aux UNUSED) {
+static bool cond_sema_priority_less(const struct list_elem* a, const struct list_elem* b,
+                                    void* aux UNUSED) {
   struct semaphore_elem* sa = list_entry(a, struct semaphore_elem, elem);
   struct semaphore_elem* sb = list_entry(b, struct semaphore_elem, elem);
 
@@ -442,24 +521,24 @@ static bool cond_sema_priority_less(const struct list_elem* a, const struct list
    An interrupt handler cannot acquire a lock, so it does not
    make sense to try to signal a condition variable within an
    interrupt handler. */
-   void cond_signal(struct condition* cond, struct lock* lock UNUSED) {
-    ASSERT(cond != NULL);
-    ASSERT(lock != NULL);
-    ASSERT(!intr_context());
-    ASSERT(lock_held_by_current_thread(lock));
-  
-    if (!list_empty(&cond->waiters)) {
-      if (active_sched_policy == SCHED_PRIO) {
-        /* Wake highest priority waiter */
-        struct list_elem* max_elem = list_max(&cond->waiters, cond_sema_priority_less, NULL);
-        list_remove(max_elem);
-        sema_up(&list_entry(max_elem, struct semaphore_elem, elem)->semaphore);
-      } else {
-        /* FIFO: wake front waiter */
-        sema_up(&list_entry(list_pop_front(&cond->waiters), struct semaphore_elem, elem)->semaphore);
-      }
+void cond_signal(struct condition* cond, struct lock* lock UNUSED) {
+  ASSERT(cond != NULL);
+  ASSERT(lock != NULL);
+  ASSERT(!intr_context());
+  ASSERT(lock_held_by_current_thread(lock));
+
+  if (!list_empty(&cond->waiters)) {
+    if (active_sched_policy == SCHED_PRIO) {
+      /* Wake highest priority waiter */
+      struct list_elem* max_elem = list_max(&cond->waiters, cond_sema_priority_less, NULL);
+      list_remove(max_elem);
+      sema_up(&list_entry(max_elem, struct semaphore_elem, elem)->semaphore);
+    } else {
+      /* FIFO: wake front waiter */
+      sema_up(&list_entry(list_pop_front(&cond->waiters), struct semaphore_elem, elem)->semaphore);
     }
   }
+}
 
 /* Wakes up all threads, if any, waiting on COND (protected by
    LOCK).  LOCK must be held before calling this function.

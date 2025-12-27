@@ -80,9 +80,7 @@ bool free_map_allocate(size_t cnt, block_sector_t* sectorp) {
 
 /* Allocates a single sector from the free map and stores it in *SECTORP.
    Returns true if successful, false if no sector was available. */
-bool free_map_allocate_one(block_sector_t* sectorp) {
-  return free_map_allocate(1, sectorp);
-}
+bool free_map_allocate_one(block_sector_t* sectorp) { return free_map_allocate(1, sectorp); }
 
 /* Makes CNT sectors starting at SECTOR available for use. */
 void free_map_release(block_sector_t sector, size_t cnt) {

@@ -1,3 +1,25 @@
+/**
+ * @file threads/init.c
+ * @brief Pintos kernel initialization and boot sequence.
+ *
+ * This file implements the main kernel initialization sequence for Pintos.
+ * It handles:
+ * - BSS segment initialization
+ * - Command line parsing
+ * - Memory system setup (paging, physical page allocator, malloc)
+ * - Device initialization (timer, keyboard, serial, network)
+ * - Thread system initialization
+ * - File system initialization (if FILESYS is defined)
+ * - User program support initialization (if USERPROG is defined)
+ * - Execution of kernel command line actions
+ *
+ * The initialization follows a strict order to ensure dependencies are
+ * satisfied at each step. The main() function orchestrates the entire
+ * boot sequence.
+ *
+ * @see threads/init.h for the public interface.
+ */
+
 #include "threads/init.h"
 #include <console.h>
 #include <debug.h>
@@ -47,11 +69,24 @@
 uint32_t* init_page_dir;
 
 #ifdef FILESYS
-/* -f: Format the file system? */
+/**
+ * @brief Whether to format the file system during initialization.
+ *
+ * Set to true if the "-f" command line option is specified.
+ * When true, filesys_init() will format the file system device
+ * before mounting it.
+ */
 static bool format_filesys;
 
-/* -filesys, -scratch, -swap: Names of block devices to use,
-   overriding the defaults. */
+/**
+ * @brief Block device names from command line options.
+ *
+ * These override the default block device selection if specified
+ * via command line options:
+ * - filesys_bdev_name: Set by "-filesys=BDEV"
+ * - scratch_bdev_name: Set by "-scratch=BDEV"
+ * - swap_bdev_name: Set by "-swap=BDEV" (only if VM is defined)
+ */
 static const char* filesys_bdev_name;
 static const char* scratch_bdev_name;
 #ifdef VM
@@ -59,7 +94,13 @@ static const char* swap_bdev_name;
 #endif
 #endif /* FILESYS */
 
-/* -ul: Maximum number of pages to put into palloc's user pool. */
+/**
+ * @brief Maximum number of pages to allocate to the user pool.
+ *
+ * Set by the "-ul=COUNT" command line option. Defaults to SIZE_MAX
+ * (unlimited). This limits how much physical memory can be used
+ * for user processes, reserving the rest for kernel use.
+ */
 static size_t user_page_limit = SIZE_MAX;
 
 static void bss_init(void);
@@ -75,7 +116,31 @@ static void locate_block_devices(void);
 static void locate_block_device(enum block_type, const char* name);
 #endif
 
-/* Pintos main program. */
+/**
+ * @brief Pintos kernel main entry point.
+ *
+ * This function orchestrates the complete kernel boot sequence:
+ *
+ * 1. **BSS Initialization**: Zero out uninitialized global variables
+ * 2. **Command Line Parsing**: Read and parse kernel command line arguments
+ * 3. **Thread System**: Initialize thread subsystem and console locking
+ * 4. **Memory System**: Initialize physical page allocator, malloc, and paging
+ * 5. **Segmentation**: Initialize GDT and TSS (if USERPROG is defined)
+ * 6. **Interrupts**: Initialize interrupt handlers, timer, keyboard, input
+ * 7. **User Program Support**: Initialize exception handlers and syscalls (if USERPROG)
+ * 8. **Thread Scheduler**: Start thread scheduling and enable interrupts
+ * 9. **Network**: Initialize network device (e1000)
+ * 10. **User Program Init**: Set up main thread's PCB (if USERPROG)
+ * 11. **File System**: Initialize IDE, locate block devices, mount filesys (if FILESYS)
+ * 12. **Actions**: Execute command line actions (run programs, tests, etc.)
+ * 13. **Shutdown**: Clean shutdown or reboot
+ *
+ * @note The initialization order is critical - later steps depend on earlier ones.
+ *       For example, paging must be initialized before malloc can work, and
+ *       interrupts must be initialized before the scheduler can run.
+ *
+ * @return Never returns normally - calls shutdown() or thread_exit() at the end.
+ */
 int main(void) {
   char** argv;
 
@@ -145,21 +210,53 @@ int main(void) {
   thread_exit();
 }
 
-/* Clear the "BSS", a segment that should be initialized to
-   zeros.  It isn't actually stored on disk or zeroed by the
-   kernel loader, so we have to zero it ourselves.
-
-   The start and end of the BSS segment is recorded by the
-   linker as _start_bss and _end_bss.  See kernel.lds. */
+/**
+ * @brief Clear the BSS (Block Started by Symbol) segment.
+ *
+ * The BSS segment contains uninitialized global and static variables
+ * that should be initialized to zero. The kernel loader doesn't zero
+ * this segment, so we must do it explicitly during boot.
+ *
+ * The linker script (kernel.lds) defines symbols _start_bss and _end_bss
+ * that mark the boundaries of the BSS segment. We zero all memory
+ * between these two addresses.
+ *
+ * @note This must be called before any global/static variables are used,
+ *       as they may contain garbage values otherwise.
+ *
+ * @see kernel.lds for linker script that defines _start_bss and _end_bss.
+ */
 static void bss_init(void) {
   extern char _start_bss, _end_bss;
   memset(&_start_bss, 0, &_end_bss - &_start_bss);
 }
 
-/* Populates the base page directory and page table with the
-   kernel virtual mapping, and then sets up the CPU to use the
-   new page directory.  Points init_page_dir to the page
-   directory it creates. */
+/**
+ * @brief Initialize kernel paging and create initial page directory.
+ *
+ * This function sets up the kernel's virtual memory system by:
+ * 1. Allocating a new page directory (init_page_dir)
+ * 2. Creating page tables for all physical memory pages
+ * 3. Mapping each physical page to its corresponding kernel virtual address
+ * 4. Marking kernel text pages as read-only (executable but not writable)
+ * 5. Activating the page directory by loading it into CR3
+ *
+ * The mapping created is a direct identity mapping: physical address X
+ * maps to kernel virtual address ptov(X). This allows the kernel to
+ * access all physical memory through virtual addresses.
+ *
+ * Kernel text pages (between _start and _end_kernel_text) are marked
+ * as read-only to prevent accidental modification of kernel code.
+ *
+ * @note This must be called after palloc_init() so that page allocation
+ *       functions are available.
+ *
+ * @note After this function returns, the CPU is using the new page
+ *       directory. The init_page_dir global variable points to it.
+ *
+ * @see threads/pte.h for pde_create() and pte_create_kernel() functions.
+ * @see threads/loader.h for ptov() macro that converts physical to virtual.
+ */
 static void paging_init(void) {
   uint32_t *pd, *pt;
   size_t page;
@@ -190,8 +287,28 @@ static void paging_init(void) {
   asm volatile("movl %0, %%cr3" : : "r"(vtop(init_page_dir)));
 }
 
-/* Breaks the kernel command line into words and returns them as
-   an argv-like array. */
+/**
+ * @brief Parse the kernel command line into an argument vector.
+ *
+ * The kernel command line is stored by the loader at a fixed location
+ * in memory (LOADER_ARGS). This function:
+ * 1. Reads the argument count from LOADER_ARG_CNT
+ * 2. Parses the null-terminated argument strings from LOADER_ARGS
+ * 3. Builds an argv-style array (null-terminated array of pointers)
+ * 4. Prints the command line for debugging
+ *
+ * Arguments are separated by null bytes in the loader's storage area.
+ * The function validates that arguments don't overflow the available space.
+ *
+ * @return Pointer to a static argv array. The array is null-terminated
+ *         and remains valid for the lifetime of the kernel.
+ *
+ * @note The returned array is static, so subsequent calls will overwrite
+ *       the previous contents. This is fine since it's only called once
+ *       during boot.
+ *
+ * @see threads/loader.h for LOADER_ARGS, LOADER_ARG_CNT, and LOADER_ARGS_LEN.
+ */
 static char** read_command_line(void) {
   static char* argv[LOADER_ARGS_LEN / 2 + 1];
   char *p, *end;
@@ -222,8 +339,48 @@ static char** read_command_line(void) {
   return argv;
 }
 
-/* Parses options in ARGV[]
-   and returns the first non-option argument. */
+/**
+ * @brief Parse command line options and configure kernel behavior.
+ *
+ * This function processes kernel command line options and configures
+ * various kernel subsystems accordingly. Supported options include:
+ *
+ * **General Options:**
+ * - `-h`: Print help message and power off
+ * - `-q`: Power off VM after actions or on panic
+ * - `-r`: Reboot after actions
+ * - `-rs=SEED`: Set random number generator seed
+ *
+ * **Scheduler Options:**
+ * - `-sched=fifo`: Use first-in-first-out scheduler
+ * - `-sched=prio`: Use strict-priority round-robin scheduler (default)
+ * - `-sched=fair`: Use fair scheduler
+ * - `-sched=mlfqs`: Use multi-level feedback queue scheduler
+ *
+ * **Fair Scheduler Options** (only used with `-sched=fair`):
+ * - `-fair=stride`: Use stride scheduling (default)
+ * - `-fair=lottery`: Use lottery scheduling
+ * - `-fair=cfs`: Use Completely Fair Scheduler (CFS)
+ * - `-fair=eevdf`: Use Earliest Eligible Virtual Deadline First (EEVDF)
+ *
+ * **File System Options** (if FILESYS is defined):
+ * - `-f`: Format the file system during initialization
+ * - `-filesys=BDEV`: Use BDEV as the file system block device
+ * - `-scratch=BDEV`: Use BDEV as the scratch block device
+ * - `-swap=BDEV`: Use BDEV as the swap block device (if VM is defined)
+ *
+ * **User Program Options** (if USERPROG is defined):
+ * - `-ul=COUNT`: Limit user memory to COUNT pages
+ *
+ * @param argv Array of command line arguments (from read_command_line())
+ * @return Pointer to the first non-option argument (the first action to execute)
+ *
+ * @note Options must precede actions on the command line.
+ * @note Scheduler flags are mutually exclusive - setting multiple will panic.
+ * @note Fair scheduler flags are mutually exclusive - setting multiple will panic.
+ * @note If no scheduler is specified, defaults to SCHED_PRIO.
+ * @note If no fair scheduler is specified (when using -sched=fair), defaults to stride.
+ */
 static char** parse_options(char** argv) {
   bool scheduler_flags[8] = {0, 0, 0, 0, 0, 0, 0, 0};
   bool fair_sched_flags[4] = {0, 0, 0, 0};
@@ -264,8 +421,7 @@ static char** parse_options(char** argv) {
         scheduler_flags[SCHED_MLFQS] = 1;
       else
         PANIC("unknown scheduler option `%s' (use -h for help)", value);
-    }
-    else if (!strcmp(name, "-fair")) {
+    } else if (!strcmp(name, "-fair")) {
       if (!strcmp(value, "stride"))
         fair_sched_flags[FAIR_SCHED_STRIDE] = 1;
       else if (!strcmp(value, "lottery"))
@@ -348,7 +504,18 @@ static char** parse_options(char** argv) {
   return argv;
 }
 
-/* Runs the task specified in ARGV[1]. */
+/**
+ * @brief Execute a user program task.
+ *
+ * Runs the user program specified in argv[1] and waits for it to complete.
+ * This is the handler for the "run" action on the kernel command line.
+ *
+ * @param argv Command line arguments. argv[1] must contain the program name
+ *             and optional arguments (space-separated).
+ *
+ * @note Only available if USERPROG is defined.
+ * @note The program name may include arguments, e.g., "ls -l /"
+ */
 static void run_task(char** argv) {
   const char* task = argv[1];
 
@@ -359,7 +526,16 @@ static void run_task(char** argv) {
   printf("Execution of '%s' complete.\n", task);
 }
 
-/* Runs the userprog kernel task specified in ARGV[1]. */
+/**
+ * @brief Execute a userprog kernel test.
+ *
+ * Runs the userprog kernel test specified in argv[1]. This is the handler
+ * for the "rukt" (Run Userprog Kernel Test) action.
+ *
+ * @param argv Command line arguments. argv[1] must contain the test name.
+ *
+ * @note Only available if USERPROG is defined.
+ */
 static void run_userprog_kernel_task(char** argv) {
   const char* task = argv[1];
 
@@ -371,7 +547,16 @@ static void run_userprog_kernel_task(char** argv) {
 }
 
 #ifdef THREADS
-/* Runs the threads kernel task specified in ARGV[1]. */
+/**
+ * @brief Execute a threads kernel test.
+ *
+ * Runs the threads kernel test specified in argv[1]. This is the handler
+ * for the "rtkt" (Run Threads Kernel Test) action.
+ *
+ * @param argv Command line arguments. argv[1] must contain the test name.
+ *
+ * @note Only available if THREADS is defined.
+ */
 static void run_threads_kernel_task(char** argv) {
   const char* task = argv[1];
 
@@ -382,7 +567,16 @@ static void run_threads_kernel_task(char** argv) {
 #endif
 
 #ifdef FILESYS
-/* Runs the filesys kernel task specified in ARGV[1]. */
+/**
+ * @brief Execute a filesys kernel test.
+ *
+ * Runs the filesys kernel test specified in argv[1]. This is the handler
+ * for the "rfkt" (Run Filesys Kernel Test) action.
+ *
+ * @param argv Command line arguments. argv[1] must contain the test name.
+ *
+ * @note Only available if FILESYS is defined.
+ */
 static void run_filesys_kernel_task(char** argv) {
   const char* task = argv[1];
 
@@ -392,8 +586,35 @@ static void run_filesys_kernel_task(char** argv) {
 }
 #endif
 
-/* Executes all of the actions specified in ARGV[]
-   up to the null pointer sentinel. */
+/**
+ * @brief Execute all actions specified on the kernel command line.
+ *
+ * This function processes the action list from the command line and
+ * executes each action in order. Supported actions include:
+ *
+ * **User Program Actions** (if USERPROG is defined):
+ * - `run 'PROG [ARG...]'`: Execute user program PROG with optional arguments
+ * - `rukt TEST`: Run userprog kernel test TEST
+ *
+ * **Thread Actions** (if THREADS is defined):
+ * - `rtkt TEST`: Run threads kernel test TEST
+ *
+ * **File System Actions** (if FILESYS is defined):
+ * - `ls`: List files in the root directory
+ * - `cat FILE`: Print FILE to the console
+ * - `rm FILE`: Delete FILE
+ * - `extract`: Untar from scratch device into file system
+ * - `append FILE`: Append FILE to tar file on scratch device
+ * - `rfkt TEST`: Run filesys kernel test TEST
+ *
+ * @param argv Array of action names and their arguments, terminated by NULL.
+ *             Each action consumes a certain number of arguments (including
+ *             the action name itself).
+ *
+ * @note Actions are executed in the order they appear on the command line.
+ * @note Unknown actions will cause a panic.
+ * @note Missing required arguments for an action will cause a panic.
+ */
 static void run_actions(char** argv) {
   /* An action. */
   struct action {
@@ -417,7 +638,7 @@ static void run_actions(char** argv) {
       {"rm", 2, fsutil_rm},
       {"extract", 1, fsutil_extract},
       {"append", 2, fsutil_append},
-      {"rfkt", 2, run_filesys_kernel_task},  /* Run Filesys Kernel Test */
+      {"rfkt", 2, run_filesys_kernel_task}, /* Run Filesys Kernel Test */
 #endif
       {NULL, 0, NULL},
   };
@@ -444,8 +665,17 @@ static void run_actions(char** argv) {
   }
 }
 
-/* Prints a kernel command line help message and powers off the
-   machine. */
+/**
+ * @brief Print kernel command line help message and power off.
+ *
+ * Displays a comprehensive help message listing all available command
+ * line options and actions. After printing, powers off the machine.
+ *
+ * This function is called when the "-h" option is specified on the
+ * kernel command line.
+ *
+ * @note Never returns - calls shutdown_power_off() at the end.
+ */
 static void usage(void) {
   printf("\nCommand line syntax: [OPTION...] [ACTION...]\n"
          "Options must precede actions.\n"
@@ -497,7 +727,24 @@ static void usage(void) {
 }
 
 #ifdef FILESYS
-/* Figure out what block devices to cast in the various Pintos roles. */
+/**
+ * @brief Locate and assign block devices for all Pintos roles.
+ *
+ * This function identifies which physical block devices should be used
+ * for each Pintos role (filesys, scratch, swap) and assigns them.
+ * It uses the names specified via command line options if provided,
+ * otherwise it selects the first device of the appropriate type.
+ *
+ * Roles assigned:
+ * - BLOCK_FILESYS: The file system storage device
+ * - BLOCK_SCRATCH: The scratch device (used for tar operations)
+ * - BLOCK_SWAP: The swap device (only if VM is defined)
+ *
+ * @note This must be called after ide_init() so that block devices
+ *       are available for probing.
+ *
+ * @see locate_block_device() for the actual device selection logic.
+ */
 static void locate_block_devices(void) {
   locate_block_device(BLOCK_FILESYS, filesys_bdev_name);
   locate_block_device(BLOCK_SCRATCH, scratch_bdev_name);
@@ -506,10 +753,23 @@ static void locate_block_devices(void) {
 #endif
 }
 
-/* Figures out what block device to use for the given ROLE: the
-   block device with the given NAME, if NAME is non-null,
-   otherwise the first block device in probe order of type
-   ROLE. */
+/**
+ * @brief Locate and assign a block device for a specific role.
+ *
+ * Determines which block device should be used for the given role:
+ * - If `name` is non-NULL, searches for a device with that exact name
+ * - If `name` is NULL, selects the first device of the specified type
+ *   found during device probing
+ *
+ * Once a device is found, it is assigned to the role via block_set_role().
+ * If a name is specified but no matching device is found, the kernel panics.
+ *
+ * @param role The block device role (BLOCK_FILESYS, BLOCK_SCRATCH, or BLOCK_SWAP)
+ * @param name Optional device name from command line option, or NULL to use default
+ *
+ * @note This function prints which device was selected for debugging.
+ * @note If a name is specified but the device doesn't exist, the kernel panics.
+ */
 static void locate_block_device(enum block_type role, const char* name) {
   struct block* block = NULL;
 

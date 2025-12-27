@@ -1,3 +1,33 @@
+/*
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║                           TIMER DRIVER                                    ║
+ * ╠══════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                          ║
+ * ║  Driver for the 8254 Programmable Interval Timer (PIT). The timer        ║
+ * ║  generates periodic interrupts that drive thread scheduling and          ║
+ * ║  time-based operations.                                                  ║
+ * ║                                                                          ║
+ * ║  TIMER INTERRUPT:                                                        ║
+ * ║  ─────────────────                                                       ║
+ * ║  The timer fires TIMER_FREQ times per second (default: 100 Hz).          ║
+ * ║  Each interrupt:                                                         ║
+ * ║    1. Increments global tick count                                       ║
+ * ║    2. Wakes sleeping threads whose wake time has passed                  ║
+ * ║    3. Updates scheduler statistics (thread_tick)                         ║
+ * ║    4. For MLFQS: Updates recent_cpu, priorities, load_avg                ║
+ * ║                                                                          ║
+ * ║  TIMER SLEEP:                                                            ║
+ * ║  ────────────                                                            ║
+ * ║  timer_sleep() uses an efficient sleep list instead of busy-waiting:     ║
+ * ║    1. Thread sets wake_up_tick and adds itself to sleeping_threads       ║
+ * ║    2. Thread blocks                                                      ║
+ * ║    3. Timer interrupt checks list and wakes threads whose time is up     ║
+ * ║                                                                          ║
+ * ║  See [8254] for hardware details of the 8254 timer chip.                 ║
+ * ║                                                                          ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
+ */
+
 #include "devices/timer.h"
 #include <debug.h>
 #include <inttypes.h>
@@ -8,7 +38,9 @@
 #include "threads/synch.h"
 #include "threads/thread.h"
 
-/* See [8254] for hardware details of the 8254 timer chip. */
+/* ═══════════════════════════════════════════════════════════════════════════
+ * COMPILE-TIME CONFIGURATION CHECKS
+ * ═══════════════════════════════════════════════════════════════════════════*/
 
 #if TIMER_FREQ < 19
 #error 8254 timer requires TIMER_FREQ >= 19
@@ -16,6 +48,10 @@
 #if TIMER_FREQ > 1000
 #error TIMER_FREQ <= 1000 recommended
 #endif
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * TIMER STATE
+ * ═══════════════════════════════════════════════════════════════════════════*/
 
 /* Number of timer ticks since OS booted. */
 static int64_t ticks;
@@ -90,9 +126,9 @@ void timer_sleep(int64_t ticks) {
   // Wake up time is the current tick plus the duration
   current_thread->wake_up_tick = start + ticks;
   // Insert this thread into the sleeping_threads list, ordered by wake_up_tick
-  struct list_elem *e = list_begin(&sleeping_threads);
+  struct list_elem* e = list_begin(&sleeping_threads);
   while (e != list_end(&sleeping_threads)) {
-    struct thread *t = list_entry(e, struct thread, elem);
+    struct thread* t = list_entry(e, struct thread, elem);
     if (current_thread->wake_up_tick < t->wake_up_tick) {
       break;
     }
@@ -157,7 +193,7 @@ static void timer_interrupt(struct intr_frame* args UNUSED) {
   if (active_sched_policy == SCHED_MLFQS) {
     /* Every tick: increment recent_cpu for running thread */
     thread_mlfqs_tick();
-    
+
     /* Every second (TIMER_FREQ ticks): update load_avg and recent_cpu */
     if (ticks % TIMER_FREQ == 0) {
       thread_mlfqs_update_stats();
@@ -170,7 +206,7 @@ static void timer_interrupt(struct intr_frame* args UNUSED) {
 
   /* Wake up sleeping threads whose time has come */
   while (!list_empty(&sleeping_threads)) {
-    struct thread *t = list_entry(list_front(&sleeping_threads), struct thread, elem);
+    struct thread* t = list_entry(list_front(&sleeping_threads), struct thread, elem);
     if (t->wake_up_tick > ticks)
       break;
     list_pop_front(&sleeping_threads);

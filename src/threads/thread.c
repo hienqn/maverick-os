@@ -1,3 +1,60 @@
+/*
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║                      THREAD IMPLEMENTATION                                ║
+ * ╠══════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                          ║
+ * ║  This file implements the core threading system for PintOS, including    ║
+ * ║  thread creation, scheduling, blocking/unblocking, and termination.      ║
+ * ║                                                                          ║
+ * ║  ARCHITECTURE OVERVIEW:                                                  ║
+ * ║  ──────────────────────                                                  ║
+ * ║                                                                          ║
+ * ║    ┌──────────────────────────────────────────────────────────────────┐  ║
+ * ║    │                    SCHEDULER SUBSYSTEM                           │  ║
+ * ║    │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌──────────┐ │  ║
+ * ║    │  │ FIFO Sched  │  │ PRIO Sched  │  │ FAIR Sched  │  │  MLFQS   │ │  ║
+ * ║    │  │ (simple RR) │  │ (donation)  │  │ (prop.share)│  │ (BSD)    │ │  ║
+ * ║    │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └────┬─────┘ │  ║
+ * ║    │         └────────────────┴────────────────┴──────────────┘       │  ║
+ * ║    │                               │                                   │  ║
+ * ║    │                    next_thread_to_run()                          │  ║
+ * ║    │                    (dispatcher via jump table)                   │  ║
+ * ║    └──────────────────────────────────┬───────────────────────────────┘  ║
+ * ║                                       │                                  ║
+ * ║    ┌──────────────────────────────────▼───────────────────────────────┐  ║
+ * ║    │                      READY QUEUES                                │  ║
+ * ║    │  • fifo_ready_list     - FIFO scheduler queue                    │  ║
+ * ║    │  • priority_ready_list - PRIO/MLFQS queue (sorted by priority)   │  ║
+ * ║    │  • fair_ready_list     - Fair scheduler queue                    │  ║
+ * ║    └──────────────────────────────────────────────────────────────────┘  ║
+ * ║                                                                          ║
+ * ║  CONTEXT SWITCH FLOW:                                                    ║
+ * ║  ────────────────────                                                    ║
+ * ║                                                                          ║
+ * ║    thread_yield() / thread_block() / thread_exit()                       ║
+ * ║           │                                                              ║
+ * ║           ▼                                                              ║
+ * ║    schedule()                                                            ║
+ * ║           │                                                              ║
+ * ║           ├─► next_thread_to_run()  ──► Pick next thread                 ║
+ * ║           │                                                              ║
+ * ║           ├─► switch_threads()      ──► Save/restore registers           ║
+ * ║           │   (assembly in switch.S)                                     ║
+ * ║           │                                                              ║
+ * ║           └─► thread_switch_tail()  ──► Activate page tables,            ║
+ * ║                                         free dying threads               ║
+ * ║                                                                          ║
+ * ║  INTERRUPT CONTEXT:                                                      ║
+ * ║  ──────────────────                                                      ║
+ * ║  • Timer interrupt calls thread_tick() every tick                        ║
+ * ║  • After TIME_SLICE ticks, sets yield_on_return flag                     ║
+ * ║  • thread_yield() is called after interrupt handler returns              ║
+ * ║  • MLFQS updates: every tick (recent_cpu), every 4 ticks (priorities),   ║
+ * ║    every second (load_avg, recent_cpu recalculation)                     ║
+ * ║                                                                          ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
+ */
+
 #include "threads/thread.h"
 #include <debug.h>
 #include <stddef.h>
@@ -16,67 +73,125 @@
 #include "userprog/process.h"
 #endif
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * CONSTANTS AND MAGIC NUMBERS
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
 /* Random value for struct thread's `magic' member.
-   Used to detect stack overflow.  See the big comment at the top
-   of thread.h for details. */
+   Used to detect stack overflow. If this value is corrupted,
+   the kernel stack has overflowed into the thread struct. */
 #define THREAD_MAGIC 0xcd6abf4b
 
-/* List of processes in THREAD_READY state, that is, processes
-   that are ready to run but not actually running. */
+/* ═══════════════════════════════════════════════════════════════════════════
+ * READY QUEUES
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Each scheduling policy uses a different ready list. This avoids mixing
+ * threads from different policies and allows each scheduler to organize
+ * its queue optimally (e.g., PRIO keeps threads sorted by priority).
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
+/* FIFO scheduler ready queue (simple round-robin order). */
 static struct list fifo_ready_list;
 
-/* List of processes in THREAD_READY state for the MLFQS scheduler.
-   Contains threads ready to run but not currently running. */
+/* Priority-based ready queue (SCHED_PRIO and SCHED_MLFQS).
+   Kept sorted with highest priority at front. */
 static struct list priority_ready_list;
 
-/* List of processes in THREAD_READY state for fair schedulers.
-   Contains threads ready to run but not currently running. */
+/* Fair scheduler ready queue (stride, lottery, CFS, EEVDF).
+   Organization depends on the active fair scheduler. */
 static struct list fair_ready_list;
 
-/* List of all processes.  Processes are added to this list
-   when they are first scheduled and removed when they exit. */
+/* ═══════════════════════════════════════════════════════════════════════════
+ * GLOBAL THREAD LISTS
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
+/* List of ALL threads (all states). Used for:
+   • Iterating over all threads (thread_foreach)
+   • MLFQS priority recalculation
+   Threads are added on creation and removed on exit. */
 static struct list all_list;
 
-/* Idle thread. */
+/* ═══════════════════════════════════════════════════════════════════════════
+ * SPECIAL THREADS
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
+/* The idle thread - runs when no other thread is ready.
+   Never appears in ready lists; returned by next_thread_to_run()
+   when all ready lists are empty. */
 static struct thread* idle_thread;
 
-/* Initial thread, the thread running init.c:main(). */
+/* The initial thread - first thread, runs init.c:main().
+   Special because its memory wasn't allocated via palloc. */
 static struct thread* initial_thread;
 
-/* Lock used by allocate_tid(). */
+/* ═══════════════════════════════════════════════════════════════════════════
+ * SYNCHRONIZATION
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
+/* Lock protecting tid allocation (ensures unique tids). */
 static struct lock tid_lock;
 
-/* Stack frame for kernel_thread(). */
+/* ═══════════════════════════════════════════════════════════════════════════
+ * KERNEL THREAD BOOTSTRAP FRAME
+ * ═══════════════════════════════════════════════════════════════════════════
+ * When a new kernel thread starts, it needs this stack frame to know
+ * which function to call. The frame is set up by thread_create().
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
 struct kernel_thread_frame {
-  void* eip;             /* Return address. */
-  thread_func* function; /* Function to call. */
-  void* aux;             /* Auxiliary data for function. */
+  void* eip;             /* Return address (NULL, since kernel_thread doesn't return). */
+  thread_func* function; /* Function to call in the new thread. */
+  void* aux;             /* Auxiliary data passed to the function. */
 };
 
-/* Statistics. */
-static long long idle_ticks;   /* # of timer ticks spent idle. */
-static long long kernel_ticks; /* # of timer ticks in kernel threads. */
-static long long user_ticks;   /* # of timer ticks in user programs. */
+/* ═══════════════════════════════════════════════════════════════════════════
+ * CPU TIME STATISTICS
+ * ═══════════════════════════════════════════════════════════════════════════*/
 
-/* MLFQS scheduler state. */
-static int load_avg;           /* System load average (fixed-point, 17.14 format) */
+static long long idle_ticks;   /* Timer ticks spent running idle thread. */
+static long long kernel_ticks; /* Timer ticks spent in kernel threads. */
+static long long user_ticks;   /* Timer ticks spent in user programs. */
 
-/* Scheduling. */
-#define TIME_SLICE 4          /* # of timer ticks to give each thread. */
-static unsigned thread_ticks; /* # of timer ticks since last yield. */
+/* ═══════════════════════════════════════════════════════════════════════════
+ * MLFQS GLOBAL STATE
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The Multi-Level Feedback Queue Scheduler maintains system-wide state:
+ * • load_avg: Exponential moving average of ready thread count
+ * 
+ * Formula: load_avg = (59/60)*load_avg + (1/60)*ready_threads
+ * Updated once per second (every TIMER_FREQ ticks).
+ * ═══════════════════════════════════════════════════════════════════════════*/
 
+static int load_avg; /* System load average (17.14 fixed-point format). */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * TIME SLICE MANAGEMENT
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
+#define TIME_SLICE 4          /* Timer ticks per thread time slice. */
+static unsigned thread_ticks; /* Ticks since current thread started running. */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * FORWARD DECLARATIONS
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
+/* Thread initialization and utilities. */
 static void init_thread(struct thread*, const char* name, int priority);
 static bool is_thread(struct thread*) UNUSED;
 static void* alloc_frame(struct thread*, size_t size);
+static tid_t allocate_tid(void);
+
+/* Core scheduling. */
 static void schedule(void);
 static void thread_enqueue(struct thread* t);
-static tid_t allocate_tid(void);
 void thread_switch_tail(struct thread* prev);
 
+/* Thread entry points. */
 static void kernel_thread(thread_func*, void* aux);
 static void idle(void* aux UNUSED);
 static struct thread* running_thread(void);
 
+/* Scheduler implementations (one per policy). */
 static struct thread* next_thread_to_run(void);
 static struct thread* thread_schedule_fifo(void);
 static struct thread* thread_schedule_prio(void);
@@ -84,35 +199,52 @@ static struct thread* thread_schedule_fair(void);
 static struct thread* thread_schedule_mlfqs(void);
 static struct thread* thread_schedule_reserved(void);
 
-/* MLFQS helper functions */
+/* MLFQS helper functions (called from timer interrupt). */
 static void mlfqs_update_priority(struct thread* t);
 static void mlfqs_update_recent_cpu(struct thread* t);
 static void mlfqs_update_load_avg(void);
 
-/* Determines which scheduler the kernel should use.
-   Controlled by the kernel command-line options
-    "-sched=fifo", "-sched=prio",
-    "-sched=fair". "-sched=mlfqs"
-   Is equal to SCHED_FIFO by default. */
+/* ═══════════════════════════════════════════════════════════════════════════
+ * SCHEDULER CONFIGURATION
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The active scheduling policy is set at boot time via command-line options.
+ * This allows testing different schedulers without recompiling.
+ *
+ * Command-line options:
+ *   -sched=fifo    First-in, first-out (default)
+ *   -sched=prio    Strict priority with donation
+ *   -sched=fair    Proportional share scheduling
+ *   -sched=mlfqs   Multi-level feedback queue
+ *
+ * For fair scheduling, additional options select the implementation:
+ *   -fair=stride   Stride scheduling (default)
+ *   -fair=lottery  Lottery scheduling
+ *   -fair=cfs      Completely Fair Scheduler
+ *   -fair=eevdf    Earliest Eligible Virtual Deadline First
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
+/* Currently active scheduling policy. */
 enum sched_policy active_sched_policy;
 
-/* Determines which fair scheduler implementation to use when
-   active_sched_policy == SCHED_FAIR.
-   Controlled by kernel command-line options:
-    "-fair=stride", "-fair=lottery", "-fair=cfs", "-fair=eevdf"
-   Is equal to FAIR_SCHED_STRIDE by default. */
+/* Currently active fair scheduler implementation. */
 enum fair_sched_type active_fair_sched_type;
 
-/* Selects a thread to run from the ready list according to
-   some scheduling policy, and returns a pointer to it. */
+/* ═══════════════════════════════════════════════════════════════════════════
+ * SCHEDULER DISPATCH TABLE
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Jump table for O(1) dispatch to the active scheduler.
+ * Indexed by enum sched_policy value.
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
 typedef struct thread* scheduler_func(void);
 
-/* Jump table for dynamically dispatching the current scheduling
-   policy in use by the kernel. */
-scheduler_func* scheduler_jump_table[8] = {thread_schedule_fifo,     thread_schedule_prio,
-                                           thread_schedule_fair,     thread_schedule_mlfqs,
-                                           thread_schedule_reserved, thread_schedule_reserved,
-                                           thread_schedule_reserved, thread_schedule_reserved};
+scheduler_func* scheduler_jump_table[8] = {
+    thread_schedule_fifo,     /* SCHED_FIFO = 0 */
+    thread_schedule_prio,     /* SCHED_PRIO = 1 */
+    thread_schedule_fair,     /* SCHED_FAIR = 2 */
+    thread_schedule_mlfqs,    /* SCHED_MLFQS = 3 */
+    thread_schedule_reserved, /* Reserved slots for future policies */
+    thread_schedule_reserved, thread_schedule_reserved, thread_schedule_reserved};
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -137,7 +269,7 @@ void thread_init(void) {
   list_init(&all_list);
 
   /* Initialize MLFQS global state */
-  load_avg = 0;  /* Fixed-point 0 */
+  load_avg = 0; /* Fixed-point 0 */
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread();
@@ -239,7 +371,8 @@ tid_t thread_create(const char* name, int priority, thread_func* function, void*
   thread_unblock(t);
 
   /* Yield if new thread has higher priority than us */
-  if (t->eff_priority > thread_current()->eff_priority) thread_yield();
+  if (t->eff_priority > thread_current()->eff_priority)
+    thread_yield();
 
   return tid;
 }
@@ -266,7 +399,8 @@ bool thread_priority_less(const struct list_elem* a, const struct list_elem* b, 
 }
 
 /* a > b : for list_insert_ordered to keep highest at front */
-bool thread_priority_greater(const struct list_elem* a, const struct list_elem* b, void* aux UNUSED) {
+bool thread_priority_greater(const struct list_elem* a, const struct list_elem* b,
+                             void* aux UNUSED) {
   struct thread* ta = list_entry(a, struct thread, elem);
   struct thread* tb = list_entry(b, struct thread, elem);
   return ta->eff_priority > tb->eff_priority;
@@ -285,7 +419,7 @@ static void thread_enqueue(struct thread* t) {
   else if (active_sched_policy == SCHED_PRIO)
     list_insert_ordered(&priority_ready_list, &t->elem, thread_priority_greater, NULL);
   else if (active_sched_policy == SCHED_FAIR)
-    list_push_back(&fair_ready_list, &t->elem);  /* Fair schedulers will sort/select appropriately */
+    list_push_back(&fair_ready_list, &t->elem); /* Fair schedulers will sort/select appropriately */
   else if (active_sched_policy == SCHED_MLFQS)
     list_insert_ordered(&priority_ready_list, &t->elem, thread_priority_greater, NULL);
   else
@@ -385,31 +519,30 @@ void thread_set_priority(int new_priority) {
   /* MLFQS calculates priorities automatically - ignore manual changes */
   if (active_sched_policy == SCHED_MLFQS)
     return;
-  
+
   struct thread* cur = thread_current();
   cur->priority = new_priority;
-  
+
   if (active_sched_policy == SCHED_PRIO) {
     /* Recalculate eff_priority: max of new base and any donations from held locks */
     int max_prio = new_priority;
-    
-    for (struct list_elem* e = list_begin(&cur->held_locks);
-         e != list_end(&cur->held_locks);
+
+    for (struct list_elem* e = list_begin(&cur->held_locks); e != list_end(&cur->held_locks);
          e = list_next(e)) {
       struct lock* held = list_entry(e, struct lock, elem);
-      
+
       /* Find max priority among this lock's waiters */
       if (!list_empty(&held->semaphore.waiters)) {
-        struct list_elem* max_waiter = list_max(&held->semaphore.waiters, 
-                                                 thread_priority_less, NULL);
+        struct list_elem* max_waiter =
+            list_max(&held->semaphore.waiters, thread_priority_less, NULL);
         struct thread* t = list_entry(max_waiter, struct thread, elem);
         if (t->eff_priority > max_prio)
           max_prio = t->eff_priority;
       }
     }
-    
+
     cur->eff_priority = max_prio;
-    
+
     /* Yield if a higher-priority thread is ready */
     if (!list_empty(&priority_ready_list)) {
       struct thread* front = list_entry(list_front(&priority_ready_list), struct thread, elem);
@@ -427,11 +560,11 @@ int thread_get_priority(void) { return thread_current()->eff_priority; }
 /* Sets the current thread's nice value to NICE. */
 void thread_set_nice(int nice) {
   ASSERT(nice >= -20 && nice <= 20);
-  
+
   enum intr_level old_level = intr_disable();
   struct thread* cur = thread_current();
   cur->nice = nice;
-  
+
   /* Recalculate priority if using MLFQS */
   if (active_sched_policy == SCHED_MLFQS) {
     mlfqs_update_priority(cur);
@@ -471,18 +604,18 @@ int thread_get_recent_cpu(void) {
 static void mlfqs_update_priority(struct thread* t) {
   if (t == idle_thread)
     return;
-  
+
   /* recent_cpu / 4 in fixed-point, then truncate to int */
   int recent_cpu_term = fix_trunc(fix_unscale(__mk_fix(t->recent_cpu), 4));
   int nice_term = t->nice * 2;
   int new_priority = PRI_MAX - recent_cpu_term - nice_term;
-  
+
   /* Clamp to valid priority range */
   if (new_priority < PRI_MIN)
     new_priority = PRI_MIN;
   if (new_priority > PRI_MAX)
     new_priority = PRI_MAX;
-  
+
   t->priority = new_priority;
 }
 
@@ -491,13 +624,13 @@ static void mlfqs_update_priority(struct thread* t) {
 static void mlfqs_update_recent_cpu(struct thread* t) {
   if (t == idle_thread)
     return;
-  
+
   /* coefficient = (2*load_avg) / (2*load_avg + 1) */
   fixed_point_t load = __mk_fix(load_avg);
   fixed_point_t twice_load = fix_scale(load, 2);
   fixed_point_t twice_load_plus_1 = fix_add(twice_load, fix_int(1));
   fixed_point_t coefficient = fix_div(twice_load, twice_load_plus_1);
-  
+
   /* recent_cpu = coefficient * recent_cpu + nice */
   fixed_point_t recent = __mk_fix(t->recent_cpu);
   fixed_point_t new_recent = fix_add(fix_mul(coefficient, recent), fix_int(t->nice));
@@ -509,20 +642,20 @@ static void mlfqs_update_recent_cpu(struct thread* t) {
    ready_threads = number of running + ready threads (excluding idle) */
 static void mlfqs_update_load_avg(void) {
   int ready_threads = (int)list_size(&priority_ready_list);
-  
+
   /* Add 1 if current thread is not idle (it's running) */
   if (thread_current() != idle_thread)
     ready_threads++;
-  
+
   /* load_avg = (59/60)*load_avg + (1/60)*ready_threads */
   fixed_point_t load = __mk_fix(load_avg);
   fixed_point_t coef_59_60 = fix_frac(59, 60);
   fixed_point_t coef_1_60 = fix_frac(1, 60);
-  
+
   fixed_point_t term1 = fix_mul(coef_59_60, load);
   fixed_point_t term2 = fix_mul(coef_1_60, fix_int(ready_threads));
   fixed_point_t new_load = fix_add(term1, term2);
-  
+
   load_avg = new_load.f;
 }
 
@@ -547,7 +680,7 @@ void thread_mlfqs_update_priorities(void) {
 /* MLFQS: Called every second (TIMER_FREQ ticks) to update load_avg and recent_cpu. */
 void thread_mlfqs_update_stats(void) {
   mlfqs_update_load_avg();
-  
+
   struct list_elem* e;
   for (e = list_begin(&all_list); e != list_end(&all_list); e = list_next(e)) {
     struct thread* t = list_entry(e, struct thread, allelem);
@@ -629,9 +762,9 @@ static void init_thread(struct thread* t, const char* name, int priority) {
   strlcpy(t->name, name, sizeof t->name);
   t->stack = (uint8_t*)t + PGSIZE;
   t->priority = priority;
-  t->eff_priority = priority;   // Initially same as base priority
-  t->waiting_lock = NULL;       // Not waiting for any lock
-  list_init(&t->held_locks);    // No locks held initially
+  t->eff_priority = priority; // Initially same as base priority
+  t->waiting_lock = NULL;     // Not waiting for any lock
+  list_init(&t->held_locks);  // No locks held initially
 #ifdef USERPROG
   t->pcb = NULL;
   /* pcb_elem will be added to pcb->threads when pcb_init() is called */
@@ -639,18 +772,18 @@ static void init_thread(struct thread* t, const char* name, int priority) {
 #endif
   t->magic = THREAD_MAGIC;
   t->wake_up_tick = 0;
-  
+
   /* Fair scheduler fields initialization */
-  t->tickets = 100;             // Default ticket count for lottery
-  t->stride = 0;                // Will be computed from tickets
-  t->pass = 0;                  // Initial pass value
-  t->vruntime = 0;              // Initial virtual runtime
-  t->deadline = 0;              // Initial virtual deadline
-  t->nice_fair = 0;             // Default nice value (neutral weight)
+  t->tickets = 100; // Default ticket count for lottery
+  t->stride = 0;    // Will be computed from tickets
+  t->pass = 0;      // Initial pass value
+  t->vruntime = 0;  // Initial virtual runtime
+  t->deadline = 0;  // Initial virtual deadline
+  t->nice_fair = 0; // Default nice value (neutral weight)
 
   /* MLFQS scheduler fields initialization */
-  t->nice = 0;                  // Default nice value (neutral)
-  t->recent_cpu = 0;            // No recent CPU usage (fixed-point 0)
+  t->nice = 0;       // Default nice value (neutral)
+  t->recent_cpu = 0; // No recent CPU usage (fixed-point 0)
 
   old_level = intr_disable();
   list_push_back(&all_list, &t->allelem);
@@ -748,10 +881,10 @@ static struct thread* thread_schedule_eevdf(void) {
 /* Jump table for fair scheduler implementations */
 typedef struct thread* fair_scheduler_func(void);
 static fair_scheduler_func* fair_scheduler_jump_table[4] = {
-  thread_schedule_stride,   /* FAIR_SCHED_STRIDE */
-  thread_schedule_lottery,  /* FAIR_SCHED_LOTTERY */
-  thread_schedule_cfs,      /* FAIR_SCHED_CFS */
-  thread_schedule_eevdf,    /* FAIR_SCHED_EEVDF */
+    thread_schedule_stride,  /* FAIR_SCHED_STRIDE */
+    thread_schedule_lottery, /* FAIR_SCHED_LOTTERY */
+    thread_schedule_cfs,     /* FAIR_SCHED_CFS */
+    thread_schedule_eevdf,   /* FAIR_SCHED_EEVDF */
 };
 
 /* Fair priority scheduler - dispatches to the active fair scheduler implementation */
@@ -765,7 +898,7 @@ static struct thread* thread_schedule_fair(void) {
 static struct thread* thread_schedule_mlfqs(void) {
   if (list_empty(&priority_ready_list))
     return idle_thread;
-  
+
   /* List is ordered by priority, so front has highest priority */
   return list_entry(list_pop_front(&priority_ready_list), struct thread, elem);
 }

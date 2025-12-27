@@ -170,17 +170,16 @@ bool parse_path(const char* path, struct dir** parent_dir, char* final_name) {
   /* First pass: count components and collect them */
   char* components[MAX_PATH_COMPONENTS];
   int num_components = 0;
-  
+
   char* token;
   char* save_ptr;
   char* parse_start = path_copy;
-  
+
   /* Skip leading slashes */
   while (*parse_start == '/')
     parse_start++;
 
-  for (token = strtok_r(parse_start, "/", &save_ptr);
-       token != NULL;
+  for (token = strtok_r(parse_start, "/", &save_ptr); token != NULL;
        token = strtok_r(NULL, "/", &save_ptr)) {
     if (num_components >= MAX_PATH_COMPONENTS) {
       dir_close(cur_dir);
@@ -255,7 +254,7 @@ bool parse_path(const char* path, struct dir** parent_dir, char* final_name) {
 
   /* Handle the final component */
   char* final_comp = components[num_components - 1];
-  
+
   /* Check length */
   if (strlen(final_comp) > NAME_MAX) {
     dir_close(cur_dir);
@@ -271,7 +270,7 @@ bool parse_path(const char* path, struct dir** parent_dir, char* final_name) {
     free(path_copy);
     return true;
   }
-  
+
   if (strcmp(final_comp, "..") == 0) {
     /* ".." as final component - return parent dir with ".." as name */
     strlcpy(final_name, "..", NAME_MAX + 1);
@@ -319,11 +318,11 @@ void filesys_done(void) {
 bool filesys_create(const char* name, off_t initial_size) {
   struct dir* parent_dir = NULL;
   char final_name[NAME_MAX + 1];
-  
+
   /* Parse the path to get parent directory and file name */
   if (!parse_path(name, &parent_dir, final_name))
     return false;
-  
+
   /* Cannot create file with empty name (e.g., "/" or path ending in "/") */
   if (final_name[0] == '\0') {
     dir_close(parent_dir);
@@ -331,13 +330,12 @@ bool filesys_create(const char* name, off_t initial_size) {
   }
 
   block_sector_t inode_sector = 0;
-  bool success = (free_map_allocate(1, &inode_sector) &&
-                  inode_create(inode_sector, initial_size) && 
+  bool success = (free_map_allocate(1, &inode_sector) && inode_create(inode_sector, initial_size) &&
                   dir_add(parent_dir, final_name, inode_sector));
-  
+
   if (!success && inode_sector != 0)
     free_map_release(inode_sector, 1);
-  
+
   dir_close(parent_dir);
   return success;
 }
@@ -361,7 +359,7 @@ struct file* filesys_open(const char* name) {
   if (final_name[0] == '\0') {
     /* Return the directory itself as a file */
     inode = dir_get_inode(parent_dir);
-    inode = inode_reopen(inode);  /* Get a new reference */
+    inode = inode_reopen(inode); /* Get a new reference */
     dir_close(parent_dir);
     return file_open(inode);
   }
@@ -371,7 +369,7 @@ struct file* filesys_open(const char* name) {
     dir_close(parent_dir);
     return NULL;
   }
-  
+
   dir_close(parent_dir);
   return file_open(inode);
 }
@@ -565,12 +563,12 @@ bool filesys_mkdir(const char* dir_path) {
 static void do_format(void) {
   printf("Formatting file system...");
   free_map_create();
-  
+
   /* Create root directory with . and .. entries.
      Root's .. points to itself since it has no parent. */
   if (!dir_create_with_parent(ROOT_DIR_SECTOR, ROOT_DIR_SECTOR, 16))
     PANIC("root directory creation failed");
-  
+
   free_map_close();
   printf("done.\n");
 }

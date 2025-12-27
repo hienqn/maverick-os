@@ -21,19 +21,19 @@
 /* Sentinel value indicating an invalid sector (no data at requested offset).
    Uses maximum unsigned value, which won't be a valid sector on any
    reasonable-sized disk. */
-#define INVALID_SECTOR ((block_sector_t) -1)
+#define INVALID_SECTOR ((block_sector_t)-1)
 
 /* On-disk inode.
    Must be exactly BLOCK_SECTOR_SIZE bytes long.
    Layout: 12*4 + 4 + 4 + 4 + 4 + 112*4 = 48 + 16 + 448 = 512 bytes */
 struct inode_disk {
-  block_sector_t direct[DIRECT_BLOCK_COUNT];  /* Direct block pointers: 48 bytes */
-  block_sector_t indirect;                     /* Indirect block pointer: 4 bytes */
-  block_sector_t doubly_indirect;              /* Doubly-indirect pointer: 4 bytes */
-  off_t length;                                /* File size in bytes: 4 bytes */
-  uint32_t is_dir;                             /* Whether this inode is a directory */
-  unsigned magic;                              /* Magic number: 4 bytes */
-  uint32_t unused[111];                        /* Padding to 512 bytes: 448 bytes */
+  block_sector_t direct[DIRECT_BLOCK_COUNT]; /* Direct block pointers: 48 bytes */
+  block_sector_t indirect;                   /* Indirect block pointer: 4 bytes */
+  block_sector_t doubly_indirect;            /* Doubly-indirect pointer: 4 bytes */
+  off_t length;                              /* File size in bytes: 4 bytes */
+  uint32_t is_dir;                           /* Whether this inode is a directory */
+  unsigned magic;                            /* Magic number: 4 bytes */
+  uint32_t unused[111];                      /* Padding to 512 bytes: 448 bytes */
 };
 
 /* Returns the number of sectors to allocate for an inode SIZE
@@ -270,7 +270,7 @@ bool inode_create(block_sector_t sector, off_t length) {
 }
 
 /* Returns true if INODE represents a directory. */
-bool inode_is_dir(struct inode *inode) {
+bool inode_is_dir(struct inode* inode) {
   ASSERT(inode != NULL);
   return inode->data.is_dir != 0;
 }
@@ -465,8 +465,7 @@ static bool inode_extend(struct inode* inode, off_t new_length) {
   }
 
   /* Allocate data blocks in indirect block. */
-  size_t indirect_start = (old_sectors > DIRECT_BLOCK_COUNT) 
-                          ? old_sectors - DIRECT_BLOCK_COUNT : 0;
+  size_t indirect_start = (old_sectors > DIRECT_BLOCK_COUNT) ? old_sectors - DIRECT_BLOCK_COUNT : 0;
   for (size_t i = indirect_start; i < PTRS_PER_BLOCK && allocated < new_sectors; i++) {
     if (indirect_block[i] == 0) {
       if (!free_map_allocate_one(&indirect_block[i]))
@@ -552,7 +551,7 @@ off_t inode_write_at(struct inode* inode, const void* buffer_, off_t size, off_t
   if (end_pos > inode->data.length) {
     if (!inode_extend(inode, end_pos)) {
       lock_release(&inode->lock);
-      return 0;  /* Extension failed, can't write anything. */
+      return 0; /* Extension failed, can't write anything. */
     }
   }
 

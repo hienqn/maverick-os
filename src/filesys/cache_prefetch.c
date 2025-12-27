@@ -104,8 +104,8 @@
 
 /* Circular queue for prefetch requests. */
 static block_sector_t prefetch_queue[PREFETCH_QUEUE_SIZE];
-static int prefetch_head = 0;  /* Next slot to dequeue from. */
-static int prefetch_tail = 0;  /* Next slot to enqueue to. */
+static int prefetch_head = 0; /* Next slot to dequeue from. */
+static int prefetch_tail = 0; /* Next slot to enqueue to. */
 
 /* Synchronization for prefetch queue. */
 static struct lock prefetch_lock;
@@ -115,25 +115,25 @@ static struct condition prefetch_ready;
 static bool prefetcher_running = false;
 
 /* The prefetcher thread function. */
-static void cache_prefetcher_thread(void *aux UNUSED) {
+static void cache_prefetcher_thread(void* aux UNUSED) {
   while (prefetcher_running) {
     lock_acquire(&prefetch_lock);
-    
+
     /* Wait for work (or shutdown signal). */
     while (prefetch_head == prefetch_tail && prefetcher_running) {
       cond_wait(&prefetch_ready, &prefetch_lock);
     }
-    
+
     if (!prefetcher_running) {
       lock_release(&prefetch_lock);
       break;
     }
-    
+
     /* Dequeue a sector to prefetch. */
     block_sector_t sector = prefetch_queue[prefetch_head];
     prefetch_head = (prefetch_head + 1) % PREFETCH_QUEUE_SIZE;
     lock_release(&prefetch_lock);
-    
+
     /* Load sector into cache (if not already there). */
     cache_do_prefetch(sector);
   }
@@ -161,7 +161,7 @@ void cache_prefetch_shutdown(void) {
    Best-effort: silently drops request if queue is full. */
 void cache_request_prefetch(block_sector_t sector) {
   lock_acquire(&prefetch_lock);
-  
+
   int next_tail = (prefetch_tail + 1) % PREFETCH_QUEUE_SIZE;
   if (next_tail != prefetch_head) {
     /* Queue not full - add the request. */
@@ -170,7 +170,6 @@ void cache_request_prefetch(block_sector_t sector) {
     cond_signal(&prefetch_ready, &prefetch_lock);
   }
   /* If queue is full, silently drop - prefetch is best-effort. */
-  
+
   lock_release(&prefetch_lock);
 }
-

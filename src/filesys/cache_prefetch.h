@@ -31,4 +31,3 @@ void cache_prefetch_shutdown(void);
 void cache_request_prefetch(block_sector_t sector);
 
 #endif /* filesys/cache_prefetch.h */
-

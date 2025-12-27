@@ -97,7 +97,7 @@ bool dir_create_with_parent(block_sector_t sector, block_sector_t parent_sector,
 
   /* Add "." entry pointing to self */
   bool success = dir_add(dir, ".", sector);
-  
+
   /* Add ".." entry pointing to parent */
   if (success)
     success = dir_add(dir, "..", parent_sector);
@@ -150,14 +150,10 @@ struct inode* dir_get_inode(struct dir* dir) {
 }
 
 /* Returns the current position in DIR. */
-off_t dir_get_pos(struct dir* dir) {
-  return dir->pos;
-}
+off_t dir_get_pos(struct dir* dir) { return dir->pos; }
 
 /* Sets the current position in DIR to POS. */
-void dir_set_pos(struct dir* dir, off_t pos) {
-  dir->pos = pos;
-}
+void dir_set_pos(struct dir* dir, off_t pos) { dir->pos = pos; }
 
 /* Searches DIR for a file with the given NAME.
    If successful, returns true, sets *EP to the directory entry
@@ -304,9 +300,9 @@ bool dir_is_empty(struct dir* dir) {
     if (e.in_use) {
       /* Skip "." and ".." entries */
       if (strcmp(e.name, ".") != 0 && strcmp(e.name, "..") != 0) {
-        return false;  /* Found a non-special entry */
+        return false; /* Found a non-special entry */
       }
     }
   }
-  return true;  /* Only . and .. (or nothing) found */
+  return true; /* Only . and .. (or nothing) found */
 }

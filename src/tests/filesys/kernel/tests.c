@@ -32,22 +32,22 @@
  * Format: {"test-name", test_function_name}
  */
 static const struct test filesys_kernel_tests[] = {
-    {"cache-single", test_cache_single},       /* Basic read/write */
-    {"cache-hit", test_cache_hit},             /* Cache hit behavior */
-    {"cache-evict", test_cache_evict},         /* Eviction when full */
+    {"cache-single", test_cache_single},         /* Basic read/write */
+    {"cache-hit", test_cache_hit},               /* Cache hit behavior */
+    {"cache-evict", test_cache_evict},           /* Eviction when full */
     {"cache-concurrent", test_cache_concurrent}, /* Multi-threaded access */
-    {"cache-write", test_cache_write},         /* Partial sector writes */
-    {"cache-read-at", test_cache_read_at},     /* Partial sector reads */
-    {"cache-dirty", test_cache_dirty},         /* Dirty writeback */
-    {"cache-flush", test_cache_flush_fn},      /* Explicit flush */
-    {"cache-overwrite", test_cache_overwrite}, /* Overwrite same sector */
-    {"cache-mixed-rw", test_cache_mixed_rw},   /* Mixed concurrent R/W */
-    {"cache-stress", test_cache_stress},       /* Stress test */
+    {"cache-write", test_cache_write},           /* Partial sector writes */
+    {"cache-read-at", test_cache_read_at},       /* Partial sector reads */
+    {"cache-dirty", test_cache_dirty},           /* Dirty writeback */
+    {"cache-flush", test_cache_flush_fn},        /* Explicit flush */
+    {"cache-overwrite", test_cache_overwrite},   /* Overwrite same sector */
+    {"cache-mixed-rw", test_cache_mixed_rw},     /* Mixed concurrent R/W */
+    {"cache-stress", test_cache_stress},         /* Stress test */
     /* Prefetch tests */
-    {"cache-prefetch-basic", test_cache_prefetch_basic},         /* Basic prefetch */
-    {"cache-prefetch-seq", test_cache_prefetch_seq},             /* Sequential prefetch */
-    {"cache-prefetch-nodup", test_cache_prefetch_nodup},         /* No duplicate prefetch */
-    {"cache-prefetch-overflow", test_cache_prefetch_overflow},   /* Queue overflow */
+    {"cache-prefetch-basic", test_cache_prefetch_basic},           /* Basic prefetch */
+    {"cache-prefetch-seq", test_cache_prefetch_seq},               /* Sequential prefetch */
+    {"cache-prefetch-nodup", test_cache_prefetch_nodup},           /* No duplicate prefetch */
+    {"cache-prefetch-overflow", test_cache_prefetch_overflow},     /* Queue overflow */
     {"cache-prefetch-concurrent", test_cache_prefetch_concurrent}, /* Concurrent prefetch */
 };
 
@@ -68,7 +68,7 @@ void run_filesys_kernel_test(const char* name) {
   /* Special case: "all" runs every test. */
   if (!strcmp(name, "all")) {
     printf("Running all %d filesys kernel tests...\n\n", (int)num_tests);
-    
+
     for (t = filesys_kernel_tests; t < filesys_kernel_tests + num_tests; t++) {
       test_name = t->name;
       printf("=== %s ===\n", t->name);
@@ -77,7 +77,7 @@ void run_filesys_kernel_test(const char* name) {
       msg("end");
       printf("\n");
     }
-    
+
     printf("=== ALL %d TESTS COMPLETE ===\n", (int)num_tests);
     return;
   }
@@ -104,4 +104,3 @@ void run_filesys_kernel_test(const char* name) {
   }
   PANIC("no filesys kernel test named \"%s\"", name);
 }
-

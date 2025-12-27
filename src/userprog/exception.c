@@ -1,3 +1,50 @@
+/*
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║                        EXCEPTION HANDLERS                                 ║
+ * ╠══════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                          ║
+ * ║  This module handles CPU exceptions caused by user programs, such as     ║
+ * ║  divide-by-zero, invalid opcode, and page faults.                        ║
+ * ║                                                                          ║
+ * ║  EXCEPTION vs INTERRUPT:                                                 ║
+ * ║  ───────────────────────                                                 ║
+ * ║  • Exception: Caused by executing instruction (sync with CPU)            ║
+ * ║    - Divide by zero, invalid opcode, page fault, etc.                    ║
+ * ║  • Interrupt: Caused by external hardware (async)                        ║
+ * ║    - Timer tick, keyboard, disk I/O, etc.                                ║
+ * ║                                                                          ║
+ * ║  EXCEPTION TYPES:                                                        ║
+ * ║  ────────────────                                                        ║
+ * ║                                                                          ║
+ * ║    ┌─────────┬───────────────────────────────────────────────────────┐   ║
+ * ║    │ Vector  │ Exception                                             │   ║
+ * ║    ├─────────┼───────────────────────────────────────────────────────┤   ║
+ * ║    │    0    │ #DE Divide Error                                      │   ║
+ * ║    │    1    │ #DB Debug Exception                                   │   ║
+ * ║    │    3    │ #BP Breakpoint (INT3)                                 │   ║
+ * ║    │    4    │ #OF Overflow (INTO)                                   │   ║
+ * ║    │    5    │ #BR BOUND Range Exceeded                              │   ║
+ * ║    │    6    │ #UD Invalid Opcode                                    │   ║
+ * ║    │    7    │ #NM Device Not Available (no FPU)                     │   ║
+ * ║    │   11    │ #NP Segment Not Present                               │   ║
+ * ║    │   12    │ #SS Stack Fault                                       │   ║
+ * ║    │   13    │ #GP General Protection (catch-all)                    │   ║
+ * ║    │   14    │ #PF Page Fault                                        │   ║
+ * ║    │   16    │ #MF x87 FPU Error                                     │   ║
+ * ║    │   19    │ #XF SIMD Floating-Point                               │   ║
+ * ║    └─────────┴───────────────────────────────────────────────────────┘   ║
+ * ║                                                                          ║
+ * ║  DPL (Descriptor Privilege Level):                                       ║
+ * ║  ─────────────────────────────────                                       ║
+ * ║  • DPL=3: User can invoke via INT instruction (e.g., breakpoint)         ║
+ * ║  • DPL=0: User cannot invoke directly, but exceptions still trigger      ║
+ * ║                                                                          ║
+ * ║  PintOS currently kills any process that causes an exception.            ║
+ * ║  In a full OS, some exceptions would be delivered as signals.            ║
+ * ║                                                                          ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
+ */
+
 #include "userprog/exception.h"
 #include <inttypes.h>
 #include <stdio.h>
@@ -6,20 +53,30 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * EXCEPTION STATISTICS
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
 /* Number of page faults processed. */
 static long long page_fault_cnt;
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * FORWARD DECLARATIONS
+ * ═══════════════════════════════════════════════════════════════════════════*/
 
 static void kill(struct intr_frame*);
 static void page_fault(struct intr_frame*);
 
-/* Registers handlers for interrupts that can be caused by user
-   programs.
+/* ═══════════════════════════════════════════════════════════════════════════
+ * EXCEPTION INITIALIZATION
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
+/* Registers handlers for interrupts that can be caused by user programs.
 
    In a real Unix-like OS, most of these interrupts would be
    passed along to the user process in the form of signals, as
    described in [SV-386] 3-24 and 3-25, but we don't implement
-   signals.  Instead, we'll make them simply kill the user
-   process.
+   signals.  Instead, we'll make them simply kill the user process.
 
    Page faults are an exception.  Here they are treated the same
    way as other exceptions, but this will need to change to
@@ -59,7 +116,13 @@ void exception_init(void) {
 /* Prints exception statistics. */
 void exception_print_stats(void) { printf("Exception: %lld page faults\n", page_fault_cnt); }
 
-/* Handler for an exception (probably) caused by a user process. */
+/* ═══════════════════════════════════════════════════════════════════════════
+ * EXCEPTION HANDLERS
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
+/* Handler for an exception (probably) caused by a user process.
+   Terminates the user process if it caused the exception.
+   Panics the kernel if the exception originated in kernel code. */
 static void kill(struct intr_frame* f) {
   /* This interrupt is one (probably) caused by a user process.
      For example, the process might have tried to access unmapped
@@ -99,6 +162,23 @@ static void kill(struct intr_frame* f) {
       PANIC("Kernel bug - unexpected interrupt in kernel");
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * PAGE FAULT HANDLER
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Page faults are special - they can be "good" (demand paging, COW) or
+ * "bad" (invalid memory access). Currently we treat all as bad.
+ *
+ * For virtual memory (Project 3), this handler would:
+ *   1. Check if the address should be valid (in mmap region, stack growth, etc.)
+ *   2. If valid, load the page and return
+ *   3. If invalid, kill the process
+ *
+ * Error code bits (PF_* macros in exception.h):
+ *   - PF_P: 0 = not-present page, 1 = protection violation
+ *   - PF_W: 0 = read, 1 = write
+ *   - PF_U: 0 = kernel access, 1 = user access
+ * ═══════════════════════════════════════════════════════════════════════════*/
 
 /* Page fault handler.  This is a skeleton that must be filled in
    to implement virtual memory.  Some solutions to project 2 may

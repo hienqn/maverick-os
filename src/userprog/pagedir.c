@@ -66,7 +66,7 @@ bool pagedir_dup(uint32_t* child_pagedir, uint32_t* parent_pagedir) {
       // because the kernel always uses virtual address. pde_get_pt does that for us.
       uint32_t* pt = pde_get_pt(*pde);
       uint32_t* pte;
-      
+
       // Iterate through all PTEs in this page table
       for (pte = pt; pte < pt + (PGSIZE / sizeof(*pte)); pte++) {
         // Only process PTEs that are present
@@ -86,16 +86,16 @@ bool pagedir_dup(uint32_t* child_pagedir, uint32_t* parent_pagedir) {
           // Calculate the PDE and PTE indices from pointer positions
           size_t pde_index = pde - parent_pagedir;
           size_t pte_index = pte - pt;
-          
+
           // Reconstruct the user virtual address from the indices
-          uint32_t* ua = (uint32_t*) ((pde_index << PDSHIFT) | (pte_index << PTSHIFT));
-          
+          uint32_t* ua = (uint32_t*)((pde_index << PDSHIFT) | (pte_index << PTSHIFT));
+
           // Preserve the writable bit from the parent's PTE
           bool write = *pte & PTE_W;
-          
+
           // Map the virtual address to the new physical page in the child's page directory
           bool success = pagedir_set_page(child_pagedir, ua, child_page, write);
-          
+
           if (!success) {
             return false;
           }

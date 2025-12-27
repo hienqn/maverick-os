@@ -38,17 +38,17 @@ void run_filesys_kernel_test(const char* name);
  * Cache test function declarations.
  * Each test is implemented in cache-tests.c.
  */
-extern test_func test_cache_single;      /* Basic read/write through cache */
-extern test_func test_cache_hit;         /* Repeated reads = cache hits */
-extern test_func test_cache_evict;       /* Fill cache, trigger eviction */
-extern test_func test_cache_concurrent;  /* Multi-threaded cache access */
-extern test_func test_cache_write;       /* Partial sector writes */
-extern test_func test_cache_read_at;     /* Partial sector reads */
-extern test_func test_cache_dirty;       /* Dirty writeback on eviction */
-extern test_func test_cache_flush_fn;    /* Explicit cache flush */
-extern test_func test_cache_overwrite;   /* Overwriting same sector */
-extern test_func test_cache_mixed_rw;    /* Mixed concurrent read/write */
-extern test_func test_cache_stress;      /* Stress test with many ops */
+extern test_func test_cache_single;     /* Basic read/write through cache */
+extern test_func test_cache_hit;        /* Repeated reads = cache hits */
+extern test_func test_cache_evict;      /* Fill cache, trigger eviction */
+extern test_func test_cache_concurrent; /* Multi-threaded cache access */
+extern test_func test_cache_write;      /* Partial sector writes */
+extern test_func test_cache_read_at;    /* Partial sector reads */
+extern test_func test_cache_dirty;      /* Dirty writeback on eviction */
+extern test_func test_cache_flush_fn;   /* Explicit cache flush */
+extern test_func test_cache_overwrite;  /* Overwriting same sector */
+extern test_func test_cache_mixed_rw;   /* Mixed concurrent read/write */
+extern test_func test_cache_stress;     /* Stress test with many ops */
 
 /* Prefetch tests */
 extern test_func test_cache_prefetch_basic;      /* Basic prefetch works */
@@ -58,4 +58,3 @@ extern test_func test_cache_prefetch_overflow;   /* Queue overflow handling */
 extern test_func test_cache_prefetch_concurrent; /* Prefetch with concurrent readers */
 
 #endif /* tests/filesys/kernel/tests.h */
-

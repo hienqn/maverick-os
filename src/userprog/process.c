@@ -1,3 +1,103 @@
+/*
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║                      PROCESS IMPLEMENTATION                               ║
+ * ╠══════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                          ║
+ * ║  This file implements process lifecycle management: creation, loading,   ║
+ * ║  execution, waiting, forking, and termination.                           ║
+ * ║                                                                          ║
+ * ║  PROCESS CREATION FLOW (exec):                                           ║
+ * ║  ──────────────────────────────                                          ║
+ * ║                                                                          ║
+ * ║    process_execute("prog arg1 arg2")                                     ║
+ * ║           │                                                              ║
+ * ║           ├─► Allocate process_status                                    ║
+ * ║           ├─► Copy command line                                          ║
+ * ║           ├─► Parse arguments                                            ║
+ * ║           ├─► thread_create(start_process)                               ║
+ * ║           │         │                                                    ║
+ * ║           │         └──────────────────────────────┐                     ║
+ * ║           │                                        ▼                     ║
+ * ║           │                              ┌─────────────────────┐         ║
+ * ║           │                              │   start_process     │         ║
+ * ║           │                              │   ───────────────   │         ║
+ * ║           │                              │ • Allocate PCB      │         ║
+ * ║           │                              │ • Create page dir   │         ║
+ * ║           │                              │ • load() ELF binary │         ║
+ * ║           │                              │ • Setup stack       │         ║
+ * ║           │                              │ • Signal parent     │         ║
+ * ║           │                              │ • Jump to user      │         ║
+ * ║           │                              └─────────────────────┘         ║
+ * ║    sema_down(loaded_signal) ◄────────────────────┘                       ║
+ * ║           │                                                              ║
+ * ║           └─► Return child PID (or TID_ERROR on failure)                 ║
+ * ║                                                                          ║
+ * ║  PROCESS FORK FLOW:                                                      ║
+ * ║  ──────────────────                                                      ║
+ * ║                                                                          ║
+ * ║    process_fork(parent_if)                                               ║
+ * ║           │                                                              ║
+ * ║           ├─► Allocate process_status                                    ║
+ * ║           ├─► thread_create(fork_process)                                ║
+ * ║           │         │                                                    ║
+ * ║           │         └──────────────────────────────┐                     ║
+ * ║           │                                        ▼                     ║
+ * ║           │                              ┌─────────────────────┐         ║
+ * ║           │                              │   fork_process      │         ║
+ * ║           │                              │   ─────────────     │         ║
+ * ║           │                              │ • Allocate PCB      │         ║
+ * ║           │                              │ • pagedir_dup()     │         ║
+ * ║           │                              │ • Copy fd_table     │         ║
+ * ║           │                              │ • Copy parent_if    │         ║
+ * ║           │                              │ • Set eax = 0       │         ║
+ * ║           │                              │ • Signal parent     │         ║
+ * ║           │                              │ • Jump to user      │         ║
+ * ║           │                              └─────────────────────┘         ║
+ * ║    sema_down(loaded_signal) ◄────────────────────┘                       ║
+ * ║           │                                                              ║
+ * ║           └─► Return child PID (parent returns child PID)                ║
+ * ║               Child process returns 0 from fork() syscall               ║
+ * ║                                                                          ║
+ * ║  PROCESS EXIT FLOW:                                                      ║
+ * ║  ──────────────────                                                      ║
+ * ║                                                                          ║
+ * ║    process_exit()                                                        ║
+ * ║           │                                                              ║
+ * ║           ├─► Set is_exiting = true                                      ║
+ * ║           ├─► Wait for thread_count == 1  (other threads exit)           ║
+ * ║           ├─► Destroy page directory                                     ║
+ * ║           ├─► Close all file descriptors                                 ║
+ * ║           ├─► Close executable (re-enable writes)                        ║
+ * ║           ├─► Signal parent via wait_sem                                 ║
+ * ║           ├─► Free PCB                                                   ║
+ * ║           └─► thread_exit()                                              ║
+ * ║                                                                          ║
+ * ║  USER STACK LAYOUT (after setup_stack):                                  ║
+ * ║  ─────────────────────────────────────                                   ║
+ * ║                                                                          ║
+ * ║    PHYS_BASE ────────────────────────────────┐                           ║
+ * ║                                              │                           ║
+ * ║              │ "prog\0"                      │ ← Argument strings        ║
+ * ║              │ "arg1\0"                      │                           ║
+ * ║              │ "arg2\0"                      │                           ║
+ * ║              ├───────────────────────────────┤                           ║
+ * ║              │ padding for 16-byte alignment │                           ║
+ * ║              ├───────────────────────────────┤                           ║
+ * ║              │ NULL (argv[argc])             │ ← argv sentinel           ║
+ * ║              │ &"arg2"                       │ ← argv[2]                 ║
+ * ║              │ &"arg1"                       │ ← argv[1]                 ║
+ * ║              │ &"prog"                       │ ← argv[0]                 ║
+ * ║              ├───────────────────────────────┤                           ║
+ * ║              │ argv (pointer to above)       │ ← char** argv             ║
+ * ║              ├───────────────────────────────┤                           ║
+ * ║              │ argc = 3                      │ ← int argc                ║
+ * ║              ├───────────────────────────────┤                           ║
+ * ║              │ fake return address (NULL)    │ ← For stack unwinding     ║
+ * ║    esp ──────┴───────────────────────────────┘                           ║
+ * ║                                                                          ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
+ */
+
 #include "userprog/process.h"
 #include <debug.h>
 #include <inttypes.h>
@@ -20,12 +120,25 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 
-static thread_func start_process NO_RETURN;
-static thread_func fork_process NO_RETURN;
-static thread_func start_pthread NO_RETURN;
+/* ═══════════════════════════════════════════════════════════════════════════
+ * FORWARD DECLARATIONS
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
+/* Process entry points (new kernel threads call these). */
+static thread_func start_process NO_RETURN; /* For process_execute. */
+static thread_func fork_process NO_RETURN;  /* For process_fork. */
+static thread_func start_pthread NO_RETURN; /* For pthread_execute. */
+
+/* ELF loading and stack setup. */
 static bool load(char* cmd_line, void (**eip)(void), void** esp, int argc, char** argv);
 static bool setup_thread(void** esp, pthread_fun tf, void* arg);
-int is_fd_table_full(void);
+
+/* Utility functions. */
+int find_free_fd(void);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * PCB INITIALIZATION
+ * ═══════════════════════════════════════════════════════════════════════════*/
 
 /* Initializes all fields of a process control block.
    Must be called after pcb is allocated and assigned to t->pcb.
@@ -66,7 +179,7 @@ static void pcb_init(struct process* pcb, struct thread* main_thread) {
   /* Exit synchronization (Mesa-style monitor) */
   lock_init(&pcb->exit_lock);
   cond_init(&pcb->exit_cond);
-  pcb->thread_count = 1;  /* Main thread counts as 1 */
+  pcb->thread_count = 1; /* Main thread counts as 1 */
   pcb->is_exiting = false;
   pcb->exit_code = 0;
 
@@ -84,13 +197,17 @@ static void pcb_init(struct process* pcb, struct thread* main_thread) {
   for (int i = 0; i < MAX_THREADS; i++) {
     pcb->stack_slots[i] = false;
   }
-  pcb->stack_slots[0] = true;  /* Slot 0 reserved for main thread */
-  main_thread->user_stack = ((uint8_t*)PHYS_BASE) - PGSIZE;  /* Main thread's stack */
+  pcb->stack_slots[0] = true;                               /* Slot 0 reserved for main thread */
+  main_thread->user_stack = ((uint8_t*)PHYS_BASE) - PGSIZE; /* Main thread's stack */
 }
+/* ═══════════════════════════════════════════════════════════════════════════
+ * USERPROG INITIALIZATION
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
 /* Initializes user programs in the system by ensuring the main
    thread has a minimal PCB so that it can execute and wait for
    the first user process. Any additions to the PCB should be also
-   initialized here if main needs those members */
+   initialized here if main needs those members. */
 void userprog_init(void) {
   struct thread* t = thread_current();
   bool success;
@@ -111,29 +228,39 @@ void userprog_init(void) {
   pcb_init(t->pcb, t);
 }
 
-static void parse_cmd_line(char *cmd_line, char** file_name, int* argc, char** argv) {
+/* ═══════════════════════════════════════════════════════════════════════════
+ * COMMAND LINE PARSING
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
+/* Parses command line into file name and argument array.
+   Modifies cmd_line in place (tokenization). */
+static void parse_cmd_line(char* cmd_line, char** file_name, int* argc, char** argv) {
   char *token, *save_ptr;
   int count = 0;
-  
-  // First call: pass the string
+
+  /* First call: pass the string */
   token = strtok_r(cmd_line, " ", &save_ptr);
-  *file_name = token;  // Set the caller's file_name pointer
+  *file_name = token; /* Set the caller's file_name pointer */
   argv[count] = token;
   count++;
-  
-  // Subsequent calls: pass NULL
+
+  /* Subsequent calls: pass NULL */
   while (token != NULL) {
     token = strtok_r(NULL, " ", &save_ptr);
     if (token != NULL) {
       argv[count] = token;
       count++;
     } else {
-      argv[count] = NULL;  // Null terminator
+      argv[count] = NULL; /* Null terminator */
     }
   }
-  
-  *argc = count;  // Set the caller's argc
+
+  *argc = count; /* Set the caller's argc */
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * PROCESS CREATION (EXEC)
+ * ═══════════════════════════════════════════════════════════════════════════*/
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -143,15 +270,15 @@ pid_t process_execute(const char* cmd_line) {
   char* fn_copy;
   tid_t tid;
   struct process_load_info load_info;
-  memset(&load_info, 0, sizeof(load_info));  // Zero everything first
+  memset(&load_info, 0, sizeof(load_info)); // Zero everything first
   load_info.load_success = false;
-  // loaded_signal is allocated on stack which is fine because its lifetime is in this function scope
+  /* loaded_signal is allocated on stack which is fine because its lifetime is in this function scope */
   sema_init(&load_info.loaded_signal, 0);
-  // Child staus is null for now, we'll implement later
+  /* Child status is null for now, we'll implement later */
   load_info.child_status = NULL;
   load_info.argc = 0;
   load_info.parent_process = thread_current()->pcb;
-  
+
   struct process_status* child_status = malloc(sizeof(struct process_status));
   if (!child_status) {
     return TID_ERROR;
@@ -178,18 +305,17 @@ pid_t process_execute(const char* cmd_line) {
   if (tid == TID_ERROR)
     palloc_free_page(fn_copy);
 
-  // Wait until the program is loaded successfully
+  /* Wait until the program is loaded successfully */
   sema_down(&load_info.loaded_signal);
 
-  // This mean that it's not loaded successfully, we should consider this as failure
-  // If it's not success, a thread is scheduled to be exited already
+  /* This means that it's not loaded successfully, we should consider this as failure.
+     If it's not success, a thread is scheduled to be exited already. */
   if (load_info.load_success == false) {
-    return TID_ERROR;  
+    return TID_ERROR;
   }
 
   return tid;
 }
-
 
 /* A thread function that loads a user process and starts it
    running. */
@@ -207,16 +333,16 @@ static void start_process(void* aux) {
 
   /* Initialize process control block */
   if (success) {
-    // Ensure that timer_interrupt() -> schedule() -> process_activate()
-    // does not try to activate our uninitialized pagedir
+    /* Ensure that timer_interrupt() -> schedule() -> process_activate()
+       does not try to activate our uninitialized pagedir */
     new_pcb->pagedir = NULL;
     t->pcb = new_pcb;
 
-    // Initialize all PCB fields
+    /* Initialize all PCB fields */
     pcb_init(t->pcb, t);
     strlcpy(t->pcb->process_name, load_info->file_name, sizeof t->pcb->process_name);
 
-    // Inherit current working directory from parent
+    /* Inherit current working directory from parent */
     struct thread* parent = load_info->parent_process->main_thread;
     if (parent->cwd != NULL) {
       t->cwd = dir_reopen(parent->cwd);
@@ -237,11 +363,11 @@ static void start_process(void* aux) {
 
   /* Handle failure with succesful PCB malloc. Must free the PCB */
   if (!success && pcb_success) {
-    // Avoid race where PCB is freed before t->pcb is set to NULL
-    // If this happens, then an unfortuantely timed timer interrupt
-    // can try to activate the pagedir, but it is now freed memory
+    /* Avoid race where PCB is freed before t->pcb is set to NULL.
+       If this happens, then an unfortunately timed timer interrupt
+       can try to activate the pagedir, but it is now freed memory. */
     struct process* pcb_to_free = t->pcb;
-    // Close the CWD if it was opened
+    /* Close the CWD if it was opened */
     if (t->cwd != NULL) {
       dir_close(t->cwd);
       t->cwd = NULL;
@@ -268,10 +394,10 @@ static void start_process(void* aux) {
   /* This thread hasn't been waited on */
   t->pcb->my_status->is_waited_on = false;
 
-  struct process *parent_process = load_info->parent_process;
+  struct process* parent_process = load_info->parent_process;
   list_push_front(&parent_process->children_status, &t->pcb->my_status->elem);
   t->pcb->my_status->ref_count += 1;
-  
+
   t->pcb->parent_process = parent_process;
 
   load_info->load_success = success;
@@ -287,18 +413,24 @@ static void start_process(void* aux) {
   NOT_REACHED();
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * PROCESS FORK
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
+/* Creates a new process by duplicating the calling process.
+   Returns child PID to parent, 0 to child. */
 pid_t process_fork(struct intr_frame* parent_interrupt_frame) {
   tid_t tid;
   struct process_load_info load_info;
-  memset(&load_info, 0, sizeof(load_info));  // Zero everything first
+  memset(&load_info, 0, sizeof(load_info)); // Zero everything first
   load_info.load_success = false;
-  // loaded_signal is allocated on stack which is fine because its lifetime is in this function scope
+  /* loaded_signal is allocated on stack which is fine because its lifetime is in this function scope */
   sema_init(&load_info.loaded_signal, 0);
-  // Child staus is null for now, we'll implement later
+  /* Child status is null for now, we'll implement later */
   load_info.child_status = NULL;
   load_info.argc = 0;
   load_info.parent_process = thread_current()->pcb;
-  
+
   struct process_status* child_status = malloc(sizeof(struct process_status));
   if (!child_status) {
     return TID_ERROR;
@@ -311,23 +443,23 @@ pid_t process_fork(struct intr_frame* parent_interrupt_frame) {
   load_info.parent_if = parent_interrupt_frame;
   sema_init(&load_info.child_status->wait_sem, 0);
   load_info.file_name = thread_current()->pcb->process_name;
-  
+
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create(load_info.file_name, PRI_DEFAULT, fork_process, &load_info);
 
-  // Wait until the program is loaded successfully
+  /* Wait until the program is loaded successfully */
   sema_down(&load_info.loaded_signal);
 
-  // This mean that it's not loaded successfully, we should consider this as failure
-  // If it's not success, a thread is scheduled to be exited already
+  /* This means that it's not loaded successfully, we should consider this as failure.
+     If it's not success, a thread is scheduled to be exited already. */
   if (load_info.load_success == false) {
-    return TID_ERROR;  
+    return TID_ERROR;
   }
 
   return tid;
 }
 
-static void fork_process(void*aux) {
+static void fork_process(void* aux) {
   struct process_load_info* load_info = (struct process_load_info*)aux;
 
   struct thread* t = thread_current();
@@ -336,20 +468,20 @@ static void fork_process(void*aux) {
 
   /* Allocate process control block */
   struct process* new_pcb = malloc(sizeof(struct process));
-  success = pcb_success = pagedup_success = fdcopy_success= new_pcb != NULL;
-  
+  success = pcb_success = pagedup_success = fdcopy_success = new_pcb != NULL;
+
   /* Initialize process control block */
   if (success) {
-    // Ensure that timer_interrupt() -> schedule() -> process_activate()
-    // does not try to activate our uninitialized pagedir
+    /* Ensure that timer_interrupt() -> schedule() -> process_activate()
+       does not try to activate our uninitialized pagedir */
     new_pcb->pagedir = NULL;
     t->pcb = new_pcb;
 
-    // Initialize all PCB fields
+    /* Initialize all PCB fields */
     pcb_init(t->pcb, t);
     strlcpy(t->pcb->process_name, load_info->file_name, sizeof t->pcb->process_name);
 
-    // Inherit current working directory from parent
+    /* Inherit current working directory from parent */
     struct thread* parent = load_info->parent_process->main_thread;
     if (parent->cwd != NULL) {
       t->cwd = dir_reopen(parent->cwd);
@@ -409,11 +541,11 @@ static void fork_process(void*aux) {
 
   /* Handle failure with succesful PCB malloc. Must free the PCB */
   if (!success && pcb_success) {
-    // Avoid race where PCB is freed before t->pcb is set to NULL
-    // If this happens, then an unfortuantely timed timer interrupt
-    // can try to activate the pagedir, but it is now freed memory
+    /* Avoid race where PCB is freed before t->pcb is set to NULL.
+       If this happens, then an unfortunately timed timer interrupt
+       can try to activate the pagedir, but it is now freed memory. */
     struct process* pcb_to_free = t->pcb;
-    // Close the CWD if it was opened
+    /* Close the CWD if it was opened */
     if (t->cwd != NULL) {
       dir_close(t->cwd);
       t->cwd = NULL;
@@ -428,7 +560,7 @@ static void fork_process(void*aux) {
     sema_up(&load_info->loaded_signal);
     thread_exit();
   }
-  
+
   /* Store executable in PCB and deny writes while running */
   /* Use file_reopen to get a separate file handle for the child */
   /* This ensures that when the child closes the file, it doesn't affect the parent */
@@ -441,11 +573,11 @@ static void fork_process(void*aux) {
     t->pcb->executable = NULL;
   }
 
-   // Copy the parent's interrupt frame to the child
-   memcpy(&if_, load_info->parent_if, sizeof(if_));
-   // CRITICAL: Child process must return 0 from fork()
-   // The parent's interrupt frame may have a different value in eax
-   if_.eax = 0;
+  /* Copy the parent's interrupt frame to the child */
+  memcpy(&if_, load_info->parent_if, sizeof(if_));
+  /* CRITICAL: Child process must return 0 from fork().
+     The parent's interrupt frame may have a different value in eax. */
+  if_.eax = 0;
 
   /* At this stage, the process has successfully initialized */
   /* Assigned this process its own status to the memory that the parent process created */
@@ -457,10 +589,10 @@ static void fork_process(void*aux) {
   /* This thread hasn't been waited on */
   t->pcb->my_status->is_waited_on = false;
 
-  struct process *parent_process = load_info->parent_process;
+  struct process* parent_process = load_info->parent_process;
   list_push_front(&parent_process->children_status, &t->pcb->my_status->elem);
   t->pcb->my_status->ref_count += 1;
-  
+
   t->pcb->parent_process = parent_process;
 
   load_info->load_success = success;
@@ -481,24 +613,25 @@ static void fork_process(void*aux) {
   NOT_REACHED();
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * PROCESS WAIT
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
 /* Waits for process with PID child_pid to die and returns its exit status.
    If it was terminated by the kernel (i.e. killed due to an
    exception), returns -1.  If child_pid is invalid or if it was not a
    child of the calling process, or if process_wait() has already
    been successfully called for the given PID, returns -1
-   immediately, without waiting.
-
-   This function will be implemented in problem 2-2.  For now, it
-   does nothing. */
+   immediately, without waiting. */
 int process_wait(pid_t child_pid) {
-  struct process *cur_pcb = thread_current()->pcb;
-  struct list *children = &cur_pcb->children_status;
-  struct process_status *child_status = NULL;
+  struct process* cur_pcb = thread_current()->pcb;
+  struct list* children = &cur_pcb->children_status;
+  struct process_status* child_status = NULL;
 
   /* Find the child with matching tid in our children list */
-  struct list_elem *e;
+  struct list_elem* e;
   for (e = list_begin(children); e != list_end(children); e = list_next(e)) {
-    struct process_status *status = list_entry(e, struct process_status, elem);
+    struct process_status* status = list_entry(e, struct process_status, elem);
     if (status->tid == child_pid) {
       child_status = status;
       break;
@@ -509,7 +642,7 @@ int process_wait(pid_t child_pid) {
   if (child_status == NULL) {
     return -1;
   };
-  
+
   /* Child process is already awaited */
   if (child_status->is_waited_on) {
     return -1;
@@ -530,6 +663,10 @@ int process_wait(pid_t child_pid) {
 
   return exit_code;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * PROCESS EXIT
+ * ═══════════════════════════════════════════════════════════════════════════*/
 
 /* Free the current process's resources. */
 void process_exit(void) {
@@ -631,7 +768,7 @@ void process_exit(void) {
       free(pcb_to_free->my_status);
     }
   }
-  
+
   cur->pcb = NULL;
   free(pcb_to_free);
 
@@ -654,7 +791,10 @@ void process_activate(void) {
   tss_update();
 }
 
-int is_fd_table_full(void) {
+/* Finds and returns the first free file descriptor index (>= 2).
+   Returns -1 if all file descriptors are in use.
+   FDs 0 and 1 are reserved for stdin/stdout. */
+int find_free_fd(void) {
   struct thread* t = thread_current();
   struct fd_entry* fd_table = t->pcb->fd_table;
   for (int i = 2; i < MAX_FILE_DESCRIPTOR; i++) {
@@ -665,9 +805,16 @@ int is_fd_table_full(void) {
   return -1;
 }
 
+/* Legacy name for find_free_fd (deprecated - use find_free_fd instead). */
+int is_fd_table_full(void) { return find_free_fd(); }
 
-/* We load ELF binaries.  The following definitions are taken
-   from the ELF specification, [ELF1], more-or-less verbatim.  */
+/* ═══════════════════════════════════════════════════════════════════════════
+ * ELF LOADING
+ * ─────────────────────────────────────────────────────────────────────────────
+ * PintOS loads ELF (Executable and Linkable Format) binaries, the standard
+ * format for Linux executables. The following definitions are taken from
+ * the ELF specification [ELF1].
+ * ═══════════════════════════════════════════════════════════════════════════*/
 
 /* ELF types.  See [ELF1] 1-2. */
 typedef uint32_t Elf32_Word, Elf32_Addr, Elf32_Off;
@@ -729,7 +876,7 @@ struct Elf32_Phdr {
 
 static bool setup_stack(void** esp, int argc, char** argv);
 static bool validate_segment(const struct Elf32_Phdr*, struct file*);
-static void parse_cmd_line(char *cmd_line, char** file_name, int* argc, char** argv);
+static void parse_cmd_line(char* cmd_line, char** file_name, int* argc, char** argv);
 static bool load_segment(struct file* file, off_t ofs, uint8_t* upage, uint32_t read_bytes,
                          uint32_t zero_bytes, bool writable);
 
@@ -737,7 +884,7 @@ static bool load_segment(struct file* file, off_t ofs, uint8_t* upage, uint32_t 
    Stores the executable's entry point into *EIP
    and its initial stack pointer into *ESP.
    Returns true if successful, false otherwise. */
-bool load(char* file_name, void (**eip)(void), void** esp, int argc, char**argv) {
+bool load(char* file_name, void (**eip)(void), void** esp, int argc, char** argv) {
   struct thread* t = thread_current();
   struct Elf32_Ehdr ehdr;
   struct file* file = NULL;
@@ -940,50 +1087,53 @@ static bool load_segment(struct file* file, off_t ofs, uint8_t* upage, uint32_t 
 
 /* Create a minimal stack by mapping a zeroed page at the top of
    user virtual memory. */
-static bool setup_stack(void** esp, int argc, char **argv) {
+static bool setup_stack(void** esp, int argc, char** argv) {
   uint8_t* kpage;
   bool success = false;
-  uint8_t *saved[128];
+  uint8_t* saved[128];
 
   kpage = palloc_get_page(PAL_USER | PAL_ZERO);
   if (kpage != NULL) {
     success = install_page(((uint8_t*)PHYS_BASE) - PGSIZE, kpage, true);
     if (success) {
       uint8_t* stack_ptr = (uint8_t*)PHYS_BASE;
-      
+
       for (int i = argc - 1; i >= 0; i--) {
-        unsigned len = strlen(argv[i]) + 1;  // +1 for null terminator
+        unsigned len = strlen(argv[i]) + 1; // +1 for null terminator
         stack_ptr -= len;
         memcpy(stack_ptr, argv[i], len);
         saved[i] = stack_ptr;
       }
 
-      uint8_t* future_stack_ptr_before_alignment = stack_ptr - sizeof(char *) * (argc + 1) - sizeof(char**) - sizeof(argc);
-      uint8_t* future_stack_ptr_after_alignment = (uint8_t*) ROUND_DOWN((uintptr_t)future_stack_ptr_before_alignment, 16);
-      size_t padding = (size_t)(future_stack_ptr_before_alignment - future_stack_ptr_after_alignment);
-      
+      uint8_t* future_stack_ptr_before_alignment =
+          stack_ptr - sizeof(char*) * (argc + 1) - sizeof(char**) - sizeof(argc);
+      uint8_t* future_stack_ptr_after_alignment =
+          (uint8_t*)ROUND_DOWN((uintptr_t)future_stack_ptr_before_alignment, 16);
+      size_t padding =
+          (size_t)(future_stack_ptr_before_alignment - future_stack_ptr_after_alignment);
+
       stack_ptr -= padding;
       memset(stack_ptr, 0, padding);
 
-      stack_ptr -= sizeof(char *);
-      memset(stack_ptr, 0, sizeof(char *));
+      stack_ptr -= sizeof(char*);
+      memset(stack_ptr, 0, sizeof(char*));
 
       for (int i = argc - 1; i >= 0; i--) {
-        stack_ptr -= sizeof(char *);
-        memcpy(stack_ptr, &saved[i], sizeof(char *));
+        stack_ptr -= sizeof(char*);
+        memcpy(stack_ptr, &saved[i], sizeof(char*));
       }
 
-      // Save the address of argv[0] before decrementing stack_ptr
+      /* Save the address of argv[0] before decrementing stack_ptr */
       uint8_t* argv_start = stack_ptr;
       stack_ptr -= sizeof(char**);
-      // Store the ADDRESS of argv[0], not its value
+      /* Store the ADDRESS of argv[0], not its value */
       memcpy(stack_ptr, &argv_start, sizeof(char**));
 
       stack_ptr -= sizeof(int);
       memcpy(stack_ptr, &argc, sizeof(int));
 
-      // at this point it should be aligned;
-      stack_ptr -= sizeof(void *);
+      /* At this point it should be aligned */
+      stack_ptr -= sizeof(void*);
       memset(stack_ptr, 0, sizeof(void*));
 
       *esp = stack_ptr;
@@ -993,7 +1143,6 @@ static bool setup_stack(void** esp, int argc, char **argv) {
   }
   return success;
 }
-
 
 /* Adds a mapping from user virtual address UPAGE to kernel
    virtual address KPAGE to the page table.
@@ -1013,7 +1162,11 @@ static bool install_page(void* upage, void* kpage, bool writable) {
           pagedir_set_page(t->pcb->pagedir, upage, kpage, writable));
 }
 
-/* Returns true if t is the main thread of the process p */
+/* ═══════════════════════════════════════════════════════════════════════════
+ * PROCESS UTILITIES
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
+/* Returns true if t is the main thread of the process p. */
 bool is_main_thread(struct thread* t, struct process* p) { return p->main_thread == t; }
 
 /* Gets the PID of a process */
@@ -1029,7 +1182,7 @@ static bool setup_thread(void** esp, pthread_fun tf, void* arg) {
 
   /* Find a free stack slot */
   int slot = -1;
-  for (int i = 1; i < MAX_THREADS; i++) {  /* Slot 0 is main thread */
+  for (int i = 1; i < MAX_THREADS; i++) { /* Slot 0 is main thread */
     if (!pcb->stack_slots[i]) {
       slot = i;
       pcb->stack_slots[i] = true;
@@ -1037,7 +1190,7 @@ static bool setup_thread(void** esp, pthread_fun tf, void* arg) {
     }
   }
   if (slot == -1)
-    return false;  /* No free slots */
+    return false; /* No free slots */
 
   /* Calculate stack base address for this slot */
   uint8_t* stack_base = ((uint8_t*)PHYS_BASE) - PGSIZE * (slot + 1);
@@ -1087,30 +1240,33 @@ static bool setup_thread(void** esp, pthread_fun tf, void* arg) {
   return true;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * PTHREAD IMPLEMENTATION
+ * ═══════════════════════════════════════════════════════════════════════════*/
 
+/* Arguments passed to start_pthread during pthread creation. */
 struct pthread_load_info {
-  // Structure to pass down arguments and synchronization for new pthreads
-  struct semaphore started;     // Semaphore to signal that the thread has started
-  pthread_fun tfun;            // Thread function to run in userspace
-  void* arg;                   // Argument for the thread function
-  struct thread* parent;       // Pointer to the creator thread (for bookkeeping)
-  struct process* pcb;         // The process (shared by all threads in the process)
-  struct list_elem elem;       // List element for pcb->thread_statuses (join/cleanup)
-  stub_fun sfun;               // Stub function to use as the entry for the thread
-  bool success;            // True if the thread was initialized successfully
+  struct semaphore started; /* Signaled when thread has started. */
+  pthread_fun tfun;         /* Thread function to run in userspace. */
+  void* arg;                /* Argument for the thread function. */
+  struct thread* parent;    /* Creator thread (for bookkeeping). */
+  struct process* pcb;      /* The process (shared by all threads). */
+  struct list_elem elem;    /* For pcb->thread_statuses list. */
+  stub_fun sfun;            /* Stub function as entry point. */
+  bool success;             /* True if thread initialized successfully. */
 };
 
-/* Starts a new thread with a new user stack running SF, which takes
-   TF and ARG as arguments on its user stack. This new thread may be
-   scheduled (and may even exit) before pthread_execute () returns.
-   Returns the new thread's TID or TID_ERROR if the thread cannot
-   be created properly.
+/* Starts a new thread with a new user stack running SF (the stub function), 
+   which will call TF (the user thread function) with ARG as its argument 
+   in userspace. The newly created thread may be scheduled (and may even exit) 
+   before pthread_execute() returns.
 
-   This function will be implemented in Project 2: Multithreading and
-   should be similar to process_execute (). For now, it does nothing.
-   */
-tid_t pthread_execute(stub_fun sf, pthread_fun tf, void* arg) { 
-  // Prepare the pthread_load_info struct for the new thread.
+   Returns the new thread's TID, or TID_ERROR if the thread cannot be created properly.
+
+   This function is fully implemented and behaves similarly to process_execute().
+*/
+tid_t pthread_execute(stub_fun sf, pthread_fun tf, void* arg) {
+  /* Prepare the pthread_load_info struct for the new thread. */
   struct pthread_load_info* load_info = malloc(sizeof(struct pthread_load_info));
   if (!load_info)
     return TID_ERROR;
@@ -1122,7 +1278,7 @@ tid_t pthread_execute(stub_fun sf, pthread_fun tf, void* arg) {
   load_info->success = false;
   load_info->sfun = sf;
 
-  // The best name for this function is "pthread_execute".
+  /* The best name for this function is "pthread_execute". */
   tid_t tid = thread_create("pthread_create", PRI_DEFAULT, start_pthread, load_info);
   if (tid == TID_ERROR) {
     free(load_info);
@@ -1130,7 +1286,7 @@ tid_t pthread_execute(stub_fun sf, pthread_fun tf, void* arg) {
   }
 
   sema_down(&load_info->started);
-  
+
   if (!load_info->success) {
     free(load_info);
     return TID_ERROR;
@@ -1222,27 +1378,24 @@ static void start_pthread(void* exec_) {
 }
 
 /* Waits for thread with TID to die, if that thread was spawned
-   in the same process and has not been waited on yet. Returns TID on
-   success and returns TID_ERROR on failure immediately, without
-   waiting.
-
-   This function will be implemented in Project 2: Multithreading. For
-   now, it does nothing. */
-tid_t pthread_join(tid_t tid, void** retval) { 
-  struct thread *cur = thread_current();
-  struct process *pcb = cur->pcb;
+   Joins a thread in the same process that has not already been joined.
+   Returns the thread id (tid) on success, or TID_ERROR on failure. */
+tid_t pthread_join(tid_t tid, void** retval) {
+  struct thread* cur = thread_current();
+  struct process* pcb = cur->pcb;
 
   /* Can't join yourself */
   if (tid == cur->tid)
     return TID_ERROR;
-  
+
   lock_acquire(&pcb->exit_lock);
 
   /* Find the pthread_status for this tid */
-  struct list_elem *e;
-  struct pthread_status *ps = NULL;
-  for (e = list_begin(&pcb->thread_statuses); e != list_end(&pcb->thread_statuses); e = list_next(e)) {
-    struct pthread_status *s = list_entry(e, struct pthread_status, elem);
+  struct list_elem* e;
+  struct pthread_status* ps = NULL;
+  for (e = list_begin(&pcb->thread_statuses); e != list_end(&pcb->thread_statuses);
+       e = list_next(e)) {
+    struct pthread_status* s = list_entry(e, struct pthread_status, elem);
     if (s->tid == tid) {
       ps = s;
       break;
@@ -1256,8 +1409,8 @@ tid_t pthread_join(tid_t tid, void** retval) {
   }
 
   ps->is_joined = true;
-  
-  lock_release(&pcb->exit_lock);  /* Release before wait to avoid deadlock */
+
+  lock_release(&pcb->exit_lock); /* Release before wait to avoid deadlock */
 
   /* Wait for thread to exit */
   sema_down(&ps->exit_sema);
@@ -1272,8 +1425,8 @@ tid_t pthread_join(tid_t tid, void** retval) {
   list_remove(&ps->elem);
   lock_release(&pcb->exit_lock);
   free(ps);
-  
-  return tid; 
+
+  return tid;
 }
 
 /* Free the current thread's resources. Most resources will
@@ -1302,7 +1455,7 @@ void pthread_exit(void* retval) {
   if (cur->user_stack != NULL) {
     /* Calculate stack slot from stack base address */
     int slot = ((uint8_t*)PHYS_BASE - (uint8_t*)cur->user_stack) / PGSIZE - 1;
-    
+
     /* Get the physical page and free it */
     void* kpage = pagedir_get_page(pcb->pagedir, cur->user_stack);
     if (kpage != NULL) {
@@ -1320,7 +1473,7 @@ void pthread_exit(void* retval) {
   lock_acquire(&pcb->exit_lock);
   list_remove(&cur->pcb_elem);
   pcb->thread_count--;
-  
+
   /* Signal in case main thread is waiting in pthread_exit_main */
   cond_broadcast(&pcb->exit_cond, &pcb->exit_lock);
   lock_release(&pcb->exit_lock);
@@ -1349,7 +1502,7 @@ void pthread_exit_main(void) {
   while (pcb->thread_count > 1 && !pcb->is_exiting) {
     cond_wait(&pcb->exit_cond, &pcb->exit_lock);
   }
-  
+
   /* Check if another thread initiated exit (called exit() syscall) */
   if (pcb->is_exiting) {
     /* Another thread is exiting the process - just exit this thread */

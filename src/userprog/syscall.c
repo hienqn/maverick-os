@@ -17,11 +17,8 @@
 
 static void syscall_handler(struct intr_frame*);
 
-static struct lock global_fs_lock;
-
 void syscall_init(void) { 
   intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall"); 
-  lock_init(&global_fs_lock);
 }
 
 static bool validate_pointer(void* arg) {
@@ -151,11 +148,7 @@ static void syscall_handler(struct intr_frame* f) {
       return;
     }
 
-    lock_acquire(&global_fs_lock);
-
     f->eax = file_write(entry->file, buffer, size);
-
-    lock_release(&global_fs_lock);
   }
 
   if (args[0] == SYS_PRACTICE) {
@@ -182,7 +175,6 @@ static void syscall_handler(struct intr_frame* f) {
   }
 
   if (args[0] == SYS_CREATE) {
-    lock_acquire(&global_fs_lock);
     validate_pointer_and_exit_if_false(f, &args[1]);
     char* file_name = (char *)args[1];
     validate_string_and_exit_if_false(f, file_name);
@@ -190,7 +182,6 @@ static void syscall_handler(struct intr_frame* f) {
     unsigned initial_size = args[2];
     bool success = filesys_create(file_name, initial_size);
     f->eax = success;
-    lock_release(&global_fs_lock);
   }
 
   if (args[0] == SYS_READ) {
@@ -201,35 +192,28 @@ static void syscall_handler(struct intr_frame* f) {
     int size = args[3];
     validate_buffer_and_exit_if_false(f, buffer, size);
 
-    lock_acquire(&global_fs_lock);
-
     if (fd == STDIN_FILENO) {
       f->eax = read_from_input(buffer, size);
-      lock_release(&global_fs_lock);
       return;
     }
 
     if (fd == STDOUT_FILENO) {
       f->eax = -1;
-      lock_release(&global_fs_lock);
       return;
     }
 
     if (fd < 0 || fd >= MAX_FILE_DESCRIPTOR) {
       f->eax = -1;
-      lock_release(&global_fs_lock);
       return;
     }
 
     struct fd_entry* entry = &thread_current()->pcb->fd_table[fd];
     if (entry->type != FD_FILE || entry->file == NULL) {
       f->eax = -1;
-      lock_release(&global_fs_lock);
       return;
     }
   
     f->eax = file_read(entry->file, buffer, size);
-    lock_release(&global_fs_lock);
     return;
   }
 
@@ -240,12 +224,10 @@ static void syscall_handler(struct intr_frame* f) {
     
     struct thread* curr_thread = thread_current();
     
-    lock_acquire(&global_fs_lock);
     struct file* open_file = filesys_open(file_name);
 
     if (open_file == NULL) {
       f->eax = -1;
-      lock_release(&global_fs_lock);
       return;
     }
 
@@ -254,7 +236,6 @@ static void syscall_handler(struct intr_frame* f) {
     if (free_fd == -1) {
       file_close(open_file);
       f->eax = -1;
-      lock_release(&global_fs_lock);
       return;
     }
 
@@ -266,7 +247,6 @@ static void syscall_handler(struct intr_frame* f) {
       file_close(open_file);  /* Close the file wrapper */
       if (open_dir == NULL) {
         f->eax = -1;
-        lock_release(&global_fs_lock);
         return;
       }
       curr_thread->pcb->fd_table[free_fd].type = FD_DIR;
@@ -278,30 +258,24 @@ static void syscall_handler(struct intr_frame* f) {
     }
     
     f->eax = free_fd;
-    lock_release(&global_fs_lock);
   }
 
   if (args[0] == SYS_FILESIZE) {
     validate_pointer_and_exit_if_false(f, &args[1]);
     int fd = args[1];
 
-    lock_acquire(&global_fs_lock);
-
     if (fd < 2 || fd >= MAX_FILE_DESCRIPTOR) {
       f->eax = -1;
-      lock_release(&global_fs_lock);
       return;
     }
 
     struct fd_entry* entry = &thread_current()->pcb->fd_table[fd];
     if (entry->type != FD_FILE || entry->file == NULL) {
       f->eax = -1;
-      lock_release(&global_fs_lock);
       return;
     }
 
     f->eax = file_length(entry->file);
-    lock_release(&global_fs_lock);
   }
 
   if (args[0] == SYS_CLOSE) {
@@ -309,11 +283,8 @@ static void syscall_handler(struct intr_frame* f) {
   
     int fd = args[1];
 
-    lock_acquire(&global_fs_lock);
-
     if (fd < 0 || fd >= MAX_FILE_DESCRIPTOR) {
       f->eax = -1;
-      lock_release(&global_fs_lock);
       return;
     }
     
@@ -328,8 +299,6 @@ static void syscall_handler(struct intr_frame* f) {
       entry->type = FD_NONE;
       entry->dir = NULL;
     }
-
-    lock_release(&global_fs_lock);
   }
 
   if (args[0] == SYS_TELL) {
@@ -377,11 +346,7 @@ static void syscall_handler(struct intr_frame* f) {
     char* file_name = (char *)args[1];
     validate_string_and_exit_if_false(f, file_name);
 
-    lock_acquire(&global_fs_lock);
-
     f->eax = filesys_remove(file_name);
-
-    lock_release(&global_fs_lock);
   }
 
   if (args[0] == SYS_INUMBER) {
@@ -409,12 +374,8 @@ static void syscall_handler(struct intr_frame* f) {
   }
 
   if (args[0] == SYS_FORK) {
-    lock_acquire(&global_fs_lock);
-
     pid_t pid = process_fork(f);  // Pass the interrupt frame
     f->eax = pid == TID_ERROR ? -1 : pid;
-    
-    lock_release(&global_fs_lock);
   }
 
 
@@ -585,9 +546,7 @@ static void syscall_handler(struct intr_frame* f) {
     char* dir_path = (char*)args[1];
     validate_string_and_exit_if_false(f, dir_path);
 
-    lock_acquire(&global_fs_lock);
     f->eax = filesys_chdir(dir_path);
-    lock_release(&global_fs_lock);
   }
 
   /* SYS_MKDIR - Create a new directory */
@@ -596,9 +555,7 @@ static void syscall_handler(struct intr_frame* f) {
     char* dir_path = (char*)args[1];
     validate_string_and_exit_if_false(f, dir_path);
 
-    lock_acquire(&global_fs_lock);
     f->eax = filesys_mkdir(dir_path);
-    lock_release(&global_fs_lock);
   }
 
   /* SYS_READDIR - Read a directory entry */
@@ -621,8 +578,6 @@ static void syscall_handler(struct intr_frame* f) {
       return;
     }
 
-    lock_acquire(&global_fs_lock);
-
     /* Read entries, skipping . and .. */
     bool success = false;
     char entry_name[NAME_MAX + 1];
@@ -635,7 +590,6 @@ static void syscall_handler(struct intr_frame* f) {
       }
     }
     
-    lock_release(&global_fs_lock);
     f->eax = success;
   }
 

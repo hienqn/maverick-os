@@ -18,6 +18,11 @@
 /* Number of block pointers that fit in one sector. */
 #define PTRS_PER_BLOCK (BLOCK_SECTOR_SIZE / sizeof(block_sector_t))
 
+/* Sentinel value indicating an invalid sector (no data at requested offset).
+   Uses maximum unsigned value, which won't be a valid sector on any
+   reasonable-sized disk. */
+#define INVALID_SECTOR ((block_sector_t) -1)
+
 /* On-disk inode.
    Must be exactly BLOCK_SECTOR_SIZE bytes long.
    Layout: 12*4 + 4 + 4 + 4 + 4 + 112*4 = 48 + 16 + 448 = 512 bytes */
@@ -53,18 +58,17 @@ struct inode {
   bool removed;           /* True if deleted, false otherwise. */
   int deny_write_cnt;     /* 0: writes ok, >0: deny writes. */
   struct lock lock;       /* Per-inode lock (see above). */
-  uint32_t is_dir;
-  struct inode_disk data; /* Inode content. */
+  struct inode_disk data; /* Inode content (includes is_dir flag). */
 };
 
 /* Returns the block device sector that contains byte offset POS
    within INODE.
-   Returns -1 if INODE does not contain data for a byte at offset
-   POS. */
+   Returns INVALID_SECTOR if INODE does not contain data for a byte
+   at offset POS (i.e., pos >= file length). */
 static block_sector_t byte_to_sector(const struct inode* inode, off_t pos) {
   ASSERT(inode != NULL);
   if (pos >= inode->data.length)
-    return -1;
+    return INVALID_SECTOR;
 
   off_t block_idx = pos / BLOCK_SECTOR_SIZE;
 
@@ -169,12 +173,14 @@ static void inode_deallocate(struct inode_disk* disk_inode) {
   }
 }
 
-/* Initializes an inode with LENGTH bytes of data and
-   writes the new inode to sector SECTOR on the file system
-   device.
-   Returns true if successful.
-   Returns false if memory or disk allocation fails. */
-bool inode_create(block_sector_t sector, off_t length) {
+/* Zero-filled block for initializing new data blocks.
+   Declared const to indicate it's never modified. */
+static const char zeros[BLOCK_SECTOR_SIZE];
+
+/* Internal helper: Creates an inode with LENGTH bytes of data at SECTOR.
+   If IS_DIR is true, marks the inode as a directory.
+   Returns true if successful, false if memory or disk allocation fails. */
+static bool inode_create_internal(block_sector_t sector, off_t length, bool is_dir) {
   struct inode_disk* disk_inode = NULL;
   bool success = false;
 
@@ -187,9 +193,9 @@ bool inode_create(block_sector_t sector, off_t length) {
 
   disk_inode->length = length;
   disk_inode->magic = INODE_MAGIC;
+  disk_inode->is_dir = is_dir ? 1 : 0;
 
   size_t sectors = bytes_to_sectors(length);
-  static char zeros[BLOCK_SECTOR_SIZE];
   size_t allocated = 0;
 
   /* Allocate direct blocks. */
@@ -256,95 +262,23 @@ done:
   return success;
 }
 
+/* Initializes an inode with LENGTH bytes of data and
+   writes the new inode to sector SECTOR on the file system device.
+   Returns true if successful, false if memory or disk allocation fails. */
+bool inode_create(block_sector_t sector, off_t length) {
+  return inode_create_internal(sector, length, false);
+}
+
+/* Returns true if INODE represents a directory. */
 bool inode_is_dir(struct inode *inode) {
   ASSERT(inode != NULL);
   return inode->data.is_dir != 0;
 }
 
 /* Creates a directory inode at sector SECTOR with initial length LENGTH.
-   This is similar to inode_create but sets the is_dir flag.
    Returns true if successful, false if memory or disk allocation fails. */
 bool inode_create_dir(block_sector_t sector, off_t length) {
-  struct inode_disk* disk_inode = NULL;
-  bool success = false;
-
-  ASSERT(length >= 0);
-  ASSERT(sizeof(struct inode_disk) == BLOCK_SECTOR_SIZE);
-
-  disk_inode = calloc(1, sizeof *disk_inode);
-  if (disk_inode == NULL)
-    return false;
-
-  disk_inode->length = length;
-  disk_inode->magic = INODE_MAGIC;
-  disk_inode->is_dir = 1;  /* Mark as directory */
-
-  size_t sectors = bytes_to_sectors(length);
-  static char zeros[BLOCK_SECTOR_SIZE];
-  size_t allocated = 0;
-
-  /* Allocate direct blocks. */
-  for (size_t i = 0; i < DIRECT_BLOCK_COUNT && allocated < sectors; i++) {
-    if (!free_map_allocate_one(&disk_inode->direct[i]))
-      goto done;
-    cache_write(disk_inode->direct[i], zeros, 0, BLOCK_SECTOR_SIZE);
-    allocated++;
-  }
-
-  /* Allocate indirect block if needed. */
-  if (allocated < sectors) {
-    if (!free_map_allocate_one(&disk_inode->indirect))
-      goto done;
-
-    block_sector_t indirect_block[PTRS_PER_BLOCK];
-    memset(indirect_block, 0, sizeof indirect_block);
-
-    for (size_t i = 0; i < PTRS_PER_BLOCK && allocated < sectors; i++) {
-      if (!free_map_allocate_one(&indirect_block[i]))
-        goto done;
-      cache_write(indirect_block[i], zeros, 0, BLOCK_SECTOR_SIZE);
-      allocated++;
-    }
-    cache_write(disk_inode->indirect, indirect_block, 0, BLOCK_SECTOR_SIZE);
-  }
-
-  /* Allocate doubly indirect block if needed. */
-  if (allocated < sectors) {
-    if (!free_map_allocate_one(&disk_inode->doubly_indirect))
-      goto done;
-
-    block_sector_t dbl_block[PTRS_PER_BLOCK];
-    memset(dbl_block, 0, sizeof dbl_block);
-
-    for (size_t i = 0; i < PTRS_PER_BLOCK && allocated < sectors; i++) {
-      block_sector_t ind_sector;
-      if (!free_map_allocate_one(&ind_sector))
-        goto done;
-      dbl_block[i] = ind_sector;
-
-      block_sector_t ind_block[PTRS_PER_BLOCK];
-      memset(ind_block, 0, sizeof ind_block);
-
-      for (size_t j = 0; j < PTRS_PER_BLOCK && allocated < sectors; j++) {
-        if (!free_map_allocate_one(&ind_block[j]))
-          goto done;
-        cache_write(ind_block[j], zeros, 0, BLOCK_SECTOR_SIZE);
-        allocated++;
-      }
-      cache_write(ind_sector, ind_block, 0, BLOCK_SECTOR_SIZE);
-    }
-    cache_write(disk_inode->doubly_indirect, dbl_block, 0, BLOCK_SECTOR_SIZE);
-  }
-
-  /* Write the inode metadata. */
-  cache_write(sector, disk_inode, 0, BLOCK_SECTOR_SIZE);
-  success = true;
-
-done:
-  if (!success)
-    inode_deallocate(disk_inode);
-  free(disk_inode);
-  return success;
+  return inode_create_internal(sector, length, true);
 }
 
 /* Reads an inode from SECTOR
@@ -486,7 +420,12 @@ off_t inode_read_at(struct inode* inode, void* buffer_, off_t size, off_t offset
 /* Extends INODE to be at least NEW_LENGTH bytes long.
    Allocates new blocks as needed and zero-fills them.
    Returns true on success, false if allocation fails.
-   On failure, the inode is unchanged. */
+   
+   NOTE: On failure, some blocks may have been allocated but the inode's
+   length is NOT updated, so those blocks become "leaked" until the inode
+   is deleted. This is a known limitation that trades simplicity for 
+   perfect space recovery. A production system might track allocations
+   and roll them back on failure. */
 static bool inode_extend(struct inode* inode, off_t new_length) {
   ASSERT(new_length > inode->data.length);
 
@@ -500,10 +439,9 @@ static bool inode_extend(struct inode* inode, off_t new_length) {
     return true;
   }
 
-  static char zeros[BLOCK_SECTOR_SIZE];
   size_t allocated = old_sectors;
 
-  /* Allocate direct blocks. */
+  /* Allocate direct blocks. Uses global const zeros for zero-filling. */
   for (size_t i = allocated; i < DIRECT_BLOCK_COUNT && allocated < new_sectors; i++) {
     if (!free_map_allocate_one(&inode->data.direct[i]))
       return false;

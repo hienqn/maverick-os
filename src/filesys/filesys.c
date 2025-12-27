@@ -1,3 +1,74 @@
+/*
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║                          FILESYSTEM MODULE                                ║
+ * ╠══════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                          ║
+ * ║  This is the top-level filesystem interface, providing high-level        ║
+ * ║  operations that user programs interact with through system calls.       ║
+ * ║                                                                          ║
+ * ║  ARCHITECTURE OVERVIEW:                                                  ║
+ * ║  ──────────────────────                                                  ║
+ * ║                                                                          ║
+ * ║    ┌─────────────────────────────────────────────────────────────────┐   ║
+ * ║    │                      syscall.c (User Interface)                 │   ║
+ * ║    └─────────────────────────────┬───────────────────────────────────┘   ║
+ * ║                                  │                                       ║
+ * ║                                  ▼                                       ║
+ * ║    ┌─────────────────────────────────────────────────────────────────┐   ║
+ * ║    │  filesys.c (THIS FILE) - Path resolution, high-level ops        │   ║
+ * ║    │  ─────────────────────────────────────────────────────────────  │   ║
+ * ║    │  • filesys_create/open/remove - File operations                 │   ║
+ * ║    │  • filesys_mkdir/chdir - Directory operations                   │   ║
+ * ║    │  • parse_path - Resolves "/foo/bar" to parent dir + name        │   ║
+ * ║    └──────────────────────┬──────────────────┬───────────────────────┘   ║
+ * ║                           │                  │                           ║
+ * ║              ┌────────────┴──────┐    ┌──────┴────────────┐              ║
+ * ║              ▼                   ▼    ▼                   ▼              ║
+ * ║    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐     ║
+ * ║    │   directory.c   │    │     file.c      │    │   free-map.c   │     ║
+ * ║    │  (dir entries)  │    │  (position,     │    │ (sector alloc) │     ║
+ * ║    │                 │    │   ref counting) │    │                │     ║
+ * ║    └────────┬────────┘    └────────┬────────┘    └────────────────┘     ║
+ * ║             │                      │                                     ║
+ * ║             └──────────┬───────────┘                                     ║
+ * ║                        ▼                                                 ║
+ * ║    ┌─────────────────────────────────────────────────────────────────┐   ║
+ * ║    │                    inode.c (Block management)                   │   ║
+ * ║    │  • Indexed allocation (direct/indirect/doubly-indirect)         │   ║
+ * ║    │  • File extension, per-inode synchronization                    │   ║
+ * ║    └─────────────────────────────┬───────────────────────────────────┘   ║
+ * ║                                  ▼                                       ║
+ * ║    ┌─────────────────────────────────────────────────────────────────┐   ║
+ * ║    │                    cache.c (Buffer cache)                       │   ║
+ * ║    │  • 64-entry LRU cache, write-back policy                        │   ║
+ * ║    │  • Read-ahead prefetching, periodic flush                       │   ║
+ * ║    └─────────────────────────────┬───────────────────────────────────┘   ║
+ * ║                                  ▼                                       ║
+ * ║    ┌─────────────────────────────────────────────────────────────────┐   ║
+ * ║    │                    block.c (Disk driver)                        │   ║
+ * ║    └─────────────────────────────────────────────────────────────────┘   ║
+ * ║                                                                          ║
+ * ║  FILESYS vs FILE MODULE:                                                 ║
+ * ║  ───────────────────────                                                 ║
+ * ║                                                                          ║
+ * ║  filesys.c:                        file.c:                               ║
+ * ║  • Works with PATHS (strings)      • Works with open FILE structs        ║
+ * ║  • Handles path resolution         • Tracks file position (seek/tell)    ║
+ * ║  • Creates/removes/opens files     • Manages reference counting          ║
+ * ║  • Directory traversal             • Read/write at current position      ║
+ * ║  • Stateless operations            • Stateful (per-open-file state)      ║
+ * ║                                                                          ║
+ * ║  PATH RESOLUTION:                                                        ║
+ * ║  ────────────────                                                        ║
+ * ║  parse_path("/foo/bar/baz.txt") returns:                                 ║
+ * ║    • parent_dir → directory object for /foo/bar                          ║
+ * ║    • final_name → "baz.txt"                                              ║
+ * ║                                                                          ║
+ * ║  Handles: absolute paths (/...), relative paths, ".", ".."              ║
+ * ║                                                                          ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
+ */
+
 #include "filesys/filesys.h"
 #include <debug.h>
 #include <stdio.h>
@@ -12,6 +83,9 @@
 
 /* Partition that contains the file system. */
 struct block* fs_device;
+
+/* Maximum number of path components (e.g., /a/b/c/d has 4 components). */
+#define MAX_PATH_COMPONENTS 64
 
 static void do_format(void);
 
@@ -94,7 +168,7 @@ bool parse_path(const char* path, struct dir** parent_dir, char* final_name) {
   }
 
   /* First pass: count components and collect them */
-  char* components[64];  /* Max 64 path components */
+  char* components[MAX_PATH_COMPONENTS];
   int num_components = 0;
   
   char* token;
@@ -108,7 +182,7 @@ bool parse_path(const char* path, struct dir** parent_dir, char* final_name) {
   for (token = strtok_r(parse_start, "/", &save_ptr);
        token != NULL;
        token = strtok_r(NULL, "/", &save_ptr)) {
-    if (num_components >= 64) {
+    if (num_components >= MAX_PATH_COMPONENTS) {
       dir_close(cur_dir);
       free(path_copy);
       return false;

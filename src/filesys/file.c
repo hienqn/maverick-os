@@ -2,6 +2,35 @@
 #include <debug.h>
 #include "filesys/inode.h"
 #include "threads/malloc.h"
+#include "threads/synch.h"
+
+/*
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║                              FILE MODULE                                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                          ║
+ * ║  This module provides the file abstraction layer, managing:              ║
+ * ║  - File position tracking (pos)                                          ║
+ * ║  - Reference counting for shared file descriptors (fork)                 ║
+ * ║  - Write denial for executable protection                                ║
+ * ║                                                                          ║
+ * ║  RELATIONSHIP TO OTHER MODULES:                                          ║
+ * ║                                                                          ║
+ * ║    syscall.c                                                             ║
+ * ║        │                                                                 ║
+ * ║        ▼                                                                 ║
+ * ║    ┌────────┐    inode_read/write    ┌───────┐    cache_read/write       ║
+ * ║    │  file  │ ──────────────────────►│ inode │ ──────────────────►disk   ║
+ * ║    └────────┘                        └───────┘                           ║
+ * ║     (position,                      (data blocks,                        ║
+ * ║      ref_count)                      extension)                          ║
+ * ║                                                                          ║
+ * ║  SYNCHRONIZATION:                                                        ║
+ * ║  - ref_count is protected by file_lock for thread-safe dup/close         ║
+ * ║  - pos is NOT synchronized (each fd_entry has its own file struct)       ║
+ * ║                                                                          ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
+ */
 
 /* An open file. */
 struct file {
@@ -9,6 +38,7 @@ struct file {
   off_t pos;           /* Current position. */
   bool deny_write;     /* Has file_deny_write() been called? */
   int ref_count;       /* Reference count for shared file descriptors. */
+  struct lock lock;    /* Protects ref_count for thread-safe dup/close. */
 };
 
 /* Opens a file for the given INODE, of which it takes ownership,
@@ -21,6 +51,7 @@ struct file* file_open(struct inode* inode) {
     file->pos = 0;
     file->deny_write = false;
     file->ref_count = 1;
+    lock_init(&file->lock);
     return file;
   } else {
     inode_close(inode);
@@ -30,30 +61,40 @@ struct file* file_open(struct inode* inode) {
 }
 
 /* Opens and returns a new file for the same inode as FILE.
-   Returns a null pointer if unsuccessful. */
+   Returns a null pointer if FILE is NULL or if unsuccessful. */
 struct file* file_reopen(struct file* file) {
+  if (file == NULL)
+    return NULL;
   return file_open(inode_reopen(file->inode));
 }
 
 /* Duplicates FILE by incrementing its reference count.
    Returns the same file pointer. Used for fork() to share
-   file descriptors between parent and child. */
+   file descriptors between parent and child.
+   Thread-safe: uses internal lock to protect ref_count. */
 struct file* file_dup(struct file* file) {
   if (file != NULL) {
+    lock_acquire(&file->lock);
     file->ref_count++;
+    lock_release(&file->lock);
   }
   return file;
 }
 
 /* Closes FILE. Decrements reference count and only frees
-   when count reaches 0. */
+   when count reaches 0.
+   Thread-safe: uses internal lock to protect ref_count. */
 void file_close(struct file* file) {
   if (file != NULL) {
+    lock_acquire(&file->lock);
     file->ref_count--;
     if (file->ref_count == 0) {
+      lock_release(&file->lock);
       file_allow_write(file);
       inode_close(file->inode);
       free(file);
+    } else {
+      lock_release(&file->lock);
     }
   }
 }
@@ -85,11 +126,10 @@ off_t file_read_at(struct file* file, void* buffer, off_t size, off_t file_ofs) 
 
 /* Writes SIZE bytes from BUFFER into FILE,
    starting at the file's current position.
-   Returns the number of bytes actually written,
-   which may be less than SIZE if end of file is reached.
-   (Normally we'd grow the file in that case, but file growth is
-   not yet implemented.)
-   Advances FILE's position by the number of bytes read. */
+   Returns the number of bytes actually written, which may be less
+   than SIZE if disk space runs out. The file will be extended
+   automatically if writing past EOF.
+   Advances FILE's position by the number of bytes written. */
 off_t file_write(struct file* file, const void* buffer, off_t size) {
   off_t bytes_written = inode_write_at(file->inode, buffer, size, file->pos);
   file->pos += bytes_written;
@@ -98,10 +138,9 @@ off_t file_write(struct file* file, const void* buffer, off_t size) {
 
 /* Writes SIZE bytes from BUFFER into FILE,
    starting at offset FILE_OFS in the file.
-   Returns the number of bytes actually written,
-   which may be less than SIZE if end of file is reached.
-   (Normally we'd grow the file in that case, but file growth is
-   not yet implemented.)
+   Returns the number of bytes actually written, which may be less
+   than SIZE if disk space runs out. The file will be extended
+   automatically if writing past EOF.
    The file's current position is unaffected. */
 off_t file_write_at(struct file* file, const void* buffer, off_t size, off_t file_ofs) {
   return inode_write_at(file->inode, buffer, size, file_ofs);

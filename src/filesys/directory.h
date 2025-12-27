@@ -19,20 +19,19 @@ struct dir;
 /* Opening and closing directories. */
 bool dir_create(block_sector_t sector, size_t entry_cnt);
 bool dir_create_with_parent(block_sector_t sector, block_sector_t parent_sector, size_t entry_cnt);
-bool dir_add_special_entries(struct dir* dir, block_sector_t sector, block_sector_t parent_sector);
-struct dir* dir_open(struct inode*);
+struct dir* dir_open(struct inode* inode);
 struct dir* dir_open_root(void);
-struct dir* dir_reopen(struct dir*);
-void dir_close(struct dir*);
-struct inode* dir_get_inode(struct dir*);
-off_t dir_get_pos(struct dir*);
-void dir_set_pos(struct dir*, off_t pos);
+struct dir* dir_reopen(struct dir* dir);
+void dir_close(struct dir* dir);
+struct inode* dir_get_inode(struct dir* dir);
+off_t dir_get_pos(struct dir* dir);
+void dir_set_pos(struct dir* dir, off_t pos);
 
 /* Reading and writing. */
-bool dir_lookup(const struct dir*, const char* name, struct inode**);
-bool dir_add(struct dir*, const char* name, block_sector_t);
-bool dir_remove(struct dir*, const char* name);
-bool dir_readdir(struct dir*, char name[NAME_MAX + 1]);
-bool dir_is_empty(struct dir*);
+bool dir_lookup(const struct dir* dir, const char* name, struct inode** inode);
+bool dir_add(struct dir* dir, const char* name, block_sector_t inode_sector);
+bool dir_remove(struct dir* dir, const char* name);
+bool dir_readdir(struct dir* dir, char name[NAME_MAX + 1]);
+bool dir_is_empty(struct dir* dir);
 
 #endif /* filesys/directory.h */

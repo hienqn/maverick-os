@@ -1,3 +1,51 @@
+/*
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║                           DIRECTORY MODULE                                ║
+ * ╠══════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                          ║
+ * ║  This module implements directory operations for the hierarchical file   ║
+ * ║  system. Directories are stored as special files containing a sequence   ║
+ * ║  of directory entries.                                                   ║
+ * ║                                                                          ║
+ * ║  DIRECTORY STRUCTURE ON DISK:                                            ║
+ * ║  ─────────────────────────────                                           ║
+ * ║                                                                          ║
+ * ║    Directory Inode (is_dir=1)                                            ║
+ * ║         │                                                                ║
+ * ║         ▼                                                                ║
+ * ║    ┌─────────────────────────────────────────────────────────┐           ║
+ * ║    │ Entry 0: "."   │ sector=self   │ in_use=true            │           ║
+ * ║    ├─────────────────────────────────────────────────────────┤           ║
+ * ║    │ Entry 1: ".."  │ sector=parent │ in_use=true            │           ║
+ * ║    ├─────────────────────────────────────────────────────────┤           ║
+ * ║    │ Entry 2: "foo" │ sector=N      │ in_use=true            │           ║
+ * ║    ├─────────────────────────────────────────────────────────┤           ║
+ * ║    │ Entry 3: (unused)              │ in_use=false           │           ║
+ * ║    ├─────────────────────────────────────────────────────────┤           ║
+ * ║    │ ...                                                     │           ║
+ * ║    └─────────────────────────────────────────────────────────┘           ║
+ * ║                                                                          ║
+ * ║  SPECIAL ENTRIES:                                                        ║
+ * ║  ────────────────                                                        ║
+ * ║  - "."  : Points to the directory itself (self-reference)               ║
+ * ║  - ".." : Points to the parent directory (root's .. points to itself)   ║
+ * ║                                                                          ║
+ * ║  KEY OPERATIONS:                                                         ║
+ * ║  ───────────────                                                         ║
+ * ║  - dir_lookup: Find an entry by name                                     ║
+ * ║  - dir_add: Add a new entry (fails if name exists)                       ║
+ * ║  - dir_remove: Mark entry as unused and remove its inode                 ║
+ * ║  - dir_readdir: Iterate through entries (skips . and ..)                 ║
+ * ║                                                                          ║
+ * ║  SYNCHRONIZATION:                                                        ║
+ * ║  ────────────────                                                        ║
+ * ║  Directory operations use the underlying inode's lock for protection.   ║
+ * ║  Individual read/write operations are atomic, but composite operations  ║
+ * ║  (check-then-add) may see interleaved updates from other threads.       ║
+ * ║                                                                          ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
+ */
+
 #include "filesys/directory.h"
 #include <stdio.h>
 #include <string.h>
@@ -6,17 +54,19 @@
 #include "filesys/inode.h"
 #include "threads/malloc.h"
 
-/* A directory. */
+/* A directory.
+   Wraps an inode and maintains a position for readdir iteration. */
 struct dir {
-  struct inode* inode; /* Backing store. */
-  off_t pos;           /* Current position. */
+  struct inode* inode; /* Backing store (must have is_dir=1). */
+  off_t pos;           /* Current position for dir_readdir(). */
 };
 
-/* A single directory entry. */
+/* A single directory entry.
+   Each entry is NAME_MAX+1+4+1 = 20 bytes, so ~25 entries per sector. */
 struct dir_entry {
-  block_sector_t inode_sector; /* Sector number of header. */
-  char name[NAME_MAX + 1];     /* Null terminated file name. */
-  bool in_use;                 /* In use or free? */
+  block_sector_t inode_sector; /* Sector number of the entry's inode. */
+  char name[NAME_MAX + 1];     /* Null-terminated file name (max 14 chars). */
+  bool in_use;                 /* True if entry is valid, false if deleted/empty. */
 };
 
 /* Creates a directory with space for ENTRY_CNT entries in the
@@ -57,25 +107,6 @@ bool dir_create_with_parent(block_sector_t sector, block_sector_t parent_sector,
   return success;
 }
 
-/* Adds . and .. entries to an existing directory.
-   Used during initialization for the root directory.
-   SECTOR is the directory's own sector.
-   PARENT_SECTOR is the parent's sector (same as SECTOR for root).
-   Returns true if successful, false on failure. */
-bool dir_add_special_entries(struct dir* dir, block_sector_t sector, block_sector_t parent_sector) {
-  if (dir == NULL)
-    return false;
-
-  /* Add "." entry pointing to self */
-  bool success = dir_add(dir, ".", sector);
-  
-  /* Add ".." entry pointing to parent */
-  if (success)
-    success = dir_add(dir, "..", parent_sector);
-
-  return success;
-}
-
 /* Opens and returns the directory for the given INODE, of which
    it takes ownership.  Returns a null pointer on failure. */
 struct dir* dir_open(struct inode* inode) {
@@ -92,14 +123,16 @@ struct dir* dir_open(struct inode* inode) {
 }
 
 /* Opens the root directory and returns a directory for it.
-   Return true if successful, false on failure. */
+   Returns a null pointer on failure. */
 struct dir* dir_open_root(void) {
   return dir_open(inode_open(ROOT_DIR_SECTOR));
 }
 
 /* Opens and returns a new directory for the same inode as DIR.
-   Returns a null pointer on failure. */
+   Returns a null pointer if DIR is NULL or on failure. */
 struct dir* dir_reopen(struct dir* dir) {
+  if (dir == NULL)
+    return NULL;
   return dir_open(inode_reopen(dir->inode));
 }
 

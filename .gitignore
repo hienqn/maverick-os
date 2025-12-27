@@ -285,4 +285,3 @@ cscope.po.out
 pintos/**/build
 
 .cache
-/docs

@@ -26,8 +26,9 @@ struct inode_disk {
   block_sector_t indirect;                     /* Indirect block pointer: 4 bytes */
   block_sector_t doubly_indirect;              /* Doubly-indirect pointer: 4 bytes */
   off_t length;                                /* File size in bytes: 4 bytes */
+  uint32_t is_dir;                             /* Whether this inode is a directory */
   unsigned magic;                              /* Magic number: 4 bytes */
-  uint32_t unused[112];                        /* Padding to 512 bytes: 448 bytes */
+  uint32_t unused[111];                        /* Padding to 512 bytes: 448 bytes */
 };
 
 /* Returns the number of sectors to allocate for an inode SIZE
@@ -52,6 +53,7 @@ struct inode {
   bool removed;           /* True if deleted, false otherwise. */
   int deny_write_cnt;     /* 0: writes ok, >0: deny writes. */
   struct lock lock;       /* Per-inode lock (see above). */
+  uint32_t is_dir;
   struct inode_disk data; /* Inode content. */
 };
 
@@ -254,6 +256,97 @@ done:
   return success;
 }
 
+bool inode_is_dir(struct inode *inode) {
+  ASSERT(inode != NULL);
+  return inode->data.is_dir != 0;
+}
+
+/* Creates a directory inode at sector SECTOR with initial length LENGTH.
+   This is similar to inode_create but sets the is_dir flag.
+   Returns true if successful, false if memory or disk allocation fails. */
+bool inode_create_dir(block_sector_t sector, off_t length) {
+  struct inode_disk* disk_inode = NULL;
+  bool success = false;
+
+  ASSERT(length >= 0);
+  ASSERT(sizeof(struct inode_disk) == BLOCK_SECTOR_SIZE);
+
+  disk_inode = calloc(1, sizeof *disk_inode);
+  if (disk_inode == NULL)
+    return false;
+
+  disk_inode->length = length;
+  disk_inode->magic = INODE_MAGIC;
+  disk_inode->is_dir = 1;  /* Mark as directory */
+
+  size_t sectors = bytes_to_sectors(length);
+  static char zeros[BLOCK_SECTOR_SIZE];
+  size_t allocated = 0;
+
+  /* Allocate direct blocks. */
+  for (size_t i = 0; i < DIRECT_BLOCK_COUNT && allocated < sectors; i++) {
+    if (!free_map_allocate_one(&disk_inode->direct[i]))
+      goto done;
+    cache_write(disk_inode->direct[i], zeros, 0, BLOCK_SECTOR_SIZE);
+    allocated++;
+  }
+
+  /* Allocate indirect block if needed. */
+  if (allocated < sectors) {
+    if (!free_map_allocate_one(&disk_inode->indirect))
+      goto done;
+
+    block_sector_t indirect_block[PTRS_PER_BLOCK];
+    memset(indirect_block, 0, sizeof indirect_block);
+
+    for (size_t i = 0; i < PTRS_PER_BLOCK && allocated < sectors; i++) {
+      if (!free_map_allocate_one(&indirect_block[i]))
+        goto done;
+      cache_write(indirect_block[i], zeros, 0, BLOCK_SECTOR_SIZE);
+      allocated++;
+    }
+    cache_write(disk_inode->indirect, indirect_block, 0, BLOCK_SECTOR_SIZE);
+  }
+
+  /* Allocate doubly indirect block if needed. */
+  if (allocated < sectors) {
+    if (!free_map_allocate_one(&disk_inode->doubly_indirect))
+      goto done;
+
+    block_sector_t dbl_block[PTRS_PER_BLOCK];
+    memset(dbl_block, 0, sizeof dbl_block);
+
+    for (size_t i = 0; i < PTRS_PER_BLOCK && allocated < sectors; i++) {
+      block_sector_t ind_sector;
+      if (!free_map_allocate_one(&ind_sector))
+        goto done;
+      dbl_block[i] = ind_sector;
+
+      block_sector_t ind_block[PTRS_PER_BLOCK];
+      memset(ind_block, 0, sizeof ind_block);
+
+      for (size_t j = 0; j < PTRS_PER_BLOCK && allocated < sectors; j++) {
+        if (!free_map_allocate_one(&ind_block[j]))
+          goto done;
+        cache_write(ind_block[j], zeros, 0, BLOCK_SECTOR_SIZE);
+        allocated++;
+      }
+      cache_write(ind_sector, ind_block, 0, BLOCK_SECTOR_SIZE);
+    }
+    cache_write(disk_inode->doubly_indirect, dbl_block, 0, BLOCK_SECTOR_SIZE);
+  }
+
+  /* Write the inode metadata. */
+  cache_write(sector, disk_inode, 0, BLOCK_SECTOR_SIZE);
+  success = true;
+
+done:
+  if (!success)
+    inode_deallocate(disk_inode);
+  free(disk_inode);
+  return success;
+}
+
 /* Reads an inode from SECTOR
    and returns a `struct inode' that contains it.
    Returns a null pointer if memory allocation fails. */
@@ -346,6 +439,12 @@ void inode_remove(struct inode* inode) {
   lock_acquire(&inode->lock);
   inode->removed = true;
   lock_release(&inode->lock);
+}
+
+/* Returns true if INODE has been marked for removal. */
+bool inode_is_removed(const struct inode* inode) {
+  ASSERT(inode != NULL);
+  return inode->removed;
 }
 
 /* Reads SIZE bytes from INODE into BUFFER, starting at position OFFSET.

@@ -635,6 +635,7 @@ static void init_thread(struct thread* t, const char* name, int priority) {
 #ifdef USERPROG
   t->pcb = NULL;
   /* pcb_elem will be added to pcb->threads when pcb_init() is called */
+  t->cwd = NULL;
 #endif
   t->magic = THREAD_MAGIC;
   t->wake_up_tick = 0;

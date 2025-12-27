@@ -20,9 +20,60 @@ struct dir_entry {
 };
 
 /* Creates a directory with space for ENTRY_CNT entries in the
-   given SECTOR.  Returns true if successful, false on failure. */
+   given SECTOR.  Returns true if successful, false on failure.
+   Note: This creates a basic directory without . and .. entries.
+   For creating subdirectories, use dir_create_with_parent(). */
 bool dir_create(block_sector_t sector, size_t entry_cnt) {
-  return inode_create(sector, entry_cnt * sizeof(struct dir_entry));
+  return inode_create_dir(sector, entry_cnt * sizeof(struct dir_entry));
+}
+
+/* Creates a directory at SECTOR with . and .. entries.
+   PARENT_SECTOR is the sector of the parent directory.
+   For the root directory, PARENT_SECTOR should equal SECTOR.
+   Returns true if successful, false on failure. */
+bool dir_create_with_parent(block_sector_t sector, block_sector_t parent_sector, size_t entry_cnt) {
+  /* Ensure we have room for at least . and .. plus requested entries */
+  if (entry_cnt < 2)
+    entry_cnt = 2;
+
+  /* Create the directory inode */
+  if (!inode_create_dir(sector, entry_cnt * sizeof(struct dir_entry)))
+    return false;
+
+  /* Open the new directory to add . and .. entries */
+  struct dir* dir = dir_open(inode_open(sector));
+  if (dir == NULL)
+    return false;
+
+  /* Add "." entry pointing to self */
+  bool success = dir_add(dir, ".", sector);
+  
+  /* Add ".." entry pointing to parent */
+  if (success)
+    success = dir_add(dir, "..", parent_sector);
+
+  dir_close(dir);
+
+  return success;
+}
+
+/* Adds . and .. entries to an existing directory.
+   Used during initialization for the root directory.
+   SECTOR is the directory's own sector.
+   PARENT_SECTOR is the parent's sector (same as SECTOR for root).
+   Returns true if successful, false on failure. */
+bool dir_add_special_entries(struct dir* dir, block_sector_t sector, block_sector_t parent_sector) {
+  if (dir == NULL)
+    return false;
+
+  /* Add "." entry pointing to self */
+  bool success = dir_add(dir, ".", sector);
+  
+  /* Add ".." entry pointing to parent */
+  if (success)
+    success = dir_add(dir, "..", parent_sector);
+
+  return success;
 }
 
 /* Opens and returns the directory for the given INODE, of which
@@ -63,6 +114,16 @@ void dir_close(struct dir* dir) {
 /* Returns the inode encapsulated by DIR. */
 struct inode* dir_get_inode(struct dir* dir) {
   return dir->inode;
+}
+
+/* Returns the current position in DIR. */
+off_t dir_get_pos(struct dir* dir) {
+  return dir->pos;
+}
+
+/* Sets the current position in DIR to POS. */
+void dir_set_pos(struct dir* dir, off_t pos) {
+  dir->pos = pos;
 }
 
 /* Searches DIR for a file with the given NAME.
@@ -198,4 +259,21 @@ bool dir_readdir(struct dir* dir, char name[NAME_MAX + 1]) {
     }
   }
   return false;
+}
+
+/* Returns true if DIR is empty (contains only . and .. entries),
+   false otherwise. */
+bool dir_is_empty(struct dir* dir) {
+  struct dir_entry e;
+  off_t ofs;
+
+  for (ofs = 0; inode_read_at(dir->inode, &e, sizeof e, ofs) == sizeof e; ofs += sizeof e) {
+    if (e.in_use) {
+      /* Skip "." and ".." entries */
+      if (strcmp(e.name, ".") != 0 && strcmp(e.name, "..") != 0) {
+        return false;  /* Found a non-special entry */
+      }
+    }
+  }
+  return true;  /* Only . and .. (or nothing) found */
 }

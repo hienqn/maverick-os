@@ -9,6 +9,7 @@
 #include "userprog/process.h"
 #include "filesys/file.h"
 #include "filesys/inode.h"
+#include "filesys/directory.h"
 #include "threads/vaddr.h"
 #include "userprog/pagedir.h"
 #include "devices/shutdown.h"
@@ -144,16 +145,15 @@ static void syscall_handler(struct intr_frame* f) {
       return;
     }
 
-    if (thread_current()->pcb->fd_table[fd] == NULL) {
+    struct fd_entry* entry = &thread_current()->pcb->fd_table[fd];
+    if (entry->type != FD_FILE || entry->file == NULL) {
       f->eax = -1;
       return;
     }
 
     lock_acquire(&global_fs_lock);
 
-    struct file* file_to_write = thread_current()->pcb->fd_table[fd];
-
-    f->eax = file_write(file_to_write, buffer, size);
+    f->eax = file_write(entry->file, buffer, size);
 
     lock_release(&global_fs_lock);
   }
@@ -221,14 +221,14 @@ static void syscall_handler(struct intr_frame* f) {
       return;
     }
 
-    struct file **fd_table = thread_current()->pcb->fd_table;
-    if (fd_table[fd] == NULL) {
+    struct fd_entry* entry = &thread_current()->pcb->fd_table[fd];
+    if (entry->type != FD_FILE || entry->file == NULL) {
       f->eax = -1;
       lock_release(&global_fs_lock);
       return;
     }
   
-    f->eax = file_read(fd_table[fd], buffer, size);
+    f->eax = file_read(entry->file, buffer, size);
     lock_release(&global_fs_lock);
     return;
   }
@@ -258,7 +258,24 @@ static void syscall_handler(struct intr_frame* f) {
       return;
     }
 
-    curr_thread->pcb->fd_table[free_fd] = open_file;
+    /* Check if it's a directory or regular file */
+    struct inode* inode = file_get_inode(open_file);
+    if (inode_is_dir(inode)) {
+      /* It's a directory - store as dir in fd_table */
+      struct dir* open_dir = dir_open(inode_reopen(inode));
+      file_close(open_file);  /* Close the file wrapper */
+      if (open_dir == NULL) {
+        f->eax = -1;
+        lock_release(&global_fs_lock);
+        return;
+      }
+      curr_thread->pcb->fd_table[free_fd].type = FD_DIR;
+      curr_thread->pcb->fd_table[free_fd].dir = open_dir;
+    } else {
+      /* Regular file */
+      curr_thread->pcb->fd_table[free_fd].type = FD_FILE;
+      curr_thread->pcb->fd_table[free_fd].file = open_file;
+    }
     
     f->eax = free_fd;
     lock_release(&global_fs_lock);
@@ -276,14 +293,14 @@ static void syscall_handler(struct intr_frame* f) {
       return;
     }
 
-    struct file **fd_table = thread_current()->pcb->fd_table;
-    if (fd_table[fd] == NULL) {
+    struct fd_entry* entry = &thread_current()->pcb->fd_table[fd];
+    if (entry->type != FD_FILE || entry->file == NULL) {
       f->eax = -1;
       lock_release(&global_fs_lock);
       return;
     }
 
-    f->eax = file_length(fd_table[fd]);
+    f->eax = file_length(entry->file);
     lock_release(&global_fs_lock);
   }
 
@@ -301,9 +318,15 @@ static void syscall_handler(struct intr_frame* f) {
     }
     
     struct thread *t = thread_current();
-    if (t->pcb->fd_table[fd] != NULL) {
-      file_close(t->pcb->fd_table[fd]);
-      t->pcb->fd_table[fd] = NULL;
+    struct fd_entry* entry = &t->pcb->fd_table[fd];
+    if (entry->type == FD_FILE && entry->file != NULL) {
+      file_close(entry->file);
+      entry->type = FD_NONE;
+      entry->file = NULL;
+    } else if (entry->type == FD_DIR && entry->dir != NULL) {
+      dir_close(entry->dir);
+      entry->type = FD_NONE;
+      entry->dir = NULL;
     }
 
     lock_release(&global_fs_lock);
@@ -318,14 +341,13 @@ static void syscall_handler(struct intr_frame* f) {
       return;
     }
 
-    struct file* current_file = thread_current()->pcb->fd_table[fd];
-
-    if (current_file == NULL) {
+    struct fd_entry* entry = &thread_current()->pcb->fd_table[fd];
+    if (entry->type != FD_FILE || entry->file == NULL) {
       f->eax = -1;
       return;
     }
     
-    f->eax = file_tell(current_file);
+    f->eax = file_tell(entry->file);
   }
 
   if (args[0] == SYS_SEEK) {
@@ -341,14 +363,13 @@ static void syscall_handler(struct intr_frame* f) {
 
     int pos = args[2];
 
-    struct file* current_file = thread_current()->pcb->fd_table[fd];
-
-    if (current_file == NULL) {
+    struct fd_entry* entry = &thread_current()->pcb->fd_table[fd];
+    if (entry->type != FD_FILE || entry->file == NULL) {
       f->eax = -1;
       return;
     }
     
-    file_seek(current_file, pos);
+    file_seek(entry->file, pos);
   }
 
   if (args[0] == SYS_REMOVE) {
@@ -372,13 +393,18 @@ static void syscall_handler(struct intr_frame* f) {
       return;
     }
 
-    struct file* file = thread_current()->pcb->fd_table[fd];
-    if (file == NULL) {
+    struct fd_entry* entry = &thread_current()->pcb->fd_table[fd];
+    struct inode* inode = NULL;
+    
+    if (entry->type == FD_FILE && entry->file != NULL) {
+      inode = file_get_inode(entry->file);
+    } else if (entry->type == FD_DIR && entry->dir != NULL) {
+      inode = dir_get_inode(entry->dir);
+    } else {
       f->eax = -1;
       return;
     }
 
-    struct inode* inode = file_get_inode(file);
     f->eax = (int)inode_get_inumber(inode);
   }
 
@@ -551,6 +577,80 @@ static void syscall_handler(struct intr_frame* f) {
       sema_up(k_sema);
       f->eax = true;
     }
+  }
+
+  /* SYS_CHDIR - Change current working directory */
+  if (args[0] == SYS_CHDIR) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    char* dir_path = (char*)args[1];
+    validate_string_and_exit_if_false(f, dir_path);
+
+    lock_acquire(&global_fs_lock);
+    f->eax = filesys_chdir(dir_path);
+    lock_release(&global_fs_lock);
+  }
+
+  /* SYS_MKDIR - Create a new directory */
+  if (args[0] == SYS_MKDIR) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    char* dir_path = (char*)args[1];
+    validate_string_and_exit_if_false(f, dir_path);
+
+    lock_acquire(&global_fs_lock);
+    f->eax = filesys_mkdir(dir_path);
+    lock_release(&global_fs_lock);
+  }
+
+  /* SYS_READDIR - Read a directory entry */
+  if (args[0] == SYS_READDIR) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    int fd = args[1];
+    validate_pointer_and_exit_if_false(f, &args[2]);
+    char* name = (char*)args[2];
+    /* Validate buffer for NAME_MAX + 1 bytes */
+    validate_buffer_and_exit_if_false(f, name, NAME_MAX + 1);
+
+    if (fd < 2 || fd >= MAX_FILE_DESCRIPTOR) {
+      f->eax = false;
+      return;
+    }
+
+    struct fd_entry* entry = &thread_current()->pcb->fd_table[fd];
+    if (entry->type != FD_DIR || entry->dir == NULL) {
+      f->eax = false;
+      return;
+    }
+
+    lock_acquire(&global_fs_lock);
+
+    /* Read entries, skipping . and .. */
+    bool success = false;
+    char entry_name[NAME_MAX + 1];
+    while (dir_readdir(entry->dir, entry_name)) {
+      /* Skip . and .. entries */
+      if (strcmp(entry_name, ".") != 0 && strcmp(entry_name, "..") != 0) {
+        strlcpy(name, entry_name, NAME_MAX + 1);
+        success = true;
+        break;
+      }
+    }
+    
+    lock_release(&global_fs_lock);
+    f->eax = success;
+  }
+
+  /* SYS_ISDIR - Check if fd is a directory */
+  if (args[0] == SYS_ISDIR) {
+    validate_pointer_and_exit_if_false(f, &args[1]);
+    int fd = args[1];
+
+    if (fd < 2 || fd >= MAX_FILE_DESCRIPTOR) {
+      f->eax = false;
+      return;
+    }
+
+    struct fd_entry* entry = &thread_current()->pcb->fd_table[fd];
+    f->eax = (entry->type == FD_DIR);
   }
 
   /* Check if process is exiting - thread should exit instead of returning to user */

@@ -4,6 +4,10 @@
 #include "threads/thread.h"
 #include <stdint.h>
 
+/* Forward declarations */
+struct file;
+struct dir;
+
 // At most 8MB can be allocated to the stack
 // These defines will be used in Project 2: Multithreading
 #define MAX_STACK_PAGES (1 << 11)
@@ -31,6 +35,22 @@ typedef void (*stub_fun)(pthread_fun, void*);
    of the process, which is `special`. */
 #define MAX_FILE_DESCRIPTOR 128
 
+/* File descriptor entry types */
+enum fd_type {
+  FD_NONE,    /* Unused entry */
+  FD_FILE,    /* Regular file */
+  FD_DIR      /* Directory */
+};
+
+/* File descriptor entry - holds either a file or directory */
+struct fd_entry {
+  enum fd_type type;
+  union {
+    struct file* file;
+    struct dir* dir;
+  };
+};
+
 struct process {
   /* Owned by process.c. */
   uint32_t* pagedir;          /* Page directory. */
@@ -39,7 +59,7 @@ struct process {
   struct list children_status;        /* List of children process */
   struct process_status *my_status; /* My own status shared with parent */
   struct process* parent_process; /* Point to parent process */
-  struct file *fd_table[MAX_FILE_DESCRIPTOR]; /* Array of file pointers */
+  struct fd_entry fd_table[MAX_FILE_DESCRIPTOR]; /* Array of fd entries */
   struct file* executable;    /* Executable file (deny writes while running) */
 
    /* Threading support */

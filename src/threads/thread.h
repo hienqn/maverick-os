@@ -19,6 +19,7 @@ enum thread_status {
 /* Thread identifier type.
    You can redefine this to whatever type you like. */
 typedef int tid_t;
+
 #define TID_ERROR ((tid_t)-1) /* Error value for tid_t. */
 
 /* Thread priorities. */
@@ -117,6 +118,7 @@ struct thread {
   struct list_elem pcb_elem;         /* List element for process's thread list */
   void* user_stack;                  /* Base of user stack page (for cleanup) */
   struct pthread_status* my_status;  /* Status struct for join synchronization */
+  struct dir* cwd;                   /* Current working directory */
 #endif
 
   /* Owned by thread.c. */

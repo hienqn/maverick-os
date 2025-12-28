@@ -63,6 +63,10 @@ bool readdir(int fd, char name[READDIR_MAX_LEN + 1]);
 bool isdir(int fd);
 int inumber(int fd);
 
+/* Symbolic links. */
+bool symlink(const char* target, const char* linkpath);
+int readlink(const char* path, char* buf, size_t bufsize);
+
 pid_t fork(void);
 
 #endif /* lib/user/syscall.h */

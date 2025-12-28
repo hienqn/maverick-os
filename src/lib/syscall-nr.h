@@ -40,6 +40,10 @@ enum {
   SYS_READDIR, /* Reads a directory entry. */
   SYS_ISDIR,   /* Tests if a fd represents a directory. */
   SYS_INUMBER, /* Returns the inode number for a fd. */
+
+  /* Symbolic links. */
+  SYS_SYMLINK,  /* Create a symbolic link. */
+  SYS_READLINK, /* Read the target of a symbolic link. */
 };
 
 #endif /* lib/syscall-nr.h */

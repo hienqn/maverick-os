@@ -158,3 +158,11 @@ void sema_up(sema_t* sema) {
 tid_t get_tid(void) { return syscall0(SYS_GET_TID); }
 
 pid_t fork(void) { return syscall0(SYS_FORK); }
+
+bool symlink(const char* target, const char* linkpath) {
+  return syscall2(SYS_SYMLINK, target, linkpath);
+}
+
+int readlink(const char* path, char* buf, size_t bufsize) {
+  return syscall3(SYS_READLINK, path, buf, bufsize);
+}

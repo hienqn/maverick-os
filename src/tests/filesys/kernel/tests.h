@@ -57,4 +57,36 @@ extern test_func test_cache_prefetch_nodup;      /* No duplicate prefetch */
 extern test_func test_cache_prefetch_overflow;   /* Queue overflow handling */
 extern test_func test_cache_prefetch_concurrent; /* Prefetch with concurrent readers */
 
+/*
+ * WAL (Write-Ahead Logging) test function declarations.
+ * Each test is implemented in wal-tests.c.
+ */
+
+/* Initialization tests */
+extern test_func test_wal_init;     /* WAL initialization */
+extern test_func test_wal_shutdown; /* Clean shutdown */
+
+/* Transaction lifecycle tests */
+extern test_func test_wal_txn_begin;    /* Transaction creation */
+extern test_func test_wal_txn_commit;   /* Transaction commit (durability) */
+extern test_func test_wal_txn_abort;    /* Transaction abort (UNDO) */
+extern test_func test_wal_txn_multiple; /* Multiple concurrent transactions */
+
+/* Logging tests */
+extern test_func test_wal_log_write; /* Basic write logging */
+extern test_func test_wal_log_split; /* Large writes split into records */
+extern test_func test_wal_log_flush; /* Log buffer flush to disk */
+extern test_func test_wal_log_full;  /* Behavior when log fills up */
+
+/* Recovery tests */
+extern test_func test_wal_recover_commit; /* Recovery replays committed txns */
+extern test_func test_wal_recover_abort;  /* Recovery undoes uncommitted txns */
+extern test_func test_wal_recover_order;  /* Recovery applies in correct order */
+
+/* Checkpoint tests */
+extern test_func test_wal_checkpoint; /* Checkpoint creation */
+
+/* Integration/stress tests */
+extern test_func test_wal_stress; /* Stress test with many transactions */
+
 #endif /* tests/filesys/kernel/tests.h */

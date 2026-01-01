@@ -44,6 +44,7 @@
 #include "filesys/file.h"
 #include "filesys/filesys.h"
 #include "filesys/inode.h"
+#include "filesys/wal.h"
 #include "threads/synch.h"
 
 static struct file* free_map_file; /* Free map file (stored at sector 0). */
@@ -58,6 +59,12 @@ void free_map_init(void) {
     PANIC("bitmap creation failed--file system device is too large");
   bitmap_mark(free_map, FREE_MAP_SECTOR);
   bitmap_mark(free_map, ROOT_DIR_SECTOR);
+
+  /* Reserve WAL sectors so filesystem doesn't allocate them for file data.
+     WAL uses sectors 2 through WAL_METADATA_SECTOR (inclusive). */
+  for (block_sector_t s = WAL_LOG_START_SECTOR; s <= WAL_METADATA_SECTOR; s++) {
+    bitmap_mark(free_map, s);
+  }
 }
 
 /* Allocates CNT consecutive sectors from the free map and stores

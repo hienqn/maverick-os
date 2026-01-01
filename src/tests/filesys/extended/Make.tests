@@ -6,7 +6,9 @@ dir-rmdir dir-under-file dir-vine grow-create grow-dir-lg		\
 grow-file-size grow-root-lg grow-root-sm grow-seq-lg grow-seq-sm	\
 grow-sparse grow-tell grow-two-files syn-rw				\
 sym-create sym-read sym-write sym-remove sym-dangling sym-dir		\
-sym-chain sym-cycle sym-path
+sym-chain sym-cycle sym-path						\
+wal-basic wal-multi-write wal-multi-file wal-dir-ops wal-overwrite	\
+wal-grow
 
 tests/filesys/extended_TESTS = $(patsubst %,tests/filesys/extended/%,$(raw_tests))
 tests/filesys/extended_EXTRA_GRADES = $(patsubst %,tests/filesys/extended/%-persistence,$(raw_tests))

@@ -78,6 +78,7 @@
 #include "filesys/free-map.h"
 #include "filesys/inode.h"
 #include "filesys/directory.h"
+#include "filesys/wal.h"
 #include "threads/thread.h"
 #include "threads/malloc.h"
 
@@ -294,6 +295,7 @@ void filesys_init(bool format) {
     PANIC("No file system device found, can't initialize file system.");
 
   cache_init();
+  wal_init(format); /* Initialize WAL subsystem (may trigger recovery if crash detected) */
   inode_init();
   free_map_init();
 
@@ -308,6 +310,7 @@ void filesys_init(bool format) {
 void filesys_done(void) {
   cache_print_stats();
   cache_shutdown();
+  wal_shutdown(); /* Flush WAL and write clean shutdown marker */
   free_map_close();
 }
 
@@ -563,6 +566,9 @@ bool filesys_mkdir(const char* dir_path) {
 static void do_format(void) {
   printf("Formatting file system...");
   free_map_create();
+
+  /* Initialize WAL metadata for fresh filesystem */
+  wal_init_metadata();
 
   /* Create root directory with . and .. entries.
      Root's .. points to itself since it has no parent. */

@@ -18,6 +18,13 @@
  *
  * Example:
  *   pintos -v -k --qemu --filesys-size=2 -- -q -f rfkt cache-single
+ *
+ * NOTE: For WAL recovery tests, DO NOT use the -f flag, as it formats
+ * the filesystem and prevents testing recovery scenarios. Recovery tests
+ * need to persist state across boots to verify crash recovery works.
+ *
+ * Recovery test example (no -f flag):
+ *   pintos -v -k --qemu --filesys-size=2 -- -q rfkt wal-recover-commit
  */
 
 #include "tests/filesys/kernel/tests.h"
@@ -49,6 +56,37 @@ static const struct test filesys_kernel_tests[] = {
     {"cache-prefetch-nodup", test_cache_prefetch_nodup},           /* No duplicate prefetch */
     {"cache-prefetch-overflow", test_cache_prefetch_overflow},     /* Queue overflow */
     {"cache-prefetch-concurrent", test_cache_prefetch_concurrent}, /* Concurrent prefetch */
+
+    /* ============================================================
+     * WAL (Write-Ahead Logging) Tests
+     * ============================================================ */
+
+    /* Initialization tests */
+    {"wal-init", test_wal_init},         /* WAL initialization */
+    {"wal-shutdown", test_wal_shutdown}, /* Clean shutdown */
+
+    /* Transaction lifecycle tests */
+    {"wal-txn-begin", test_wal_txn_begin},       /* Transaction creation */
+    {"wal-txn-commit", test_wal_txn_commit},     /* Commit & durability */
+    {"wal-txn-abort", test_wal_txn_abort},       /* Abort & UNDO */
+    {"wal-txn-multiple", test_wal_txn_multiple}, /* Multiple concurrent txns */
+
+    /* Logging tests */
+    {"wal-log-write", test_wal_log_write}, /* Basic write logging */
+    {"wal-log-split", test_wal_log_split}, /* Large writes split */
+    {"wal-log-flush", test_wal_log_flush}, /* Log buffer flush */
+    {"wal-log-full", test_wal_log_full},   /* Log full behavior */
+
+    /* Recovery tests */
+    {"wal-recover-commit", test_wal_recover_commit}, /* REDO committed */
+    {"wal-recover-abort", test_wal_recover_abort},   /* UNDO uncommitted */
+    {"wal-recover-order", test_wal_recover_order},   /* Correct ordering */
+
+    /* Checkpoint tests */
+    {"wal-checkpoint", test_wal_checkpoint}, /* Checkpoint creation */
+
+    /* Integration/stress tests */
+    {"wal-stress", test_wal_stress}, /* Stress test */
 };
 
 /*

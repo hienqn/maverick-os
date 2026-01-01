@@ -233,22 +233,22 @@ Sectors 67+:    Filesystem data
 
 ```c
 struct wal_record {
-    /* Header - 24 bytes */
-    lsn_t lsn;                  // Unique sequence number
-    txn_id_t txn_id;            // Which transaction
-    enum wal_record_type type;  // BEGIN, WRITE, COMMIT, ABORT, CHECKPOINT
-    uint32_t checksum;          // CRC32 for corruption detection
+    /* Header - 20 bytes */
+    lsn_t lsn;                  // Unique sequence number (8 bytes)
+    txn_id_t txn_id;            // Which transaction (4 bytes)
+    enum wal_record_type type;  // BEGIN, WRITE, COMMIT, ABORT, CHECKPOINT (4 bytes)
+    uint32_t checksum;          // CRC32 for corruption detection (4 bytes)
 
     /* For WAL_WRITE records - 8 bytes */
-    block_sector_t sector;      // Which disk sector
-    uint16_t offset;            // Offset within sector (0-511)
-    uint16_t length;            // Bytes modified
+    block_sector_t sector;      // Which disk sector (4 bytes)
+    uint16_t offset;            // Offset within sector (0-511) (2 bytes)
+    uint16_t length;            // Bytes modified (2 bytes)
 
     /* Data payload - 464 bytes */
-    uint8_t old_data[232];      // Before image
-    uint8_t new_data[232];      // After image
+    uint8_t old_data[232];      // Before image (WAL_MAX_DATA_SIZE)
+    uint8_t new_data[232];      // After image (WAL_MAX_DATA_SIZE)
 
-    uint8_t padding[16];        // Pad to exactly 512 bytes
+    uint8_t padding[20];        // Pad to exactly 512 bytes
 };
 ```
 
@@ -285,28 +285,55 @@ struct wal_txn {
 struct wal_manager {
     struct lock wal_lock;      // Protects all WAL state
 
+    /* LSN management */
     lsn_t next_lsn;            // Next LSN to assign
     lsn_t flushed_lsn;         // All records <= this are on disk
-    txn_id_t next_txn_id;      // Next transaction ID
 
-    uint8_t *log_buffer;       // In-memory buffer before flush
-    size_t buffer_size;        // Buffer capacity
-    size_t buffer_used;        // Bytes currently buffered
+    /* Transaction ID management */
+    txn_id_t next_txn_id;      // Next transaction ID to assign
 
-    struct list active_txns;   // Currently active transactions
-    lsn_t checkpoint_lsn;      // LSN of last checkpoint
-    bool checkpointing;        // Prevents recursive checkpoints
+    /* Log buffer (in-memory, flushed to disk periodically) */
+    uint8_t *log_buffer;       // Buffer for log records
+    size_t buffer_size;        // Size of the buffer (8 sectors = 4KB)
+    size_t buffer_used;        // Bytes currently in buffer
+
+    /* Active transaction tracking */
+    struct list active_txns;   // List of active transactions
+
+    /* Checkpoint management */
+    lsn_t checkpoint_lsn;      // LSN of last checkpoint (0 if none)
+    bool checkpointing;        // Prevents recursive checkpoint calls
+
+    /* Statistics (for testing/verification) */
+    uint32_t stats_txn_begun;
+    uint32_t stats_txn_committed;
+    uint32_t stats_txn_aborted;
+    uint32_t stats_writes_logged;
 };
 ```
 
-### 6.5 Metadata (Persistent Across Reboots)
+### 6.5 Statistics Structure
+
+```c
+struct wal_stats {
+    uint32_t txn_begun;      // Number of transactions started
+    uint32_t txn_committed;  // Number of transactions committed
+    uint32_t txn_aborted;    // Number of transactions aborted
+    uint32_t writes_logged;  // Number of write operations logged
+};
+```
+
+Use `wal_get_stats()` to retrieve current statistics and `wal_reset_stats()` to clear them.
+
+### 6.6 Metadata (Persistent Across Reboots)
 
 ```c
 struct wal_metadata {
-    uint32_t magic;            // 0xDEADBEEF = valid metadata
-    uint32_t clean_shutdown;   // 1 = clean, 0 = need recovery
-    lsn_t last_lsn;            // Last LSN before shutdown
-    txn_id_t last_txn_id;      // Last transaction ID
+    uint32_t magic;            // 0xDEADBEEF = valid metadata (4 bytes)
+    uint32_t clean_shutdown;   // 1 = clean, 0 = need recovery (4 bytes)
+    lsn_t last_lsn;            // Last LSN before shutdown (8 bytes)
+    txn_id_t last_txn_id;      // Last transaction ID (4 bytes)
+    uint8_t padding[492];      // Pad to exactly 512 bytes
 };
 ```
 
@@ -401,34 +428,65 @@ bool wal_txn_commit(struct wal_txn *txn) {
 
 ```c
 void wal_txn_abort(struct wal_txn *txn) {
+    // Use HEAP allocation to avoid stack overflow (4KB kernel stack)
+    #define MAX_UNDO_RECORDS 64
+    lsn_t *undo_lsns = malloc(MAX_UNDO_RECORDS * sizeof(lsn_t));
+    size_t undo_count = 0;
+
+    // Flush log buffer so we can read records from disk
+    wal_flush(wal.next_lsn);
+
     // Collect all WRITE records for this transaction
     for (lsn_t lsn = txn->first_lsn; lsn < wal.next_lsn; lsn++) {
         struct wal_record rec;
         if (wal_read_record(lsn, &rec) &&
             rec.txn_id == txn->txn_id &&
             rec.type == WAL_WRITE) {
-            undo_list[count++] = lsn;
+            undo_lsns[undo_count++] = lsn;
         }
     }
 
     // Apply UNDO in REVERSE order (newest first)
-    for (int i = count - 1; i >= 0; i--) {
-        wal_read_record(undo_list[i], &rec);
-        // Restore the old_data
+    for (size_t i = undo_count; i > 0; i--) {
+        wal_read_record(undo_lsns[i - 1], &rec);
+        // Restore the old_data through the cache
         cache_write(rec.sector, rec.old_data, rec.offset, rec.length);
     }
+
+    // Flush cache to ensure UNDO is on disk
+    cache_flush();
 
     // Write ABORT record
     rec.type = WAL_ABORT;
     rec.txn_id = txn->txn_id;
     wal_append_record(&rec);
 
+    free(undo_lsns);
     txn->state = TXN_ABORTED;
+    list_remove(&txn->elem);  // Remove from active list
     free(txn);
 }
 ```
 
 **Why Reverse Order?** If a transaction wrote to the same location multiple times (A → B → C), we need to restore A, not B. By processing in reverse LSN order, the last UNDO restores the original value.
+
+### 7.5 Thread-Local Transaction Management
+
+Each thread can have an associated "current transaction" stored in thread-local storage:
+
+```c
+void wal_set_current_txn(struct wal_txn *txn) {
+    struct thread *t = thread_current();
+    t->current_txn = txn;
+}
+
+struct wal_txn *wal_get_current_txn(void) {
+    struct thread *t = thread_current();
+    return t->current_txn;
+}
+```
+
+This allows higher-level code to implicitly use the current transaction without passing it through every function call.
 
 ---
 
@@ -594,13 +652,19 @@ Log: [old records...] [CHECKPOINT] [new records...]
 
 ### 9.4 When to Checkpoint
 
-We trigger checkpoints when the log is 75% full:
+We use **deferred checkpointing** when the log is 75% full:
 
 ```c
-if (log_used >= WAL_LOG_SECTORS * 3 / 4) {
-    wal_checkpoint();
+/* In wal_append_record: */
+if ((log_used >= (WAL_LOG_SECTORS * 3 / 4)) && !wal.checkpointing) {
+    checkpoint_pending = true;  // Mark for later
 }
 ```
+
+**Why Deferred?** Immediate checkpointing can cause stack overflow:
+- `cache_write()` → `wal_txn_commit()` → `wal_checkpoint()` → `cache_flush()` → recursive calls
+
+Instead, checkpoints are executed at safe points (like shutdown) or explicitly called. The `checkpointing` flag prevents recursive checkpoint attempts.
 
 This prevents the log from filling up while ensuring reasonably bounded recovery time.
 
@@ -866,6 +930,9 @@ A complete Write-Ahead Logging system for the Pintos filesystem that provides:
 
 | Component | Purpose |
 |-----------|---------|
+| `wal_init()` | Initialize WAL subsystem at mount |
+| `wal_init_metadata()` | Initialize metadata sector during format |
+| `wal_shutdown()` | Shutdown WAL and mark clean |
 | `wal_txn_begin()` | Start a new transaction |
 | `wal_log_write()` | Log a data modification |
 | `wal_txn_commit()` | Commit (durability point) |
@@ -873,6 +940,10 @@ A complete Write-Ahead Logging system for the Pintos filesystem that provides:
 | `wal_flush()` | Force log to disk |
 | `wal_checkpoint()` | Create recovery checkpoint |
 | `wal_recover()` | Three-phase crash recovery |
+| `wal_set_current_txn()` | Set thread-local transaction |
+| `wal_get_current_txn()` | Get thread-local transaction |
+| `wal_get_stats()` | Get WAL statistics |
+| `wal_reset_stats()` | Reset statistics counters |
 
 ### The Golden Rules
 

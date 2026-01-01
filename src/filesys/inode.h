@@ -24,6 +24,7 @@ block_sector_t inode_get_inumber(const struct inode* inode);
 off_t inode_length(const struct inode* inode);
 bool inode_is_dir(struct inode* inode);
 bool inode_is_removed(const struct inode* inode);
+void inode_set_skip_wal(struct inode* inode, bool skip);
 
 /* Removal. */
 void inode_remove(struct inode* inode);

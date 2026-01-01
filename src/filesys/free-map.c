@@ -103,6 +103,8 @@ void free_map_open(void) {
   free_map_file = file_open(inode_open(FREE_MAP_SECTOR));
   if (free_map_file == NULL)
     PANIC("can't open free map");
+  /* Mark free map inode to skip WAL logging to avoid recursion. */
+  inode_set_skip_wal(file_get_inode(free_map_file), true);
   if (!bitmap_read(free_map, free_map_file))
     PANIC("can't read free map");
 }
@@ -121,6 +123,8 @@ void free_map_create(void) {
   free_map_file = file_open(inode_open(FREE_MAP_SECTOR));
   if (free_map_file == NULL)
     PANIC("can't open free map");
+  /* Mark free map inode to skip WAL logging to avoid recursion. */
+  inode_set_skip_wal(file_get_inode(free_map_file), true);
   if (!bitmap_write(free_map, free_map_file))
     PANIC("can't write free map");
 }

@@ -57,6 +57,7 @@ struct inode {
   block_sector_t sector;  /* Sector number of disk location. */
   int open_cnt;           /* Number of openers. */
   bool removed;           /* True if deleted, false otherwise. */
+  bool skip_wal;          /* True to skip WAL logging (e.g., free map). */
   int deny_write_cnt;     /* 0: writes ok, >0: deny writes. */
   struct lock lock;       /* Per-inode lock (see above). */
   struct inode_disk data; /* Inode content (includes is_dir flag). */
@@ -314,6 +315,7 @@ struct inode* inode_open(block_sector_t sector) {
   inode->open_cnt = 1;
   inode->deny_write_cnt = 0;
   inode->removed = false;
+  inode->skip_wal = false;
   lock_init(&inode->lock);
   /* Read inode metadata from cache. */
   cache_read(inode->sector, &inode->data);
@@ -334,6 +336,13 @@ struct inode* inode_reopen(struct inode* inode) {
 
 /* Returns INODE's inode number. */
 block_sector_t inode_get_inumber(const struct inode* inode) { return inode->sector; }
+
+/* Sets whether INODE should skip WAL logging.
+   Used for internal metadata files (e.g., free map) to avoid recursion. */
+void inode_set_skip_wal(struct inode* inode, bool skip) {
+  ASSERT(inode != NULL);
+  inode->skip_wal = skip;
+}
 
 /* Closes INODE and writes it to disk.
    If this was the last reference to INODE, frees its memory.
@@ -560,11 +569,11 @@ off_t inode_write_at(struct inode* inode, const void* buffer_, off_t size, off_t
 
   /* Check if we should log this write to WAL.
      We only log writes when there's an active WAL transaction, AND
-     we skip internal metadata (free map at sector 0) to avoid recursion.
+     the inode is not marked to skip WAL (e.g., free map inode).
      Note: With the current architecture, WAL transactions are started at the
      filesys layer for atomic metadata operations, not for every data write. */
   struct wal_txn* txn = wal_get_current_txn();
-  bool should_log = (txn != NULL) && (inode->sector != FREE_MAP_SECTOR);
+  bool should_log = (txn != NULL) && !inode->skip_wal;
 
   /* Allocate old_data buffer on heap to avoid stack overflow during
      recursive calls (e.g., when inode_extend triggers free_map writes).

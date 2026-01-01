@@ -6,6 +6,7 @@
 #include "filesys/cache.h"
 #include "filesys/filesys.h"
 #include "filesys/free-map.h"
+#include "filesys/wal.h"
 #include "threads/malloc.h"
 #include "threads/synch.h"
 
@@ -557,6 +558,24 @@ off_t inode_write_at(struct inode* inode, const void* buffer_, off_t size, off_t
 
   lock_release(&inode->lock);
 
+  /* Check if we should log this write to WAL.
+     We log user file data but NOT internal metadata (free map at sector 0).
+     This explicit check at the filesystem layer avoids recursion issues. */
+  struct wal_txn* txn = wal_get_current_txn();
+  bool should_log = (txn != NULL) && (inode->sector != FREE_MAP_SECTOR);
+
+  /* Allocate old_data buffer on heap to avoid stack overflow during
+     recursive calls (e.g., when inode_extend triggers free_map writes).
+     The Pintos kernel stack is only 4KB, and deep recursion with
+     512-byte stack buffers will corrupt the thread structure. */
+  uint8_t* old_data = NULL;
+  if (should_log) {
+    old_data = malloc(BLOCK_SECTOR_SIZE);
+    if (old_data == NULL) {
+      return 0; /* Allocation failed */
+    }
+  }
+
   while (size > 0) {
     /* Sector to write, starting byte offset within sector. */
     block_sector_t sector_idx = byte_to_sector(inode, offset);
@@ -572,6 +591,13 @@ off_t inode_write_at(struct inode* inode, const void* buffer_, off_t size, off_t
     if (chunk_size <= 0)
       break;
 
+    /* Log to WAL before writing (if transaction active and not metadata).
+       Read old data from cache, log the change, then write new data. */
+    if (should_log) {
+      cache_read_at(sector_idx, old_data, sector_ofs, chunk_size);
+      wal_log_write(txn, sector_idx, old_data, buffer + bytes_written, sector_ofs, chunk_size);
+    }
+
     /* Write to cache. cache_write handles both full and partial sector
        writes, including read-modify-write for partial sectors. */
     cache_write(sector_idx, buffer + bytes_written, sector_ofs, chunk_size);
@@ -580,6 +606,10 @@ off_t inode_write_at(struct inode* inode, const void* buffer_, off_t size, off_t
     size -= chunk_size;
     offset += chunk_size;
     bytes_written += chunk_size;
+  }
+
+  if (old_data != NULL) {
+    free(old_data);
   }
 
   return bytes_written;

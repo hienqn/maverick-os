@@ -239,22 +239,38 @@ void wal_shutdown(void) {
  * TRANSACTION MANAGEMENT
  * ============================================================ */
 
-struct wal_txn* wal_txn_begin(void) {
-  /*
-   * TODO: Begin a new transaction
-   *
-   * Steps to consider:
-   * 1. Allocate a new wal_txn structure
-   * 2. Assign a unique transaction ID
-   * 3. Set the initial state to TXN_ACTIVE
-   * 4. Write a WAL_BEGIN record to the log
-   * 5. Add to active transaction list (if you're tracking them)
-   *
-   * QUESTION: Does the BEGIN record need to be flushed immediately?
-   * What are the tradeoffs?
-   */
+ struct wal_txn* wal_txn_begin(void) {
+  // 1. Allocate a new wal_txn structure
+  struct wal_txn *txn = malloc(sizeof(struct wal_txn));
+  if (txn == NULL) return NULL;
 
-  return NULL; /* Replace with your implementation */
+  // 2. Assign unique transaction ID (under lock)
+  lock_acquire(&wal.wal_lock);
+  txn->txn_id = wal.next_txn_id++;
+  wal.stats_txn_begun++;
+  lock_release(&wal.wal_lock);
+
+  // 3. Set initial state
+  txn->state = TXN_ACTIVE;
+
+  // 4. Write BEGIN record to log
+  struct wal_record rec;
+  memset(&rec, 0, sizeof(rec));
+  rec.type = WAL_BEGIN;
+  rec.txn_id = txn->txn_id;
+  lsn_t begin_lsn = wal_append_record(&rec);
+
+  // 5. Store first LSN (needed for abort - to know where to start reading)
+  txn->first_lsn = begin_lsn;
+  // Initialize last_lsn to the same value (will be updated as more records are added)
+  txn->last_lsn = begin_lsn;
+
+  // 6. Add to active transaction list
+  lock_acquire(&wal.wal_lock);
+  list_push_back(&wal.active_txns, &txn->elem);
+  lock_release(&wal.wal_lock);
+
+  return txn;
 }
 
 bool wal_txn_commit(struct wal_txn* txn) {
@@ -301,27 +317,60 @@ void wal_txn_abort(struct wal_txn* txn) {
  * LOGGING OPERATIONS
  * ============================================================ */
 
-bool wal_log_write(struct wal_txn* txn, block_sector_t sector, const void* old_data,
-                   const void* new_data, uint16_t offset, uint16_t length) {
-  /*
-   * TODO: Log a write operation
-   *
-   * This is called BEFORE the actual data is written to the cache/disk.
-   *
-   * Steps to consider:
-   * 1. Create a WAL_WRITE record
-   * 2. Fill in: txn_id, sector, offset, length, old_data, new_data
-   * 3. Calculate and store checksum
-   * 4. Append the record to the log buffer
-   * 5. Return the LSN of this record (caller might need it)
-   *
-   * QUESTIONS:
-   * - Should you flush the log record immediately or buffer it?
-   * - What if the log buffer is full?
-   * - What if old_data or new_data is larger than your record can hold?
-   */
+ bool wal_log_write(struct wal_txn* txn, block_sector_t sector, const void* old_data,
+  const void* new_data, uint16_t offset, uint16_t length) {
+/*
+* Log a write operation BEFORE modifying the actual data.
+* 
+* For writes larger than WAL_MAX_DATA_SIZE (232 bytes), we split into
+* multiple log records. All records share the same txn_id, so during
+* recovery they're processed together.
+*/
 
-  return false; /* Replace with your implementation */
+if (txn == NULL || txn->state != TXN_ACTIVE) {
+return false;
+}
+
+const uint8_t *old_bytes = (const uint8_t *)old_data;
+const uint8_t *new_bytes = (const uint8_t *)new_data;
+
+uint16_t bytes_logged = 0;
+
+while (bytes_logged < length) {
+/* Calculate how much to log in this record */
+uint16_t chunk_size = length - bytes_logged;
+if (chunk_size > WAL_MAX_DATA_SIZE) {
+chunk_size = WAL_MAX_DATA_SIZE;
+}
+
+/* Create the log record */
+struct wal_record rec;
+memset(&rec, 0, sizeof(rec));
+rec.type = WAL_WRITE;
+rec.txn_id = txn->txn_id;
+rec.sector = sector;
+rec.offset = offset + bytes_logged;
+rec.length = chunk_size;
+
+/* Copy old and new data into the record */
+memcpy(rec.old_data, old_bytes + bytes_logged, chunk_size);
+memcpy(rec.new_data, new_bytes + bytes_logged, chunk_size);
+
+/* Append to log */
+lsn_t lsn = wal_append_record(&rec);
+
+/* Update transaction's last LSN */
+txn->last_lsn = lsn;
+
+bytes_logged += chunk_size;
+}
+
+/* Update statistics */
+lock_acquire(&wal.wal_lock);
+wal.stats_writes_logged++;
+lock_release(&wal.wal_lock);
+
+return true;
 }
 
 void wal_flush(lsn_t up_to_lsn) {

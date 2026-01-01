@@ -68,6 +68,7 @@ enum wal_record_type {
  */
 
 typedef uint32_t txn_id_t;
+typedef uint64_t lsn_t; /* Log Sequence Number */
 
 enum txn_state {
   TXN_ACTIVE,
@@ -80,12 +81,8 @@ struct wal_txn {
   enum txn_state state;  /* Current transaction state */
   struct list_elem elem; /* Element in active transactions list */
 
-  /* TODO: What else does a transaction need to track?
-   * Consider:
-   * - First log record position (for rollback)
-   * - List of modified sectors
-   * - Locks held by this transaction
-   */
+  lsn_t first_lsn;       /* LSN of BEGIN record (for rollback - scan from here) */
+  lsn_t last_lsn;        /* LSN of most recent record (for efficient abort) */
 };
 
 /* ============================================================
@@ -95,8 +92,6 @@ struct wal_txn {
  * Design: One log record = one 512-byte sector (simple!)
  * Large writes are split into multiple records sharing the same txn_id.
  */
-
-typedef uint64_t lsn_t; /* Log Sequence Number */
 
 #define WAL_MAX_DATA_SIZE 232 /* Max bytes of data per record */
 

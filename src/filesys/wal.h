@@ -185,6 +185,7 @@ struct wal_manager {
 
   /* Checkpoint information */
   lsn_t checkpoint_lsn; /* LSN of last checkpoint (0 if none) */
+  bool checkpointing;   /* Flag to prevent recursive checkpoint calls */
 };
 
 /* WAL statistics structure (for testing/verification) */
@@ -323,9 +324,6 @@ void wal_reset_stats(void);
 
 /* Append a record to the log buffer */
 static lsn_t wal_append_record(struct wal_record* record);
-
-/* Write log buffer to disk */
-static void wal_flush_buffer(void);
 
 /* Read a log record from disk */
 static bool wal_read_record(lsn_t lsn, struct wal_record* record);

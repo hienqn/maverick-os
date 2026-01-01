@@ -50,27 +50,36 @@ void wal_init_metadata(void) {
 
 void wal_init(bool format) {
   /*
-   * TODO: Initialize the WAL subsystem
+   * Initialize the WAL (Write-Ahead Logging) subsystem.
    *
-   * Steps to consider:
-   * 1. Initialize the wal_lock
-   * 2. Set initial values for next_lsn, flushed_lsn, next_txn_id
-   * 3. Allocate the log buffer (how big should it be?)
-   * 4. Check if recovery is needed and call wal_recover() if so
+   * HIGH-LEVEL OVERVIEW:
+   * This function initializes the WAL system, which provides crash consistency
+   * by logging all filesystem modifications before applying them. The system
+   * can recover from crashes by replaying (or undoing) logged operations.
    *
-   * HINT: How do you know if the system crashed previously?
-   * One approach: Write a "clean shutdown" marker and check for it.
+   * INITIALIZATION FLOW:
+   * 1. Initialize synchronization (lock)
+   * 2. If formatting: Set fresh state, allocate buffer (metadata written in do_format)
+   * 3. If not formatting: Read metadata, check for crash, recover if needed
+   * 4. Allocate log buffer for batching writes
+   * 5. Initialize transaction tracking and statistics
+   *
+   * CRASH DETECTION:
+   * - Reads metadata sector to check clean_shutdown flag
+   * - If dirty (clean_shutdown=0): System crashed, run recovery
+   * - If clean (clean_shutdown=1): Normal boot, restore state from metadata
+   * - If invalid metadata: Treat as corrupted, initialize fresh
    */
   lock_init(&wal.wal_lock);
 
   if (format) {
-    /* We're formatting - metadata will be initialized in do_format() */
-    /* Just set in-memory state for now */
+    /* FORMATTING PATH: Fresh filesystem initialization */
+    /* Set in-memory state for new filesystem */
     wal.next_lsn = 1;
     wal.flushed_lsn = 0;
     wal.next_txn_id = 1;
 
-    /* Allocate log buffer */
+    /* Allocate log buffer for batching log writes */
     wal.log_buffer = malloc(WAL_BUFFER_SIZE);
     if (wal.log_buffer == NULL) {
       PANIC("Failed to allocate WAL log buffer");
@@ -78,26 +87,32 @@ void wal_init(bool format) {
     wal.buffer_size = WAL_BUFFER_SIZE;
     wal.buffer_used = 0;
 
-    /* Initialize statistics */
+    /* Initialize statistics counters */
     wal.stats_txn_begun = 0;
     wal.stats_txn_committed = 0;
     wal.stats_txn_aborted = 0;
     wal.stats_writes_logged = 0;
 
-    /* Note: wal_init_metadata() will be called in do_format() to write to disk */
+    /* Initialize active transaction tracking */
+    list_init(&wal.active_txns);
+
+    /* Initialize checkpoint LSN (no checkpoint yet) */
+    wal.checkpoint_lsn = 0;
+
+    /* Note: wal_init_metadata() will be called in do_format() to write metadata to disk */
     return;
   }
 
-  /* Not formatting - read metadata to check for clean shutdown */
+  /* NORMAL BOOT PATH: Mount existing filesystem */
   struct wal_metadata meta;
   wal_read_metadata(&meta);
 
-  /* Check if metadata is valid */
+  /* Check if metadata is valid (magic number matches) */
   bool metadata_valid = (meta.magic == WAL_METADATA_MAGIC);
 
   if (!metadata_valid) {
-    /* Not formatting, but metadata doesn't exist - this is an error */
-    /* Could be corrupted filesystem, but we'll treat it as fresh */
+    /* CORRUPTED METADATA: Initialize fresh metadata */
+    /* This shouldn't happen on a normal filesystem, but handle gracefully */
     wal_init_metadata();
     wal.next_lsn = 1;
     wal.flushed_lsn = 0;
@@ -106,16 +121,18 @@ void wal_init(bool format) {
     meta.clean_shutdown = 0;
     wal_write_metadata(&meta);
   } else {
-    /* Metadata exists - check if clean shutdown */
+    /* VALID METADATA: Check shutdown state */
     bool clean_shutdown = (meta.clean_shutdown == 1);
 
     if (!clean_shutdown) {
-      /* System crashed! Need recovery */
-      wal_recover(); /* This will scan the log and find the max LSN */
+      /* CRASH DETECTED: System didn't shut down cleanly */
+      /* Run recovery to restore filesystem to consistent state */
+      wal_recover(); /* Scans log, redoes committed transactions, undoes uncommitted */
       /* After recovery, next_lsn should be set to max_lsn + 1 */
     } else {
-      /* Clean shutdown - use stored last LSN or start fresh */
+      /* CLEAN SHUTDOWN: Restore state from metadata */
       if (meta.last_lsn > 0) {
+        /* Continue from last LSN (ensures LSN continuity) */
         wal.next_lsn = meta.last_lsn + 1;
         wal.flushed_lsn = meta.last_lsn;
       } else {
@@ -126,12 +143,12 @@ void wal_init(bool format) {
       wal.next_txn_id = meta.last_txn_id + 1;
     }
 
-    /* Mark as dirty (will be set to clean on shutdown) */
+    /* Mark as dirty for this session (will be set to clean on shutdown) */
     meta.clean_shutdown = 0;
     wal_write_metadata(&meta);
   }
 
-  /* Allocate log buffer */
+  /* Allocate log buffer for batching log writes (performance optimization) */
   wal.log_buffer = malloc(WAL_BUFFER_SIZE);
   if (wal.log_buffer == NULL) {
     PANIC("Failed to allocate WAL log buffer");
@@ -139,13 +156,17 @@ void wal_init(bool format) {
   wal.buffer_size = WAL_BUFFER_SIZE;
   wal.buffer_used = 0;
 
-  /* Initialize statistics */
+  /* Initialize statistics counters (for testing/monitoring) */
   wal.stats_txn_begun = 0;
   wal.stats_txn_committed = 0;
   wal.stats_txn_aborted = 0;
   wal.stats_writes_logged = 0;
 
-  /* TODO: Initialize other state (active transaction list, etc.) */
+  /* Initialize active transaction tracking (for recovery and shutdown) */
+  list_init(&wal.active_txns);
+
+  /* Initialize checkpoint LSN (no checkpoint yet) */
+  wal.checkpoint_lsn = 0;
 }
 
 void wal_shutdown(void) {

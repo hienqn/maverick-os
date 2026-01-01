@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include "devices/block.h"
 #include "threads/synch.h"
+#include <list.h>
 
 /*
  * Write-Ahead Logging (WAL) for Pintos Filesystem
@@ -75,8 +76,9 @@ enum txn_state {
 };
 
 struct wal_txn {
-  txn_id_t txn_id;      /* Unique transaction identifier */
-  enum txn_state state; /* Current transaction state */
+  txn_id_t txn_id;       /* Unique transaction identifier */
+  enum txn_state state;  /* Current transaction state */
+  struct list_elem elem; /* Element in active transactions list */
 
   /* TODO: What else does a transaction need to track?
    * Consider:
@@ -178,12 +180,11 @@ struct wal_manager {
   uint32_t stats_txn_aborted;   /* Number of transactions aborted */
   uint32_t stats_writes_logged; /* Number of write operations logged */
 
-  /* TODO: What else do you need?
-   * Consider:
-   * - Active transaction list/table
-   * - Checkpoint LSN
-   * - Recovery state
-   */
+  /* Active transaction tracking */
+  struct list active_txns; /* List of currently active transactions */
+
+  /* Checkpoint information */
+  lsn_t checkpoint_lsn; /* LSN of last checkpoint (0 if none) */
 };
 
 /* WAL statistics structure (for testing/verification) */

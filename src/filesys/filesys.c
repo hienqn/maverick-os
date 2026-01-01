@@ -295,9 +295,9 @@ void filesys_init(bool format) {
     PANIC("No file system device found, can't initialize file system.");
 
   cache_init();
+  free_map_init();  /* Initialize free map first (marks WAL sectors as reserved) */
   wal_init(format); /* Initialize WAL subsystem (may trigger recovery if crash detected) */
   inode_init();
-  free_map_init();
 
   if (format)
     do_format();

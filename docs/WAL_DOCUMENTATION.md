@@ -614,41 +614,62 @@ After crash:
 
 ## 9. Checkpointing
 
-### 9.1 The Problem with Unbounded Recovery
+### 9.1 The Problem with Log Overflow
 
-Without checkpoints, recovery must scan the ENTIRE log from the beginning of time. As the log grows, recovery time grows unboundedly.
+Our WAL uses a fixed-size circular log (64 sectors). Without checkpoints, the log would eventually wrap around and overwrite records that might still be needed for recovery.
 
 ### 9.2 What a Checkpoint Does
 
-A checkpoint guarantees that all committed data up to that point is on disk:
+A checkpoint guarantees that all committed data up to that point is on disk, making it safe to reuse older log sectors:
 
 ```c
 void wal_checkpoint(void) {
+    // Prevent recursive checkpoints
+    lock_acquire(&wal.wal_lock);
+    if (wal.checkpointing) {
+        lock_release(&wal.wal_lock);
+        return;
+    }
+    wal.checkpointing = true;
+    lock_release(&wal.wal_lock);
+
     // 1. Flush all dirty cache pages to disk
     cache_flush();
 
     // 2. Flush all pending log records
     wal_flush(wal.next_lsn - 1);
 
-    // 3. Write CHECKPOINT record
+    // 3. Write CHECKPOINT record (txn_id = 0 for checkpoint records)
     struct wal_record rec = {0};
     rec.type = WAL_CHECKPOINT;
-    wal_append_record(&rec);
+    rec.txn_id = 0;
+    wal_append_record(&rec);  // Sets wal.checkpoint_lsn internally
 
-    // 4. Record checkpoint LSN
-    wal.checkpoint_lsn = rec.lsn;
+    // 4. Flush the checkpoint record itself
+    wal_flush(wal.next_lsn - 1);
+
+    wal.checkpointing = false;
 }
 ```
 
-### 9.3 How Checkpoints Speed Up Recovery
+### 9.3 Current Limitations
 
-After a checkpoint, recovery only needs to process records AFTER the checkpoint:
+**Note:** Our simplified recovery implementation scans ALL log sectors rather than starting from the last checkpoint:
 
+```c
+void wal_recover(void) {
+    // Scans all 64 sectors (does not optimize using checkpoint_lsn)
+    for (block_sector_t s = 0; s < WAL_LOG_SECTORS; s++) {
+        // ...
+    }
+}
 ```
-Log: [old records...] [CHECKPOINT] [new records...]
-                           │
-                           └── Recovery starts here
-```
+
+In a production system, recovery would skip to the checkpoint LSN. In our implementation, `checkpoint_lsn` is primarily used to track when the log is filling up and trigger new checkpoints—not to optimize recovery time.
+
+This is acceptable because:
+- Our log is only 64 sectors (32KB), so scanning it is fast
+- Recovery only happens after crashes, which are rare
 
 ### 9.4 When to Checkpoint
 

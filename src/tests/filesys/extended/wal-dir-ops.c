@@ -17,7 +17,7 @@
 #include "tests/main.h"
 
 /* Set to 1 after integrating WAL into the filesystem */
-#define WAL_INTEGRATED 0
+#define WAL_INTEGRATED 1
 
 #define FILE_SIZE 128
 static char buf[FILE_SIZE];

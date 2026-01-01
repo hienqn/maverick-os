@@ -559,8 +559,10 @@ off_t inode_write_at(struct inode* inode, const void* buffer_, off_t size, off_t
   lock_release(&inode->lock);
 
   /* Check if we should log this write to WAL.
-     We log user file data but NOT internal metadata (free map at sector 0).
-     This explicit check at the filesystem layer avoids recursion issues. */
+     We only log writes when there's an active WAL transaction, AND
+     we skip internal metadata (free map at sector 0) to avoid recursion.
+     Note: With the current architecture, WAL transactions are started at the
+     filesys layer for atomic metadata operations, not for every data write. */
   struct wal_txn* txn = wal_get_current_txn();
   bool should_log = (txn != NULL) && (inode->sector != FREE_MAP_SECTOR);
 

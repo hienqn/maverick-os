@@ -1,3 +1,17 @@
+/*
+ * Write-Ahead Logging (WAL) Implementation for Pintos Filesystem
+ *
+ * This module implements crash-consistent logging using the WAL technique.
+ * All filesystem modifications are written to the log BEFORE being applied
+ * to the actual data, enabling recovery after crashes.
+ *
+ * Recovery Model: Steal + UNDO/REDO (simplified ARIES)
+ * - REDO: Replay committed transactions (data might not be on disk)
+ * - UNDO: Rollback uncommitted transactions (data might be on disk)
+ *
+ * See wal.h for detailed documentation of the public API.
+ */
+
 #include "filesys/wal.h"
 #include "filesys/cache.h"
 #include "devices/block.h"
@@ -7,18 +21,28 @@
 #include <string.h>
 #include <stdio.h>
 
-/*
- * Write-Ahead Logging Implementation
- *
- * YOUR TASK: Fill in the function bodies below.
- * Each function has hints and questions to guide your implementation.
- */
-
 /* Global WAL manager instance */
 struct wal_manager wal;
 
 /* Reference to the filesystem block device */
 extern struct block* fs_device;
+
+/* Flag to defer checkpoint (set when checkpoint needed but can't run safely) */
+static bool checkpoint_pending = false;
+
+/* Structure for tracking records to undo during recovery */
+struct undo_entry {
+  block_sector_t sector;
+  uint16_t offset;
+  uint16_t length;
+  uint8_t old_data[WAL_MAX_DATA_SIZE];
+  lsn_t lsn;
+};
+
+/* Forward declarations for internal helper functions */
+static lsn_t wal_append_record(struct wal_record* record);
+static bool wal_read_record(lsn_t lsn, struct wal_record* record);
+static uint32_t wal_calculate_checksum(struct wal_record* record);
 
 /* ============================================================
  * METADATA HELPER FUNCTIONS
@@ -34,12 +58,12 @@ static void wal_write_metadata(struct wal_metadata* meta) {
   block_write(fs_device, WAL_METADATA_SECTOR, meta);
 }
 
-/* Initialize metadata sector (called on first format) */
+/* Initialize metadata sector (called during filesystem format) */
 void wal_init_metadata(void) {
   struct wal_metadata meta;
   memset(&meta, 0, sizeof(meta));
   meta.magic = WAL_METADATA_MAGIC;
-  meta.clean_shutdown = 1; /* Start as clean (fresh filesystem) */
+  meta.clean_shutdown = 1;
   meta.last_lsn = 0;
   meta.last_txn_id = 0;
   wal_write_metadata(&meta);
@@ -50,37 +74,14 @@ void wal_init_metadata(void) {
  * ============================================================ */
 
 void wal_init(bool format) {
-  /*
-   * Initialize the WAL (Write-Ahead Logging) subsystem.
-   *
-   * HIGH-LEVEL OVERVIEW:
-   * This function initializes the WAL system, which provides crash consistency
-   * by logging all filesystem modifications before applying them. The system
-   * can recover from crashes by replaying (or undoing) logged operations.
-   *
-   * INITIALIZATION FLOW:
-   * 1. Initialize synchronization (lock)
-   * 2. If formatting: Set fresh state, allocate buffer (metadata written in do_format)
-   * 3. If not formatting: Read metadata, check for crash, recover if needed
-   * 4. Allocate log buffer for batching writes
-   * 5. Initialize transaction tracking and statistics
-   *
-   * CRASH DETECTION:
-   * - Reads metadata sector to check clean_shutdown flag
-   * - If dirty (clean_shutdown=0): System crashed, run recovery
-   * - If clean (clean_shutdown=1): Normal boot, restore state from metadata
-   * - If invalid metadata: Treat as corrupted, initialize fresh
-   */
   lock_init(&wal.wal_lock);
 
   if (format) {
-    /* FORMATTING PATH: Fresh filesystem initialization */
-    /* Set in-memory state for new filesystem */
+    /* Fresh filesystem: initialize in-memory state */
     wal.next_lsn = 1;
     wal.flushed_lsn = 0;
     wal.next_txn_id = 1;
 
-    /* Allocate log buffer for batching log writes */
     wal.log_buffer = malloc(WAL_BUFFER_SIZE);
     if (wal.log_buffer == NULL) {
       PANIC("Failed to allocate WAL log buffer");
@@ -88,69 +89,55 @@ void wal_init(bool format) {
     wal.buffer_size = WAL_BUFFER_SIZE;
     wal.buffer_used = 0;
 
-    /* Initialize statistics counters */
     wal.stats_txn_begun = 0;
     wal.stats_txn_committed = 0;
     wal.stats_txn_aborted = 0;
     wal.stats_writes_logged = 0;
 
-    /* Initialize active transaction tracking */
     list_init(&wal.active_txns);
-
-    /* Initialize checkpoint LSN (no checkpoint yet) */
     wal.checkpoint_lsn = 0;
     wal.checkpointing = false;
-
-    /* Note: wal_init_metadata() will be called in do_format() to write metadata to disk */
     return;
   }
 
-  /* NORMAL BOOT PATH: Mount existing filesystem */
+  /* Existing filesystem: read metadata and check for crash */
   struct wal_metadata meta;
   wal_read_metadata(&meta);
 
-  /* Check if metadata is valid (magic number matches) */
   bool metadata_valid = (meta.magic == WAL_METADATA_MAGIC);
 
   if (!metadata_valid) {
-    /* CORRUPTED METADATA: Initialize fresh metadata */
-    /* This shouldn't happen on a normal filesystem, but handle gracefully */
+    /* Corrupted metadata: reinitialize */
     wal_init_metadata();
     wal.next_lsn = 1;
     wal.flushed_lsn = 0;
     wal.next_txn_id = 1;
-    /* Mark as dirty (will be set to clean on shutdown) */
     meta.clean_shutdown = 0;
     wal_write_metadata(&meta);
   } else {
-    /* VALID METADATA: Check shutdown state */
     bool clean_shutdown = (meta.clean_shutdown == 1);
 
     if (!clean_shutdown) {
-      /* CRASH DETECTED: System didn't shut down cleanly */
-      /* Run recovery to restore filesystem to consistent state */
-      wal_recover(); /* Scans log, redoes committed transactions, undoes uncommitted */
-      /* After recovery, next_lsn should be set to max_lsn + 1 */
+      /* Crash detected: run recovery */
+      wal_recover();
     } else {
-      /* CLEAN SHUTDOWN: Restore state from metadata */
+      /* Clean shutdown: restore state from metadata */
       if (meta.last_lsn > 0) {
-        /* Continue from last LSN (ensures LSN continuity) */
         wal.next_lsn = meta.last_lsn + 1;
         wal.flushed_lsn = meta.last_lsn;
       } else {
-        /* Fresh filesystem or no previous LSN */
         wal.next_lsn = 1;
         wal.flushed_lsn = 0;
       }
       wal.next_txn_id = meta.last_txn_id + 1;
     }
 
-    /* Mark as dirty for this session (will be set to clean on shutdown) */
+    /* Mark as dirty for this session */
     meta.clean_shutdown = 0;
     wal_write_metadata(&meta);
   }
 
-  /* Allocate log buffer for batching log writes (performance optimization) */
+  /* Allocate log buffer */
   wal.log_buffer = malloc(WAL_BUFFER_SIZE);
   if (wal.log_buffer == NULL) {
     PANIC("Failed to allocate WAL log buffer");
@@ -158,75 +145,33 @@ void wal_init(bool format) {
   wal.buffer_size = WAL_BUFFER_SIZE;
   wal.buffer_used = 0;
 
-  /* Initialize statistics counters (for testing/monitoring) */
+  /* Initialize statistics and transaction tracking */
   wal.stats_txn_begun = 0;
   wal.stats_txn_committed = 0;
   wal.stats_txn_aborted = 0;
   wal.stats_writes_logged = 0;
 
-  /* Initialize active transaction tracking (for recovery and shutdown) */
   list_init(&wal.active_txns);
-
-  /* Initialize checkpoint LSN (no checkpoint yet) */
   wal.checkpoint_lsn = 0;
   wal.checkpointing = false;
 }
 
 void wal_shutdown(void) {
-  /*
-   * Cleanly shut down the WAL (Write-Ahead Logging) subsystem.
-   *
-   * HIGH-LEVEL OVERVIEW:
-   * This function ensures all WAL state is safely persisted to disk before
-   * the filesystem unmounts. The clean shutdown marker tells wal_init() on
-   * the next boot that the system shut down gracefully (no crash recovery needed).
-   *
-   * SHUTDOWN FLOW (CRITICAL ORDER):
-   * 1. Wait for or abort any active transactions (future: implement transaction cleanup)
-   * 2. Flush all pending log records to disk (ensures all logged operations are durable)
-   * 3. Write clean shutdown marker to metadata (MUST be last - marks successful shutdown)
-   * 4. Free allocated resources (log buffer, etc.)
-   *
-   * WHY THIS ORDER MATTERS:
-   * - Log records must be flushed BEFORE writing the clean marker
-   *   (otherwise marker says "clean" but log is incomplete)
-   * - Clean marker must be written AFTER all flushes complete
-   *   (this is the atomic point that indicates successful shutdown)
-   * - Resources freed last (no longer needed after shutdown marker written)
-   *
-   * CRASH SAFETY:
-   * If system crashes during shutdown, the clean_shutdown flag remains 0 (dirty),
-   * so next boot will run recovery to restore consistency.
-   */
-
-  /* TODO: Wait for or abort any active transactions */
-  /* For now, we assume all transactions have completed before shutdown.
-   * Future enhancement: iterate through wal.active_txns and either:
-   *   - Wait for them to complete (graceful shutdown)
-   *   - Abort them (force shutdown)
-   */
-
-  /* STEP 1: Flush all pending log records to disk */
-  /* This ensures all logged operations are durable before marking shutdown as clean */
+  /* Flush all pending log records to disk */
   if (wal.next_lsn > 0) {
-    wal_flush(wal.next_lsn - 1); /* Flush up to last assigned LSN */
+    wal_flush(wal.next_lsn - 1);
   }
 
-  /* STEP 2: Write clean shutdown marker - CRITICAL: This must happen last! */
-  /* This is the atomic point that indicates successful shutdown. If we crash
-   * before this, clean_shutdown remains 0 and recovery will run on next boot. */
+  /* Write clean shutdown marker */
   struct wal_metadata meta;
   wal_read_metadata(&meta);
   meta.magic = WAL_METADATA_MAGIC;
-  meta.clean_shutdown = 1; /* Mark as clean shutdown */
-  /* Store last LSN (0 if no records written yet) */
+  meta.clean_shutdown = 1;
   meta.last_lsn = (wal.next_lsn > 0) ? wal.next_lsn - 1 : 0;
-  /* Store last transaction ID (0 if no transactions yet) */
   meta.last_txn_id = (wal.next_txn_id > 0) ? wal.next_txn_id - 1 : 0;
   wal_write_metadata(&meta);
 
-  /* STEP 3: Free allocated resources */
-  /* Safe to free now - shutdown marker is written, system is clean */
+  /* Free allocated resources */
   if (wal.log_buffer != NULL) {
     free(wal.log_buffer);
     wal.log_buffer = NULL;
@@ -239,33 +184,30 @@ void wal_shutdown(void) {
  * TRANSACTION MANAGEMENT
  * ============================================================ */
 
- struct wal_txn* wal_txn_begin(void) {
-  // 1. Allocate a new wal_txn structure
-  struct wal_txn *txn = malloc(sizeof(struct wal_txn));
-  if (txn == NULL) return NULL;
+struct wal_txn* wal_txn_begin(void) {
+  struct wal_txn* txn = malloc(sizeof(struct wal_txn));
+  if (txn == NULL)
+    return NULL;
 
-  // 2. Assign unique transaction ID (under lock)
+  /* Assign unique transaction ID */
   lock_acquire(&wal.wal_lock);
   txn->txn_id = wal.next_txn_id++;
   wal.stats_txn_begun++;
   lock_release(&wal.wal_lock);
 
-  // 3. Set initial state
   txn->state = TXN_ACTIVE;
 
-  // 4. Write BEGIN record to log
+  /* Write BEGIN record to log */
   struct wal_record rec;
   memset(&rec, 0, sizeof(rec));
   rec.type = WAL_BEGIN;
   rec.txn_id = txn->txn_id;
   lsn_t begin_lsn = wal_append_record(&rec);
 
-  // 5. Store first LSN (needed for abort - to know where to start reading)
   txn->first_lsn = begin_lsn;
-  // Initialize last_lsn to the same value (will be updated as more records are added)
   txn->last_lsn = begin_lsn;
 
-  // 6. Add to active transaction list
+  /* Add to active transaction list */
   lock_acquire(&wal.wal_lock);
   list_push_back(&wal.active_txns, &txn->elem);
   lock_release(&wal.wal_lock);
@@ -274,161 +216,200 @@ void wal_shutdown(void) {
 }
 
 bool wal_txn_commit(struct wal_txn* txn) {
-  /*
-   * TODO: Commit a transaction
-   *
-   * Steps to consider:
-   * 1. Write a WAL_COMMIT record to the log
-   * 2. CRITICAL: Flush the log to disk (why is this critical?)
-   * 3. Update transaction state to TXN_COMMITTED
-   * 4. Remove from active transaction list
-   * 5. Free the transaction structure
-   *
-   * THE KEY INSIGHT:
-   * A transaction is only considered committed when its COMMIT
-   * record is safely on disk. This is the "durability" guarantee.
-   *
-   * QUESTION: What happens if the system crashes between writing
-   * the COMMIT record and flushing it to disk?
-   */
+  if (txn == NULL || txn->state != TXN_ACTIVE) {
+    return false;
+  }
 
-  return false; /* Replace with your implementation */
+  /* Write COMMIT record to log */
+  struct wal_record rec;
+  memset(&rec, 0, sizeof(rec));
+  rec.type = WAL_COMMIT;
+  rec.txn_id = txn->txn_id;
+  lsn_t commit_lsn = wal_append_record(&rec);
+
+  /* Flush log to disk - this is the durability point */
+  wal_flush(commit_lsn);
+
+  txn->state = TXN_COMMITTED;
+
+  /* Remove from active transaction list */
+  lock_acquire(&wal.wal_lock);
+  list_remove(&txn->elem);
+  wal.stats_txn_committed++;
+  lock_release(&wal.wal_lock);
+
+  free(txn);
+
+  /* Note: Deferred checkpoint is handled at shutdown or explicit checkpoint call.
+     We don't trigger it here to avoid stack overflow from recursive calls
+     when cache_write -> wal_txn_commit -> checkpoint -> cache_flush. */
+
+  return true;
 }
 
 void wal_txn_abort(struct wal_txn* txn) {
-  /*
-   * TODO: Abort a transaction, undoing all its changes
-   *
-   * Steps to consider:
-   * 1. Read log records for this transaction (in reverse order!)
-   * 2. For each WAL_WRITE record, restore the old_data
-   * 3. Write a WAL_ABORT record to the log
-   * 4. Update transaction state to TXN_ABORTED
-   * 5. Free the transaction structure
-   *
-   * QUESTION: Why do you need to process records in reverse order?
-   *
-   * HINT: You need to track the first LSN for this transaction
-   * so you know where to start reading.
-   */
+  if (txn == NULL || txn->state != TXN_ACTIVE) {
+    return;
+  }
+
+  /* Collect all WRITE records for this transaction.
+   * Use heap allocation to avoid stack overflow (Pintos has 4KB kernel stack).
+   * MAX_UNDO_RECORDS * sizeof(lsn_t) = 64 * 8 = 512 bytes on heap. */
+#define MAX_UNDO_RECORDS 64
+  lsn_t* undo_lsns = malloc(MAX_UNDO_RECORDS * sizeof(lsn_t));
+  if (undo_lsns == NULL) {
+    /* Can't undo without memory - at least mark as aborted */
+    txn->state = TXN_ABORTED;
+    lock_acquire(&wal.wal_lock);
+    list_remove(&txn->elem);
+    wal.stats_txn_aborted++;
+    lock_release(&wal.wal_lock);
+    free(txn);
+    return;
+  }
+  size_t undo_count = 0;
+
+  lock_acquire(&wal.wal_lock);
+  lsn_t end_lsn = wal.next_lsn;
+  lock_release(&wal.wal_lock);
+
+  /* Flush log buffer to disk so we can read the records back */
+  wal_flush(end_lsn);
+
+  /* Use heap-allocated record buffer to minimize stack usage */
+  struct wal_record* rec = malloc(sizeof(struct wal_record));
+  if (rec == NULL) {
+    free(undo_lsns);
+    txn->state = TXN_ABORTED;
+    lock_acquire(&wal.wal_lock);
+    list_remove(&txn->elem);
+    wal.stats_txn_aborted++;
+    lock_release(&wal.wal_lock);
+    free(txn);
+    return;
+  }
+
+  for (lsn_t lsn = txn->first_lsn; lsn < end_lsn && undo_count < MAX_UNDO_RECORDS; lsn++) {
+    if (!wal_read_record(lsn, rec)) {
+      continue;
+    }
+
+    if (rec->txn_id == txn->txn_id && rec->type == WAL_WRITE) {
+      undo_lsns[undo_count++] = lsn;
+    }
+  }
+
+  /* Process WRITE records in REVERSE order, restoring old_data.
+   * We use cache_write() instead of block_write() so the cache stays
+   * consistent with disk after the UNDO. */
+  for (size_t i = undo_count; i > 0; i--) {
+    if (!wal_read_record(undo_lsns[i - 1], rec)) {
+      continue;
+    }
+
+    /* Write the old_data back through the cache */
+    cache_write(rec->sector, rec->old_data, rec->offset, rec->length);
+  }
+
+  /* Flush cache to ensure UNDO is on disk */
+  cache_flush();
+
+  /* Write ABORT record to log */
+  memset(rec, 0, sizeof(*rec));
+  rec->type = WAL_ABORT;
+  rec->txn_id = txn->txn_id;
+  wal_append_record(rec);
+
+  free(rec);
+  free(undo_lsns);
+
+  txn->state = TXN_ABORTED;
+
+  /* Remove from active transaction list */
+  lock_acquire(&wal.wal_lock);
+  list_remove(&txn->elem);
+  wal.stats_txn_aborted++;
+  lock_release(&wal.wal_lock);
+
+  free(txn);
 }
 
 /* ============================================================
  * LOGGING OPERATIONS
  * ============================================================ */
 
- bool wal_log_write(struct wal_txn* txn, block_sector_t sector, const void* old_data,
-  const void* new_data, uint16_t offset, uint16_t length) {
-/*
-* Log a write operation BEFORE modifying the actual data.
-* 
-* For writes larger than WAL_MAX_DATA_SIZE (232 bytes), we split into
-* multiple log records. All records share the same txn_id, so during
-* recovery they're processed together.
-*/
+bool wal_log_write(struct wal_txn* txn, block_sector_t sector, const void* old_data,
+                   const void* new_data, uint16_t offset, uint16_t length) {
+  if (txn == NULL || txn->state != TXN_ACTIVE) {
+    return false;
+  }
 
-if (txn == NULL || txn->state != TXN_ACTIVE) {
-return false;
-}
+  const uint8_t* old_bytes = (const uint8_t*)old_data;
+  const uint8_t* new_bytes = (const uint8_t*)new_data;
 
-const uint8_t *old_bytes = (const uint8_t *)old_data;
-const uint8_t *new_bytes = (const uint8_t *)new_data;
+  uint16_t bytes_logged = 0;
 
-uint16_t bytes_logged = 0;
+  /* Split large writes into multiple records */
+  while (bytes_logged < length) {
+    uint16_t chunk_size = length - bytes_logged;
+    if (chunk_size > WAL_MAX_DATA_SIZE) {
+      chunk_size = WAL_MAX_DATA_SIZE;
+    }
 
-while (bytes_logged < length) {
-/* Calculate how much to log in this record */
-uint16_t chunk_size = length - bytes_logged;
-if (chunk_size > WAL_MAX_DATA_SIZE) {
-chunk_size = WAL_MAX_DATA_SIZE;
-}
+    struct wal_record rec;
+    memset(&rec, 0, sizeof(rec));
+    rec.type = WAL_WRITE;
+    rec.txn_id = txn->txn_id;
+    rec.sector = sector;
+    rec.offset = offset + bytes_logged;
+    rec.length = chunk_size;
 
-/* Create the log record */
-struct wal_record rec;
-memset(&rec, 0, sizeof(rec));
-rec.type = WAL_WRITE;
-rec.txn_id = txn->txn_id;
-rec.sector = sector;
-rec.offset = offset + bytes_logged;
-rec.length = chunk_size;
+    memcpy(rec.old_data, old_bytes + bytes_logged, chunk_size);
+    memcpy(rec.new_data, new_bytes + bytes_logged, chunk_size);
 
-/* Copy old and new data into the record */
-memcpy(rec.old_data, old_bytes + bytes_logged, chunk_size);
-memcpy(rec.new_data, new_bytes + bytes_logged, chunk_size);
+    lsn_t lsn = wal_append_record(&rec);
+    txn->last_lsn = lsn;
 
-/* Append to log */
-lsn_t lsn = wal_append_record(&rec);
+    bytes_logged += chunk_size;
+  }
 
-/* Update transaction's last LSN */
-txn->last_lsn = lsn;
+  lock_acquire(&wal.wal_lock);
+  wal.stats_writes_logged++;
+  lock_release(&wal.wal_lock);
 
-bytes_logged += chunk_size;
-}
-
-/* Update statistics */
-lock_acquire(&wal.wal_lock);
-wal.stats_writes_logged++;
-lock_release(&wal.wal_lock);
-
-return true;
+  return true;
 }
 
 void wal_flush(lsn_t up_to_lsn) {
-  /*
-   * Flush log records to disk up to the specified LSN.
-   *
-   * This function ensures all log records up to (and including) up_to_lsn
-   * are written to disk. It flushes the in-memory log buffer, which contains
-   * records that haven't been written to disk yet.
-   *
-   * IMPLEMENTATION:
-   * Since records are appended sequentially and the buffer contains the most
-   * recent records, we simply flush the buffer. The buffer should contain
-   * records up to (or close to) up_to_lsn if it hasn't been flushed recently.
-   *
-   * NOTE: We bypass the buffer cache and write directly to disk for durability.
-   * Log records must be persistent - if the cache evicts a log sector before
-   * it's persisted, we could lose critical recovery information.
-   */
-
   lock_acquire(&wal.wal_lock);
 
-  /* If already flushed beyond this LSN, nothing to do */
   if (up_to_lsn <= wal.flushed_lsn) {
     lock_release(&wal.wal_lock);
     return;
   }
 
-  /* Flush the buffer contents to disk */
   if (wal.buffer_used == 0) {
     lock_release(&wal.wal_lock);
-    return; /* Nothing to flush */
+    return;
   }
 
-  /* Calculate number of records in buffer */
+  /* Write each record to its corresponding disk sector */
   size_t num_records = wal.buffer_used / sizeof(struct wal_record);
   lsn_t max_lsn_written = wal.flushed_lsn;
 
-  /* Write each record to its corresponding disk sector */
   for (size_t i = 0; i < num_records; i++) {
-    /* Get pointer to record i in the buffer */
     struct wal_record* rec = (struct wal_record*)(wal.log_buffer + i * sizeof(struct wal_record));
-
-    /* Calculate which disk sector this LSN maps to */
     block_sector_t sector = WAL_LOG_START_SECTOR + ((rec->lsn - 1) % WAL_LOG_SECTORS);
 
     /* Write directly to disk (bypass cache for durability) */
     block_write(fs_device, sector, rec);
 
-    /* Track highest LSN written */
     if (rec->lsn > max_lsn_written) {
       max_lsn_written = rec->lsn;
     }
   }
 
-  /* Update flushed_lsn to reflect what's now on disk */
   wal.flushed_lsn = max_lsn_written;
-
   lock_release(&wal.wal_lock);
 }
 
@@ -437,89 +418,38 @@ void wal_flush(lsn_t up_to_lsn) {
  * ============================================================ */
 
 void wal_checkpoint(void) {
-  /*
-   * Create a checkpoint to apply committed changes to data pages.
-   *
-   * HIGH-LEVEL OVERVIEW:
-   * In WAL, changes are logged BEFORE being applied to data pages. A checkpoint
-   * ensures that all committed transactions have their changes applied to (flushed
-   * to) the actual data pages on disk. This establishes a known-good state where
-   * the data on disk matches all committed log records up to the checkpoint LSN.
-   *
-   * WHAT CHECKPOINTING DOES:
-   * - Applies/flushes committed changes: All dirty data pages containing
-   *   modifications from committed transactions are written to disk
-   * - Marks a recovery point: After a checkpoint, recovery only needs to
-   *   process log records after the checkpoint (not before)
-   * - Reduces recovery time: Instead of scanning from LSN 1, recovery can
-   *   start from checkpoint_lsn, dramatically reducing work
-   *
-   * CHECKPOINT PROCESS:
-   * 1. Prevent recursive checkpoint calls using checkpointing flag
-   * 2. Flush all dirty cache pages to disk (APPLIES committed changes to data)
-   * 3. Flush all pending log records to disk (ensures log is up-to-date)
-   * 4. Create and append a WAL_CHECKPOINT record (marks this point in log)
-   * 5. Flush the checkpoint record to disk immediately
-   * 6. Clear the checkpointing flag
-   *
-   * KEY INSIGHT:
-   * After a checkpoint, all committed transactions up to checkpoint_lsn have
-   * their data modifications on disk. If we crash, we only need to redo/undo
-   * transactions that came after the checkpoint.
-   *
-   * CHECKPOINT TYPE:
-   * This implements a "fuzzy" checkpoint - we allow active transactions to
-   * continue during checkpointing. A "sharp" checkpoint would require all
-   * transactions to complete first, which provides stronger guarantees but
-   * can block normal operation.
-   *
-   * AUTOMATIC TRIGGERING:
-   * Checkpoints are automatically triggered when the log reaches 75% capacity
-   * (48 out of 64 sectors in use). This prevents log overflow and ensures
-   * recovery remains efficient.
-   */
-
   lock_acquire(&wal.wal_lock);
 
-  /* Prevent recursive checkpoint calls */
   if (wal.checkpointing) {
     lock_release(&wal.wal_lock);
-    return; /* Already checkpointing, skip */
+    return;
   }
   wal.checkpointing = true;
 
   lock_release(&wal.wal_lock);
 
-  /* STEP 1: Flush all dirty DATA pages to disk */
-  /* This applies committed changes to the actual filesystem data sectors */
-  /* Example: writes inode changes to inode sectors, file data to file sectors */
+  /* Flush all dirty data pages to disk */
   cache_flush();
 
-  /* STEP 2: Flush all pending LOG records to disk */
-  /* This writes log records from memory buffer to log sectors (sectors 2-65) */
-  /* Log records contain "before" and "after" images needed for recovery */
+  /* Flush all pending log records to disk */
   if (wal.next_lsn > 0) {
     wal_flush(wal.next_lsn - 1);
   }
 
-  /* STEP 3: Create and write checkpoint record */
+  /* Write checkpoint record */
   struct wal_record checkpoint_record;
   memset(&checkpoint_record, 0, sizeof(checkpoint_record));
   checkpoint_record.type = WAL_CHECKPOINT;
-  checkpoint_record.txn_id = 0; /* Checkpoint is not part of a transaction */
-
-  /* Append checkpoint record (this will update checkpoint_lsn automatically) */
-  /* Note: wal_append_record() acquires its own lock, so we don't hold it here */
+  checkpoint_record.txn_id = 0;
   wal_append_record(&checkpoint_record);
 
-  /* STEP 4: Flush the checkpoint record to disk immediately */
+  /* Flush the checkpoint record immediately */
   lock_acquire(&wal.wal_lock);
   lsn_t checkpoint_lsn = wal.next_lsn - 1;
   lock_release(&wal.wal_lock);
   wal_flush(checkpoint_lsn);
-  lock_acquire(&wal.wal_lock);
 
-  /* Clear checkpointing flag */
+  lock_acquire(&wal.wal_lock);
   wal.checkpointing = false;
   lock_release(&wal.wal_lock);
 }
@@ -530,69 +460,214 @@ void wal_checkpoint(void) {
 
 void wal_recover(void) {
   /*
-   * TODO: Recover the filesystem after a crash
-   *
-   * This is where WAL pays off! You can restore consistency
-   * even after an unexpected shutdown.
-   *
-   * ARIES-STYLE RECOVERY (classic approach):
-   *
-   * Phase 1: ANALYSIS
-   * - Scan the log from the last checkpoint
-   * - Determine which transactions were active at crash time
-   * - Build a list of dirty pages that might need redo
-   *
-   * Phase 2: REDO
-   * - Replay all logged operations from checkpoint forward
-   * - This brings the database to the state it was at crash time
-   * - Redo even committed transactions (they might not have made it to disk)
-   *
-   * Phase 3: UNDO
-   * - Roll back all transactions that were active at crash time
-   * - These transactions never committed, so their changes must be undone
-   *
-   * QUESTIONS:
-   * - Why do you redo committed transactions?
-   * - Why do you undo uncommitted transactions?
-   * - What's the difference between "logical" and "physical" redo?
-   *
-   * SIMPLER APPROACH (if ARIES feels complex):
-   * - Just scan the log and redo all committed transactions
-   * - This works but might be slower
+   * Three-phase recovery (simplified ARIES):
+   * 1. ANALYSIS: Scan log, categorize transactions
+   * 2. REDO: Replay committed transactions
+   * 3. UNDO: Rollback uncommitted transactions
    */
+
+#define MAX_TXNS 256
+  txn_id_t committed_txns[MAX_TXNS];
+  size_t committed_count = 0;
+  txn_id_t uncommitted_txns[MAX_TXNS];
+  size_t uncommitted_count = 0;
+
+  txn_id_t seen_txns[MAX_TXNS];
+  bool txn_committed[MAX_TXNS];
+  bool txn_aborted[MAX_TXNS];
+  size_t seen_count = 0;
+
+  lsn_t max_lsn = 0;
+
+  /* Phase 1: ANALYSIS - Scan log to categorize transactions */
+  for (block_sector_t s = 0; s < WAL_LOG_SECTORS; s++) {
+    struct wal_record rec;
+    block_sector_t sector = WAL_LOG_START_SECTOR + s;
+    block_read(fs_device, sector, &rec);
+
+    /* Verify checksum */
+    uint32_t stored = rec.checksum;
+    rec.checksum = 0;
+    uint32_t calculated = wal_calculate_checksum(&rec);
+    rec.checksum = stored;
+
+    if (stored != calculated || rec.lsn == 0) {
+      continue;
+    }
+
+    if (rec.lsn > max_lsn) {
+      max_lsn = rec.lsn;
+    }
+
+    /* Find or add transaction to tracking */
+    size_t txn_idx = MAX_TXNS;
+    for (size_t i = 0; i < seen_count; i++) {
+      if (seen_txns[i] == rec.txn_id) {
+        txn_idx = i;
+        break;
+      }
+    }
+    if (txn_idx == MAX_TXNS && seen_count < MAX_TXNS && rec.txn_id != 0) {
+      txn_idx = seen_count++;
+      seen_txns[txn_idx] = rec.txn_id;
+      txn_committed[txn_idx] = false;
+      txn_aborted[txn_idx] = false;
+    }
+
+    if (txn_idx < MAX_TXNS) {
+      if (rec.type == WAL_COMMIT) {
+        txn_committed[txn_idx] = true;
+      } else if (rec.type == WAL_ABORT) {
+        txn_aborted[txn_idx] = true;
+      }
+    }
+  }
+
+  /* Categorize transactions */
+  for (size_t i = 0; i < seen_count; i++) {
+    if (txn_committed[i]) {
+      committed_txns[committed_count++] = seen_txns[i];
+    } else if (!txn_aborted[i]) {
+      uncommitted_txns[uncommitted_count++] = seen_txns[i];
+    }
+  }
+
+  /* DEBUG: Print transaction categorization */
+  printf("WAL RECOVERY: Found %u transactions\n", (unsigned)seen_count);
+  printf("  Committed: %u, Uncommitted: %u\n", (unsigned)committed_count,
+         (unsigned)uncommitted_count);
+  for (size_t i = 0; i < committed_count; i++) {
+    printf("    Committed txn_id=%u\n", committed_txns[i]);
+  }
+  for (size_t i = 0; i < uncommitted_count; i++) {
+    printf("    Uncommitted txn_id=%u\n", uncommitted_txns[i]);
+  }
+
+  /* Phase 2: REDO - Replay committed transactions */
+  for (block_sector_t s = 0; s < WAL_LOG_SECTORS; s++) {
+    struct wal_record rec;
+    block_sector_t sector = WAL_LOG_START_SECTOR + s;
+    block_read(fs_device, sector, &rec);
+
+    uint32_t stored = rec.checksum;
+    rec.checksum = 0;
+    uint32_t calculated = wal_calculate_checksum(&rec);
+    rec.checksum = stored;
+    if (stored != calculated)
+      continue;
+
+    if (rec.type != WAL_WRITE)
+      continue;
+
+    bool is_committed = false;
+    for (size_t i = 0; i < committed_count; i++) {
+      if (committed_txns[i] == rec.txn_id) {
+        is_committed = true;
+        break;
+      }
+    }
+
+    if (is_committed) {
+      uint8_t sector_data[BLOCK_SECTOR_SIZE];
+      block_read(fs_device, rec.sector, sector_data);
+      memcpy(sector_data + rec.offset, rec.new_data, rec.length);
+      block_write(fs_device, rec.sector, sector_data);
+    }
+  }
+
+  /* Phase 3: UNDO - Rollback uncommitted transactions (in reverse LSN order) */
+#define MAX_UNDO 512
+  struct undo_entry undo_records[MAX_UNDO];
+  size_t undo_count = 0;
+
+  for (block_sector_t s = 0; s < WAL_LOG_SECTORS; s++) {
+    struct wal_record rec;
+    block_sector_t sector = WAL_LOG_START_SECTOR + s;
+    block_read(fs_device, sector, &rec);
+
+    uint32_t stored = rec.checksum;
+    rec.checksum = 0;
+    uint32_t calculated = wal_calculate_checksum(&rec);
+    rec.checksum = stored;
+    if (stored != calculated)
+      continue;
+
+    if (rec.type != WAL_WRITE)
+      continue;
+
+    bool is_uncommitted = false;
+    for (size_t i = 0; i < uncommitted_count; i++) {
+      if (uncommitted_txns[i] == rec.txn_id) {
+        is_uncommitted = true;
+        break;
+      }
+    }
+
+    if (is_uncommitted && undo_count < MAX_UNDO) {
+      undo_records[undo_count].sector = rec.sector;
+      undo_records[undo_count].offset = rec.offset;
+      undo_records[undo_count].length = rec.length;
+      memcpy(undo_records[undo_count].old_data, rec.old_data, rec.length);
+      undo_records[undo_count].lsn = rec.lsn;
+      undo_count++;
+    }
+  }
+
+  /* Sort by LSN descending for proper undo order */
+  for (size_t i = 0; i < undo_count; i++) {
+    for (size_t j = i + 1; j < undo_count; j++) {
+      if (undo_records[j].lsn > undo_records[i].lsn) {
+        struct undo_entry tmp = undo_records[i];
+        undo_records[i] = undo_records[j];
+        undo_records[j] = tmp;
+      }
+    }
+  }
+
+  /* DEBUG: Print UNDO records */
+  printf("WAL RECOVERY: UNDO phase - %u records to undo\n", (unsigned)undo_count);
+
+  /* Apply UNDO in reverse LSN order */
+  for (size_t i = 0; i < undo_count; i++) {
+    uint8_t sector_data[BLOCK_SECTOR_SIZE];
+    block_read(fs_device, undo_records[i].sector, sector_data);
+    printf("  UNDO: sector %u, offset %u, length %u, old_data[0]='%c'\n", undo_records[i].sector,
+           undo_records[i].offset, undo_records[i].length, undo_records[i].old_data[0]);
+    printf("    Before: sector_data[0]='%c'\n", sector_data[0]);
+    memcpy(sector_data + undo_records[i].offset, undo_records[i].old_data, undo_records[i].length);
+    printf("    After:  sector_data[0]='%c'\n", sector_data[0]);
+    block_write(fs_device, undo_records[i].sector, sector_data);
+  }
+
+  /* Update WAL state for continued operation */
+  wal.next_lsn = max_lsn + 1;
+  wal.flushed_lsn = max_lsn;
+  wal.next_txn_id = 1;
+  for (size_t i = 0; i < seen_count; i++) {
+    if (seen_txns[i] >= wal.next_txn_id) {
+      wal.next_txn_id = seen_txns[i] + 1;
+    }
+  }
 }
 
 /* ============================================================
  * INTERNAL HELPER FUNCTIONS
  * ============================================================ */
 
+/* Append a log record to the in-memory buffer.
+ * Returns the assigned LSN. Flushes buffer if full. */
 static lsn_t wal_append_record(struct wal_record* record) {
-  /*
-   * TODO: Append a record to the in-memory log buffer
-   *
-   * Steps:
-   * 1. Assign the next LSN to the record
-   * 2. Copy the record to the log buffer
-   * 3. Update buffer_used
-   * 4. If buffer is full, flush to disk
-   * 5. Return the assigned LSN
-   *
-   * QUESTION: What synchronization is needed here?
-   */
-
   lock_acquire(&wal.wal_lock);
 
-  /* Assign the next LSN to this record */
   lsn_t assigned_lsn = wal.next_lsn;
   record->lsn = assigned_lsn;
 
-  /* Calculate checksum (must be done after LSN is assigned, before copying to buffer) */
-  record->checksum = 0; /* Clear checksum field for calculation */
+  /* Calculate checksum after LSN is assigned */
+  record->checksum = 0;
   record->checksum = wal_calculate_checksum(record);
 
-  /* Check if buffer has space, flush if needed - MUST be before copy to prevent overflow! */
+  /* Flush buffer if full (must check before copy) */
   if (wal.buffer_used + sizeof(struct wal_record) > wal.buffer_size) {
-    /* Flush buffer contents to disk (release lock, flush, re-acquire) */
     lsn_t current_next = wal.next_lsn;
     lock_release(&wal.wal_lock);
     wal_flush(current_next - 1);
@@ -600,62 +675,59 @@ static lsn_t wal_append_record(struct wal_record* record) {
     wal.buffer_used = 0;
   }
 
-  /* Now safe to copy - buffer has space guaranteed */
+  /* Copy record to buffer */
   memcpy(wal.log_buffer + wal.buffer_used, record, sizeof(struct wal_record));
   wal.buffer_used += sizeof(struct wal_record);
 
-  /* If this is a checkpoint record, update checkpoint_lsn */
   if (record->type == WAL_CHECKPOINT) {
     wal.checkpoint_lsn = assigned_lsn;
   }
 
-  /* Increment next_lsn for the next record */
   wal.next_lsn++;
 
-  /* Check if log is 75% full and trigger checkpoint if needed */
-  /* Calculate how many sectors are in use since last checkpoint */
+  /* Trigger checkpoint when log is 75% full */
   lsn_t log_used;
   if (wal.checkpoint_lsn == 0) {
-    /* No checkpoint yet - all records since LSN 1 are "in use" */
     log_used = wal.next_lsn - 1;
   } else {
-    /* Calculate sectors used since checkpoint (handles wraparound) */
     log_used = wal.next_lsn - wal.checkpoint_lsn;
   }
 
-  /* Trigger checkpoint when log is 75% full (48 out of 64 sectors) */
-  bool should_checkpoint = (log_used >= (WAL_LOG_SECTORS * 3 / 4)) && !wal.checkpointing;
+  /* Mark checkpoint as pending if log is 75% full (don't trigger here to avoid recursion) */
+  if ((log_used >= (WAL_LOG_SECTORS * 3 / 4)) && !wal.checkpointing) {
+    checkpoint_pending = true;
+  }
 
   lock_release(&wal.wal_lock);
 
-  /* Trigger checkpoint outside the lock to avoid deadlock */
-  if (should_checkpoint) {
-    wal_checkpoint();
-  }
-
-  /* Return the LSN that was actually assigned to this record */
   return assigned_lsn;
 }
 
+/* Read a log record from disk given its LSN.
+ * Returns true if record is valid, false if corrupted or overwritten. */
 static bool wal_read_record(lsn_t lsn, struct wal_record* record) {
-  /*
-   * TODO: Read a log record from disk given its LSN
-   *
-   * Steps:
-   * 1. Calculate which sector contains this LSN
-   * 2. Read the sector from disk
-   * 3. Extract the record from the sector
-   * 4. Verify the checksum
-   * 5. Return true if successful, false if corrupted
-   *
-   * QUESTION: How do you map an LSN to a disk location?
-   * (This depends on your log format design)
-   */
+  if (lsn == 0 || record == NULL) {
+    return false;
+  }
 
-  return false; /* Replace with your implementation */
+  block_sector_t sector = WAL_LOG_START_SECTOR + ((lsn - 1) % WAL_LOG_SECTORS);
+  block_read(fs_device, sector, record);
+
+  /* Verify LSN matches (log may have wrapped) */
+  if (record->lsn != lsn) {
+    return false;
+  }
+
+  /* Verify checksum */
+  uint32_t stored_checksum = record->checksum;
+  record->checksum = 0;
+  uint32_t calculated_checksum = wal_calculate_checksum(record);
+  record->checksum = stored_checksum;
+
+  return (stored_checksum == calculated_checksum);
 }
 
-/* CRC32 lookup table for polynomial 0xEDB88320 (reversed CRC32) */
+/* CRC32 lookup table for polynomial 0xEDB88320 */
 static const uint32_t crc32_table[256] = {
     0x00000000, 0x77073096, 0xee0e612c, 0x990951ba, 0x076dc419, 0x706af48f, 0xe963a535, 0x9e6495a3,
     0x0edb8832, 0x79dcb8a4, 0xe0d5e91e, 0x97d2d988, 0x09b64c2b, 0x7eb17cbd, 0xe7b82d07, 0x90bf1d91,
@@ -690,43 +762,42 @@ static const uint32_t crc32_table[256] = {
     0xbdbdf21c, 0xcabac28a, 0x53b39330, 0x24b4a3a6, 0xbad03605, 0xcdd70693, 0x54de5729, 0x23d967bf,
     0xb3667a2e, 0xc4614ab8, 0x5d681b02, 0x2a6f2b94, 0xb40bbe37, 0xc30c8ea1, 0x5a05df1b, 0x2d02ef8d};
 
+/* Calculate CRC32 checksum for a log record (excludes checksum field) */
 static uint32_t wal_calculate_checksum(struct wal_record* record) {
-  /*
-   * Calculate a CRC32 checksum for a log record to detect corruption during recovery.
-   *
-   * IMPLEMENTATION: CRC32 (polynomial 0xEDB88320, reversed)
-   * - Standard CRC32 used by Ethernet, ZIP, PNG, etc.
-   * - Calculates checksum over all bytes EXCEPT the checksum field itself
-   * - Checksum field is at offset 16-19 (4 bytes)
-   * - Struct is 512 bytes total
-   *
-   * CRC32 provides stronger corruption detection than XOR:
-   * - Detects single-bit errors, burst errors, and many multi-bit errors
-   * - Standard algorithm ensures compatibility with common tools
-   */
-  uint32_t crc = 0xFFFFFFFF; /* Initial value */
+  uint32_t crc = 0xFFFFFFFF;
   uint8_t* bytes = (uint8_t*)record;
   size_t checksum_offset = offsetof(struct wal_record, checksum);
   size_t checksum_size = sizeof(uint32_t);
 
-  /* Process all bytes before the checksum field */
+  /* Process bytes before checksum field */
   for (size_t i = 0; i < checksum_offset; i++) {
-    uint8_t byte = bytes[i];
-    crc = (crc >> 8) ^ crc32_table[(crc ^ byte) & 0xFF];
+    crc = (crc >> 8) ^ crc32_table[(crc ^ bytes[i]) & 0xFF];
   }
 
-  /* Process all bytes after the checksum field */
+  /* Process bytes after checksum field */
   for (size_t i = checksum_offset + checksum_size; i < sizeof(struct wal_record); i++) {
-    uint8_t byte = bytes[i];
-    crc = (crc >> 8) ^ crc32_table[(crc ^ byte) & 0xFF];
+    crc = (crc >> 8) ^ crc32_table[(crc ^ bytes[i]) & 0xFF];
   }
 
-  /* Return final CRC (inverted) */
   return ~crc;
 }
 
 /* ============================================================
- * STATISTICS (for testing/verification)
+ * THREAD-LOCAL TRANSACTION MANAGEMENT
+ * ============================================================ */
+
+void wal_set_current_txn(struct wal_txn* txn) {
+  struct thread* t = thread_current();
+  t->current_txn = txn;
+}
+
+struct wal_txn* wal_get_current_txn(void) {
+  struct thread* t = thread_current();
+  return t->current_txn;
+}
+
+/* ============================================================
+ * STATISTICS
  * ============================================================ */
 
 void wal_get_stats(struct wal_stats* stats) {
@@ -746,30 +817,3 @@ void wal_reset_stats(void) {
   wal.stats_writes_logged = 0;
   lock_release(&wal.wal_lock);
 }
-
-/* ============================================================
- * INTEGRATION POINTS
- * ============================================================
- *
- * To use WAL, you'll need to modify existing code:
- *
- * 1. In cache.c (cache_write):
- *    - Before writing data, call wal_log_write()
- *    - After commit, the data write can proceed
- *
- * 2. In inode.c (inode_write_at, inode_extend):
- *    - Wrap multi-block operations in transactions
- *    - This ensures atomic file extension
- *
- * 3. In filesys.c (filesys_create, filesys_remove):
- *    - Use transactions for directory modifications
- *    - Ensures metadata consistency
- *
- * 4. In free-map.c:
- *    - Log allocation/deallocation operations
- *    - Critical for preventing block leaks after crash
- *
- * QUESTION: Which operations should be grouped into a single transaction?
- * For example, should creating a file and adding it to a directory
- * be one transaction or two?
- */

@@ -409,7 +409,8 @@ void cache_read_at(block_sector_t sector, void* buffer, int sector_ofs, int chun
   cache_request_prefetch(sector + 1);
 }
 
-/* Write data to cache at given offset within sector. */
+/* Write data to cache at given offset within sector.
+   This is a pure cache operation - WAL logging is handled at higher layers. */
 void cache_write(block_sector_t sector, const void* buffer, int sector_ofs, int chunk_size) {
   /* Validate parameters */
   ASSERT(buffer != NULL);
@@ -433,14 +434,13 @@ void cache_write(block_sector_t sector, const void* buffer, int sector_ofs, int 
     return;
   }
 
-  /* Case 2: Sector is in the cache, but it's being loaded*/
+  /* Case 2: Sector is in the cache, but it's being loaded */
   if (ce != NULL && ce->state == CACHE_LOADING) {
     lock_acquire(&ce->entry_lock);
     lock_release(&cache_global_lock);
 
     wait_for_loading(ce);
 
-    // Now the sector should be VALID. Write as usual.
     memcpy((uint8_t*)ce->data + sector_ofs, buffer, chunk_size);
     ce->dirty = true;
     ce->accessed = true;
@@ -455,16 +455,6 @@ void cache_write(block_sector_t sector, const void* buffer, int sector_ofs, int 
   struct cache_entry* slot = cache_evict();
   ASSERT(slot != NULL);
 
-  // We do not need to acquire the slot (entry) lock within this block.
-  // Reason: At this point, we still hold the cache_global_lock and the cache_eviction function
-  // returns a slot that is exclusively reserved for us (never concurrently accessed by others
-  // until we finish initializing and change its state from CACHE_LOADING to CACHE_VALID).
-  //
-  // Only after we release the global lock (and the slot might become visible to others),
-  // do other threads contend for the per-slot entry_lock. Before that, we have sole access.
-  //
-  // So: lock_acquire(&slot->entry_lock) is NOT needed here.
-
   /* Reserve slot before releasing global lock */
   slot->state = CACHE_LOADING;
   slot->sector = sector;
@@ -477,18 +467,13 @@ void cache_write(block_sector_t sector, const void* buffer, int sector_ofs, int 
     block_read(fs_device, sector, slot->data);
   }
 
-  /* Write our data into the slot */
+  /* Write data and mark slot as valid */
   lock_acquire(&slot->entry_lock);
   memcpy((uint8_t*)slot->data + sector_ofs, buffer, chunk_size);
   slot->state = CACHE_VALID;
-  // We set dirty to true because this cache entry now holds data
-  // that has been written to by the caller, but not yet flushed to disk.
   slot->dirty = true;
-  // We set accessed to true so the clock eviction algorithm knows this
-  // slot was recently used (helps avoid evicting actively-used cache lines).
   slot->accessed = true;
   cond_broadcast(&slot->loading_done, &slot->entry_lock);
-
   lock_release(&slot->entry_lock);
 }
 

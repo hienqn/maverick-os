@@ -317,7 +317,8 @@ void filesys_done(void) {
 /* Creates a file named NAME with the given INITIAL_SIZE.
    Returns true if successful, false otherwise.
    Fails if a file named NAME already exists,
-   or if internal memory allocation fails. */
+   or if internal memory allocation fails.
+   The operation is wrapped in a WAL transaction for crash consistency. */
 bool filesys_create(const char* name, off_t initial_size) {
   struct dir* parent_dir = NULL;
   char final_name[NAME_MAX + 1];
@@ -332,12 +333,28 @@ bool filesys_create(const char* name, off_t initial_size) {
     return false;
   }
 
+  /* Begin WAL transaction for atomic file creation */
+  struct wal_txn* txn = wal_txn_begin();
+  if (txn != NULL) {
+    wal_set_current_txn(txn);
+  }
+
   block_sector_t inode_sector = 0;
   bool success = (free_map_allocate(1, &inode_sector) && inode_create(inode_sector, initial_size) &&
                   dir_add(parent_dir, final_name, inode_sector));
 
   if (!success && inode_sector != 0)
     free_map_release(inode_sector, 1);
+
+  /* Commit or abort the transaction */
+  if (txn != NULL) {
+    if (success) {
+      wal_txn_commit(txn);
+    } else {
+      wal_txn_abort(txn);
+    }
+    wal_set_current_txn(NULL);
+  }
 
   dir_close(parent_dir);
   return success;
@@ -382,7 +399,8 @@ struct file* filesys_open(const char* name) {
    Fails if:
    - No file/directory named NAME exists
    - NAME is the root directory
-   - NAME is a non-empty directory */
+   - NAME is a non-empty directory
+   The operation is wrapped in a WAL transaction for crash consistency. */
 bool filesys_remove(const char* name) {
   struct dir* parent_dir = NULL;
   char final_name[NAME_MAX + 1];
@@ -429,8 +447,25 @@ bool filesys_remove(const char* name) {
     inode_close(inode);
   }
 
+  /* Begin WAL transaction for atomic file removal */
+  struct wal_txn* txn = wal_txn_begin();
+  if (txn != NULL) {
+    wal_set_current_txn(txn);
+  }
+
   /* Remove the directory entry */
   bool success = dir_remove(parent_dir, final_name);
+
+  /* Commit or abort the transaction */
+  if (txn != NULL) {
+    if (success) {
+      wal_txn_commit(txn);
+    } else {
+      wal_txn_abort(txn);
+    }
+    wal_set_current_txn(NULL);
+  }
+
   dir_close(parent_dir);
 
   return success;
@@ -500,7 +535,8 @@ bool filesys_chdir(const char* dir_path) {
 }
 
 /* Creates a new directory at DIR_PATH.
-   Returns true if successful, false on failure. */
+   Returns true if successful, false on failure.
+   The operation is wrapped in a WAL transaction for crash consistency. */
 bool filesys_mkdir(const char* dir_path) {
   struct dir* parent_dir = NULL;
   char final_name[NAME_MAX + 1];
@@ -529,11 +565,18 @@ bool filesys_mkdir(const char* dir_path) {
     return false;
   }
 
+  /* Begin WAL transaction for atomic directory creation */
+  struct wal_txn* txn = wal_txn_begin();
+  if (txn != NULL) {
+    wal_set_current_txn(txn);
+  }
+
+  bool success = false;
+
   /* Allocate a sector for the new directory's inode */
   block_sector_t new_sector = 0;
   if (!free_map_allocate(1, &new_sector)) {
-    dir_close(parent_dir);
-    return false;
+    goto done;
   }
 
   /* Get the parent directory's sector for the .. entry */
@@ -542,8 +585,7 @@ bool filesys_mkdir(const char* dir_path) {
   /* Create the new directory with . and .. entries */
   if (!dir_create_with_parent(new_sector, parent_sector, 16)) {
     free_map_release(new_sector, 1);
-    dir_close(parent_dir);
-    return false;
+    goto done;
   }
 
   /* Add the new directory entry to the parent */
@@ -554,12 +596,24 @@ bool filesys_mkdir(const char* dir_path) {
       inode_remove(new_inode);
       inode_close(new_inode);
     }
-    dir_close(parent_dir);
-    return false;
+    goto done;
+  }
+
+  success = true;
+
+done:
+  /* Commit or abort the transaction */
+  if (txn != NULL) {
+    if (success) {
+      wal_txn_commit(txn);
+    } else {
+      wal_txn_abort(txn);
+    }
+    wal_set_current_txn(NULL);
   }
 
   dir_close(parent_dir);
-  return true;
+  return success;
 }
 
 /* Formats the file system. */

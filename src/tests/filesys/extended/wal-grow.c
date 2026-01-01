@@ -18,7 +18,7 @@
 #include "tests/main.h"
 
 /* Set to 1 after integrating WAL into the filesystem */
-#define WAL_INTEGRATED 0
+#define WAL_INTEGRATED 1
 
 #define CHUNK_SIZE 512 /* One block */
 #define NUM_CHUNKS 8   /* Grow to 4KB */

@@ -67,6 +67,7 @@
 #include "userprog/pagedir.h"
 #include "devices/shutdown.h"
 #include "filesys/filesys.h"
+#include "filesys/wal.h"
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * FORWARD DECLARATIONS
@@ -404,7 +405,15 @@ static void syscall_handler(struct intr_frame* f) {
       }
 
       struct file* file = get_file_from_fd(fd);
-      f->eax = (file != NULL) ? file_write(file, buffer, size) : -1;
+      if (file != NULL) {
+        /* File data writes go directly through the buffer cache.
+           WAL transactions are used for atomic metadata operations (file creation,
+           directory updates) at the filesys layer, not for every data write. */
+        int bytes_written = file_write(file, buffer, size);
+        f->eax = bytes_written;
+      } else {
+        f->eax = -1;
+      }
       break;
     }
     case SYS_SEEK: {

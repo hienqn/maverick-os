@@ -22,7 +22,7 @@
 
 /* Define WAL_INTEGRATED as 1 after you integrate WAL into the filesystem.
  * This will enable the integration check that fails if WAL isn't being used. */
-#define WAL_INTEGRATED 0
+#define WAL_INTEGRATED 1
 
 #define FILE_SIZE 512
 static char write_buf[FILE_SIZE];

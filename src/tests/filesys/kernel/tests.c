@@ -81,12 +81,27 @@ static const struct test filesys_kernel_tests[] = {
     {"wal-recover-commit", test_wal_recover_commit}, /* REDO committed */
     {"wal-recover-abort", test_wal_recover_abort},   /* UNDO uncommitted */
     {"wal-recover-order", test_wal_recover_order},   /* Correct ordering */
+    {"wal-recover-mixed", test_wal_recover_mixed},   /* Mixed commit/uncommit */
 
     /* Checkpoint tests */
-    {"wal-checkpoint", test_wal_checkpoint}, /* Checkpoint creation */
+    {"wal-checkpoint", test_wal_checkpoint},                   /* Checkpoint creation */
+    {"wal-checkpoint-recovery", test_wal_checkpoint_recovery}, /* Recovery w/ checkpoint */
+
+    /* Advanced logging tests */
+    {"wal-log-wraparound", test_wal_log_wraparound},     /* Circular buffer wrap */
+    {"wal-checksum-corrupt", test_wal_checksum_corrupt}, /* Corruption detection */
+    {"wal-large-txn", test_wal_large_txn},               /* Large transaction */
+
+    /* Concurrency tests */
+    {"wal-concurrent", test_wal_concurrent}, /* Sequential multi-txn */
+    {"wal-parallel", test_wal_parallel},     /* TRUE parallel threads */
 
     /* Integration/stress tests */
     {"wal-stress", test_wal_stress}, /* Stress test */
+
+    /* Crash recovery tests (two-phase - run in sequence) */
+    {"wal-crash-setup", test_wal_crash_setup},   /* Phase 1: Set up scenario */
+    {"wal-crash-verify", test_wal_crash_verify}, /* Phase 2: Verify recovery */
 };
 
 /*

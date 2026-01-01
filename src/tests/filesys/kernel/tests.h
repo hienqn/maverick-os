@@ -82,11 +82,26 @@ extern test_func test_wal_log_full;  /* Behavior when log fills up */
 extern test_func test_wal_recover_commit; /* Recovery replays committed txns */
 extern test_func test_wal_recover_abort;  /* Recovery undoes uncommitted txns */
 extern test_func test_wal_recover_order;  /* Recovery applies in correct order */
+extern test_func test_wal_recover_mixed;  /* Mixed committed/uncommitted txns */
 
 /* Checkpoint tests */
-extern test_func test_wal_checkpoint; /* Checkpoint creation */
+extern test_func test_wal_checkpoint;          /* Checkpoint creation */
+extern test_func test_wal_checkpoint_recovery; /* Recovery using checkpoint */
+
+/* Advanced logging tests */
+extern test_func test_wal_log_wraparound;   /* Circular log wrap-around */
+extern test_func test_wal_checksum_corrupt; /* Corruption detection via checksum */
+extern test_func test_wal_large_txn;        /* Transaction with many writes */
+
+/* Concurrency tests */
+extern test_func test_wal_concurrent; /* Sequential multi-transaction test */
+extern test_func test_wal_parallel;   /* TRUE parallel multi-threaded test */
 
 /* Integration/stress tests */
 extern test_func test_wal_stress; /* Stress test with many transactions */
+
+/* Crash recovery tests (two-phase) */
+extern test_func test_wal_crash_setup;  /* Phase 1: Set up crash scenario */
+extern test_func test_wal_crash_verify; /* Phase 2: Verify recovery worked */
 
 #endif /* tests/filesys/kernel/tests.h */

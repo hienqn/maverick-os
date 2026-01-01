@@ -16,7 +16,7 @@
 #include "tests/main.h"
 
 /* Set to 1 after integrating WAL into the filesystem */
-#define WAL_INTEGRATED 0
+#define WAL_INTEGRATED 1
 
 #define CHUNK_SIZE 128
 #define NUM_WRITES 4

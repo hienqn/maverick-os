@@ -228,6 +228,16 @@ struct thread {
   struct dir* cwd;                  /* Current working directory (per-thread in PintOS). */
 #endif
 
+#ifdef FILESYS
+  /* ═══════════════════════════════════════════════════════════════════════
+   * WRITE-AHEAD LOGGING (WAL) SUPPORT
+   * ─────────────────────────────────────────────────────────────────────────
+   * Each thread can have an active WAL transaction for filesystem operations.
+   * This allows filesystem operations to be grouped into atomic transactions.
+   * ═══════════════════════════════════════════════════════════════════════*/
+  struct wal_txn* current_txn; /* Active WAL transaction (NULL if none). */
+#endif
+
   /* ═══════════════════════════════════════════════════════════════════════
    * STACK OVERFLOW DETECTION
    * ─────────────────────────────────────────────────────────────────────────

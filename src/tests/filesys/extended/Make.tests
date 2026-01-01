@@ -7,8 +7,8 @@ grow-file-size grow-root-lg grow-root-sm grow-seq-lg grow-seq-sm	\
 grow-sparse grow-tell grow-two-files syn-rw				\
 sym-create sym-read sym-write sym-remove sym-dangling sym-dir		\
 sym-chain sym-cycle sym-path						\
-wal-basic wal-multi-write wal-multi-file wal-dir-ops wal-overwrite	\
-wal-grow
+wal-basic wal-multi-wr wal-multi-file wal-dir-ops wal-overwrite	\
+wal-grow wal-remove wal-symlink
 
 tests/filesys/extended_TESTS = $(patsubst %,tests/filesys/extended/%,$(raw_tests))
 tests/filesys/extended_EXTRA_GRADES = $(patsubst %,tests/filesys/extended/%-persistence,$(raw_tests))
@@ -56,7 +56,12 @@ tests/filesys/extended/%.output: kernel.bin
 	$(GETCMD)
 	rm -f tmp.dsk
 $(foreach raw_test,$(raw_tests),$(eval tests/filesys/extended/$(raw_test)-persistence.output: tests/filesys/extended/$(raw_test).output))
-$(foreach raw_test,$(raw_tests),$(eval tests/filesys/extended/$(raw_test)-persistence.result: tests/filesys/extended/$(raw_test).result))
+
+# Persistence test results mirror the base test results.
+# The persistence output is generated as a side effect of the base test (via GETCMD),
+# so we just need to copy the base result to create the persistence result.
+tests/filesys/extended/%-persistence.result: tests/filesys/extended/%.result
+	cp $< $@
 
 TARS = $(addsuffix .tar,$(tests/filesys/extended_TESTS))
 

@@ -240,9 +240,16 @@ bool wal_txn_commit(struct wal_txn* txn) {
 
   free(txn);
 
-  /* Note: Deferred checkpoint is handled at shutdown or explicit checkpoint call.
-     We don't trigger it here to avoid stack overflow from recursive calls
-     when cache_write -> wal_txn_commit -> checkpoint -> cache_flush. */
+  /* Handle deferred checkpoint if pending.
+     We must clear current_txn first to avoid recursive WAL logging
+     when cache_flush() writes dirty buffers during checkpoint. */
+  if (checkpoint_pending) {
+    struct wal_txn* saved_txn = wal_get_current_txn();
+    wal_set_current_txn(NULL);
+    checkpoint_pending = false;
+    wal_checkpoint();
+    wal_set_current_txn(saved_txn);
+  }
 
   return true;
 }

@@ -244,11 +244,10 @@ bool wal_txn_commit(struct wal_txn* txn) {
      We must clear current_txn first to avoid recursive WAL logging
      when cache_flush() writes dirty buffers during checkpoint. */
   if (checkpoint_pending) {
-    struct wal_txn* saved_txn = wal_get_current_txn();
     wal_set_current_txn(NULL);
     checkpoint_pending = false;
     wal_checkpoint();
-    wal_set_current_txn(saved_txn);
+    /* Don't restore saved_txn - the caller will set it to NULL anyway */
   }
 
   return true;
@@ -584,7 +583,21 @@ void wal_recover(void) {
 
   /* Phase 3: UNDO - Rollback uncommitted transactions (in reverse LSN order) */
 #define MAX_UNDO 512
-  struct undo_entry undo_records[MAX_UNDO];
+  /* Use heap allocation to avoid stack overflow (Pintos has 4KB kernel stack).
+   * MAX_UNDO * sizeof(struct undo_entry) = 512 * 248 = 126KB on heap. */
+  struct undo_entry* undo_records = malloc(MAX_UNDO * sizeof(struct undo_entry));
+  if (undo_records == NULL) {
+    /* Can't recover without memory - at least update state */
+    wal.next_lsn = max_lsn + 1;
+    wal.flushed_lsn = max_lsn;
+    wal.next_txn_id = 1;
+    for (size_t i = 0; i < seen_count; i++) {
+      if (seen_txns[i] >= wal.next_txn_id) {
+        wal.next_txn_id = seen_txns[i] + 1;
+      }
+    }
+    return;
+  }
   size_t undo_count = 0;
 
   for (block_sector_t s = 0; s < WAL_LOG_SECTORS; s++) {
@@ -645,6 +658,9 @@ void wal_recover(void) {
     printf("    After:  sector_data[0]='%c'\n", sector_data[0]);
     block_write(fs_device, undo_records[i].sector, sector_data);
   }
+
+  /* Free heap-allocated undo records */
+  free(undo_records);
 
   /* Update WAL state for continued operation */
   wal.next_lsn = max_lsn + 1;

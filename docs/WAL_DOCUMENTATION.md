@@ -676,18 +676,27 @@ This is acceptable because:
 We use **deferred checkpointing** when the log is 75% full:
 
 ```c
-/* In wal_append_record: */
+/* In wal_append_record - set the flag: */
 if ((log_used >= (WAL_LOG_SECTORS * 3 / 4)) && !wal.checkpointing) {
     checkpoint_pending = true;  // Mark for later
 }
+
+/* In wal_txn_commit - run checkpoint after transaction completes: */
+if (checkpoint_pending) {
+    struct wal_txn* saved_txn = wal_get_current_txn();
+    wal_set_current_txn(NULL);  // Prevent recursive WAL logging
+    checkpoint_pending = false;
+    wal_checkpoint();
+    wal_set_current_txn(saved_txn);
+}
 ```
 
-**Why Deferred?** Immediate checkpointing can cause stack overflow:
-- `cache_write()` → `wal_txn_commit()` → `wal_checkpoint()` → `cache_flush()` → recursive calls
+**Why Deferred?** Immediate checkpointing during `wal_append_record()` can cause stack overflow:
+- `cache_write()` → `wal_log_write()` → `wal_append_record()` → `wal_checkpoint()` → `cache_flush()` → recursive calls
 
-Instead, checkpoints are executed at safe points (like shutdown) or explicitly called. The `checkpointing` flag prevents recursive checkpoint attempts.
+By deferring to `wal_txn_commit()`, the transaction is already complete, and we temporarily clear `current_txn` so that `cache_flush()` doesn't try to log writes to a finished transaction.
 
-This prevents the log from filling up while ensuring reasonably bounded recovery time.
+This prevents the log from filling up while avoiding recursion issues.
 
 ---
 

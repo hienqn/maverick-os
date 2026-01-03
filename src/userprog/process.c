@@ -119,6 +119,8 @@
 #include "threads/synch.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "vm/page.h"
+#include "vm/frame.h"
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * FORWARD DECLARATIONS
@@ -199,6 +201,9 @@ static void pcb_init(struct process* pcb, struct thread* main_thread) {
   }
   pcb->stack_slots[0] = true;                               /* Slot 0 reserved for main thread */
   main_thread->user_stack = ((uint8_t*)PHYS_BASE) - PGSIZE; /* Main thread's stack */
+
+  /* Initialize supplemental page table for VM */
+  spt_init(&pcb->spt);
 }
 /* ═══════════════════════════════════════════════════════════════════════════
  * USERPROG INITIALIZATION
@@ -690,6 +695,9 @@ void process_exit(void) {
   }
   lock_release(&cur->pcb->exit_lock);
 
+  /* Destroy the supplemental page table (frees all frames and swap slots). */
+  spt_destroy(&cur->pcb->spt);
+
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pcb->pagedir;
@@ -1051,35 +1059,31 @@ static bool load_segment(struct file* file, off_t ofs, uint8_t* upage, uint32_t 
   ASSERT(pg_ofs(upage) == 0);
   ASSERT(ofs % PGSIZE == 0);
 
-  file_seek(file, ofs);
+  struct thread* t = thread_current();
+
+  /* Lazy loading: create SPT entries instead of loading pages immediately.
+     Pages will be loaded on-demand when accessed (page fault). */
   while (read_bytes > 0 || zero_bytes > 0) {
-    /* Calculate how to fill this page.
-         We will read PAGE_READ_BYTES bytes from FILE
-         and zero the final PAGE_ZERO_BYTES bytes. */
+    /* Calculate how to fill this page. */
     size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
     size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
-    /* Get a page of memory. */
-    uint8_t* kpage = palloc_get_page(PAL_USER);
-    if (kpage == NULL)
-      return false;
-
-    /* Load this page. */
-    if (file_read(file, kpage, page_read_bytes) != (int)page_read_bytes) {
-      palloc_free_page(kpage);
-      return false;
-    }
-    memset(kpage + page_read_bytes, 0, page_zero_bytes);
-
-    /* Add the page to the process's address space. */
-    if (!install_page(upage, kpage, writable)) {
-      palloc_free_page(kpage);
-      return false;
+    /* Create SPT entry for this page. */
+    if (page_read_bytes > 0) {
+      /* File-backed page. */
+      if (!spt_create_file_page(&t->pcb->spt, upage, file, ofs, page_read_bytes, page_zero_bytes,
+                                writable))
+        return false;
+    } else {
+      /* Pure zero page (no file data). */
+      if (!spt_create_zero_page(&t->pcb->spt, upage, writable))
+        return false;
     }
 
     /* Advance. */
     read_bytes -= page_read_bytes;
     zero_bytes -= page_zero_bytes;
+    ofs += page_read_bytes;
     upage += PGSIZE;
   }
   return true;
@@ -1088,60 +1092,67 @@ static bool load_segment(struct file* file, off_t ofs, uint8_t* upage, uint32_t 
 /* Create a minimal stack by mapping a zeroed page at the top of
    user virtual memory. */
 static bool setup_stack(void** esp, int argc, char** argv) {
-  uint8_t* kpage;
-  bool success = false;
+  struct thread* t = thread_current();
+  uint8_t* upage = ((uint8_t*)PHYS_BASE) - PGSIZE;
   uint8_t* saved[128];
 
-  kpage = palloc_get_page(PAL_USER | PAL_ZERO);
-  if (kpage != NULL) {
-    success = install_page(((uint8_t*)PHYS_BASE) - PGSIZE, kpage, true);
-    if (success) {
-      uint8_t* stack_ptr = (uint8_t*)PHYS_BASE;
+  /* Create SPT entry for the initial stack page. */
+  if (!spt_create_zero_page(&t->pcb->spt, upage, true))
+    return false;
 
-      for (int i = argc - 1; i >= 0; i--) {
-        unsigned len = strlen(argv[i]) + 1; // +1 for null terminator
-        stack_ptr -= len;
-        memcpy(stack_ptr, argv[i], len);
-        saved[i] = stack_ptr;
-      }
+  /* Load the stack page immediately (we need to write arguments to it). */
+  struct spt_entry* spte = spt_find(&t->pcb->spt, upage);
+  if (spte == NULL)
+    return false;
 
-      uint8_t* future_stack_ptr_before_alignment =
-          stack_ptr - sizeof(char*) * (argc + 1) - sizeof(char**) - sizeof(argc);
-      uint8_t* future_stack_ptr_after_alignment =
-          (uint8_t*)ROUND_DOWN((uintptr_t)future_stack_ptr_before_alignment, 16);
-      size_t padding =
-          (size_t)(future_stack_ptr_before_alignment - future_stack_ptr_after_alignment);
+  if (!spt_load_page(spte))
+    return false;
 
-      stack_ptr -= padding;
-      memset(stack_ptr, 0, padding);
+  /* Unpin the frame so it can be evicted later. */
+  frame_unpin(spte->kpage);
 
-      stack_ptr -= sizeof(char*);
-      memset(stack_ptr, 0, sizeof(char*));
+  /* Now set up the stack with arguments. */
+  uint8_t* stack_ptr = (uint8_t*)PHYS_BASE;
 
-      for (int i = argc - 1; i >= 0; i--) {
-        stack_ptr -= sizeof(char*);
-        memcpy(stack_ptr, &saved[i], sizeof(char*));
-      }
-
-      /* Save the address of argv[0] before decrementing stack_ptr */
-      uint8_t* argv_start = stack_ptr;
-      stack_ptr -= sizeof(char**);
-      /* Store the ADDRESS of argv[0], not its value */
-      memcpy(stack_ptr, &argv_start, sizeof(char**));
-
-      stack_ptr -= sizeof(int);
-      memcpy(stack_ptr, &argc, sizeof(int));
-
-      /* At this point it should be aligned */
-      stack_ptr -= sizeof(void*);
-      memset(stack_ptr, 0, sizeof(void*));
-
-      *esp = stack_ptr;
-    } else {
-      palloc_free_page(kpage);
-    }
+  for (int i = argc - 1; i >= 0; i--) {
+    unsigned len = strlen(argv[i]) + 1; // +1 for null terminator
+    stack_ptr -= len;
+    memcpy(stack_ptr, argv[i], len);
+    saved[i] = stack_ptr;
   }
-  return success;
+
+  uint8_t* future_stack_ptr_before_alignment =
+      stack_ptr - sizeof(char*) * (argc + 1) - sizeof(char**) - sizeof(argc);
+  uint8_t* future_stack_ptr_after_alignment =
+      (uint8_t*)ROUND_DOWN((uintptr_t)future_stack_ptr_before_alignment, 16);
+  size_t padding = (size_t)(future_stack_ptr_before_alignment - future_stack_ptr_after_alignment);
+
+  stack_ptr -= padding;
+  memset(stack_ptr, 0, padding);
+
+  stack_ptr -= sizeof(char*);
+  memset(stack_ptr, 0, sizeof(char*));
+
+  for (int i = argc - 1; i >= 0; i--) {
+    stack_ptr -= sizeof(char*);
+    memcpy(stack_ptr, &saved[i], sizeof(char*));
+  }
+
+  /* Save the address of argv[0] before decrementing stack_ptr */
+  uint8_t* argv_start = stack_ptr;
+  stack_ptr -= sizeof(char**);
+  /* Store the ADDRESS of argv[0], not its value */
+  memcpy(stack_ptr, &argv_start, sizeof(char**));
+
+  stack_ptr -= sizeof(int);
+  memcpy(stack_ptr, &argc, sizeof(int));
+
+  /* At this point it should be aligned */
+  stack_ptr -= sizeof(void*);
+  memset(stack_ptr, 0, sizeof(void*));
+
+  *esp = stack_ptr;
+  return true;
 }
 
 /* Adds a mapping from user virtual address UPAGE to kernel

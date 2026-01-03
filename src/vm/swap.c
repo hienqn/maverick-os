@@ -64,79 +64,66 @@ void swap_init(void) {
  * ============================================================================ */
 
 /* Swap out a page to disk. */
-size_t swap_out(void* kpage UNUSED) {
+size_t swap_out(void* kpage) {
   /* Check if swap is available. */
   if (swap_block == NULL || swap_bitmap == NULL) {
     return SWAP_SLOT_INVALID;
   }
 
-  /* TODO: Implement swap out.
-   *
-   * 1. Acquire lock
-   *
-   * 2. Find a free slot:
-   *    size_t slot = bitmap_scan_and_flip(swap_bitmap, 0, 1, false);
-   *    if (slot == BITMAP_ERROR) {
-   *        lock_release(&swap_lock);
-   *        return SWAP_SLOT_INVALID;  // Swap full
-   *    }
-   *
-   * 3. Write page to swap (8 sectors):
-   *    block_sector_t sector = slot * SECTORS_PER_PAGE;
-   *    for (int i = 0; i < SECTORS_PER_PAGE; i++) {
-   *        block_write(swap_block, sector + i,
-   *                    kpage + i * BLOCK_SECTOR_SIZE);
-   *    }
-   *
-   * 4. Release lock
-   *
-   * 5. Return slot index
-   */
+  lock_acquire(&swap_lock);
 
-  return SWAP_SLOT_INVALID;
+  /* Find a free slot. */
+  size_t slot = bitmap_scan_and_flip(swap_bitmap, 0, 1, false);
+  if (slot == BITMAP_ERROR) {
+    lock_release(&swap_lock);
+    return SWAP_SLOT_INVALID; /* Swap full. */
+  }
+
+  /* Write page to swap (8 sectors). */
+  block_sector_t sector = slot * SECTORS_PER_PAGE;
+  for (int i = 0; i < SECTORS_PER_PAGE; i++) {
+    block_write(swap_block, sector + i, kpage + i * BLOCK_SECTOR_SIZE);
+  }
+
+  lock_release(&swap_lock);
+
+  return slot;
 }
 
 /* Swap in a page from disk. */
-void swap_in(size_t slot UNUSED, void* kpage UNUSED) {
+void swap_in(size_t slot, void* kpage) {
   /* Check if swap is available. */
   if (swap_block == NULL || swap_bitmap == NULL) {
     PANIC("swap_in: no swap partition");
   }
 
-  /* TODO: Implement swap in.
-   *
-   * 1. Acquire lock
-   *
-   * 2. Verify slot is in use:
-   *    ASSERT(bitmap_test(swap_bitmap, slot));
-   *
-   * 3. Read page from swap (8 sectors):
-   *    block_sector_t sector = slot * SECTORS_PER_PAGE;
-   *    for (int i = 0; i < SECTORS_PER_PAGE; i++) {
-   *        block_read(swap_block, sector + i,
-   *                   kpage + i * BLOCK_SECTOR_SIZE);
-   *    }
-   *
-   * 4. Mark slot as free:
-   *    bitmap_reset(swap_bitmap, slot);
-   *
-   * 5. Release lock
-   */
+  lock_acquire(&swap_lock);
+
+  /* Verify slot is in use. */
+  ASSERT(bitmap_test(swap_bitmap, slot));
+
+  /* Read page from swap (8 sectors). */
+  block_sector_t sector = slot * SECTORS_PER_PAGE;
+  for (int i = 0; i < SECTORS_PER_PAGE; i++) {
+    block_read(swap_block, sector + i, kpage + i * BLOCK_SECTOR_SIZE);
+  }
+
+  /* Mark slot as free. */
+  bitmap_reset(swap_bitmap, slot);
+
+  lock_release(&swap_lock);
 }
 
 /* Free a swap slot. */
-void swap_free(size_t slot UNUSED) {
+void swap_free(size_t slot) {
   if (swap_block == NULL || swap_bitmap == NULL) {
     return;
   }
 
-  /* TODO: Free the slot.
-   *
-   * lock_acquire(&swap_lock);
-   * ASSERT(bitmap_test(swap_bitmap, slot));
-   * bitmap_reset(swap_bitmap, slot);
-   * lock_release(&swap_lock);
-   */
+  lock_acquire(&swap_lock);
+  ASSERT(bitmap_test(swap_bitmap, slot));
+  bitmap_reset(swap_bitmap, slot);
+  lock_release(&swap_lock);
 }
 
 /* ============================================================================

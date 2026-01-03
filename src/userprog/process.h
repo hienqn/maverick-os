@@ -82,6 +82,7 @@
 #define USERPROG_PROCESS_H
 
 #include "threads/thread.h"
+#include "vm/page.h"
 #include <stdint.h>
 
 /* Forward declarations. */
@@ -173,6 +174,7 @@ struct process {
    * ADDRESS SPACE
    * ═══════════════════════════════════════════════════════════════════════*/
   uint32_t* pagedir;     /* Page directory (virtual memory mappings). */
+  struct spt spt;        /* Supplemental page table (VM metadata). */
   char process_name[16]; /* Process name (for debug output). */
 
   /* ═══════════════════════════════════════════════════════════════════════

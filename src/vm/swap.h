@@ -41,12 +41,13 @@
  * SWAP TABLE STRUCTURE
  * ============================================================================
  *
- * TODO: Define your swap table structure if needed.
+ * The swap table uses global variables (defined in swap.c):
+ *   - swap_block:  Block device for swap partition
+ *   - swap_bitmap: Bitmap tracking which slots are in use
+ *   - swap_lock:   Lock protecting all swap operations
  *
- * Suggested approach (using global variables):
- *   static struct block *swap_block;
- *   static struct bitmap *swap_bitmap;
- *   static struct lock swap_lock;
+ * This is a global (not per-process) resource since swap slots are
+ * a system-wide pool of secondary storage.
  */
 
 /* ============================================================================

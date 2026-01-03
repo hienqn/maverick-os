@@ -52,6 +52,7 @@
 #include "userprog/process.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
+#include "vm/vm.h"
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * EXCEPTION STATISTICS
@@ -218,9 +219,16 @@ static void page_fault(struct intr_frame* f) {
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
-  /* To implement virtual memory, delete the rest of the function
-     body, and replace it with code that brings in the page to
-     which fault_addr refers. */
+  /* Get the stack pointer. For user faults, use the saved ESP from the
+     interrupt frame. For kernel faults (e.g., during syscall), we need
+     the user ESP that was saved when entering kernel mode. */
+  void* esp = user ? (void*)f->esp : thread_current()->user_stack;
+
+  /* Try to handle the fault via the VM system. */
+  if (vm_handle_fault(fault_addr, user, write, not_present, esp))
+    return; /* Fault handled successfully - return to user. */
+
+  /* VM couldn't handle it - this is an invalid access. */
   printf("Page fault at %p: %s error %s page in %s context.\n", fault_addr,
          not_present ? "not present" : "rights violation", write ? "writing" : "reading",
          user ? "user" : "kernel");

@@ -162,6 +162,18 @@ void frame_init(void);
    The frame is automatically tracked in the frame table. */
 void* frame_alloc(void* upage, bool writable);
 
+/* Register an already-allocated page with the frame table.
+   Used when a page was allocated via palloc_get_page directly (e.g., by
+   pagedir_dup during fork) and needs to be tracked by the frame table.
+
+   KPAGE: Kernel virtual address of the already-allocated page.
+   UPAGE: User virtual address that maps to this page.
+   OWNER: Thread that owns this frame.
+
+   Returns true if registration succeeded, false if already registered or
+   on failure. The frame starts pinned. */
+bool frame_register(void* kpage, void* upage, struct thread* owner);
+
 /* Free a frame and remove it from the frame table.
    KPAGE: Kernel virtual address of frame to free. */
 void frame_free(void* kpage);

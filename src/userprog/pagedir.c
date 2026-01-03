@@ -31,14 +31,8 @@ void pagedir_destroy(uint32_t* pd) {
   for (pde = pd; pde < pd + pd_no(PHYS_BASE); pde++)
     if (*pde & PTE_P) {
       uint32_t* pt = pde_get_pt(*pde);
-#ifndef VM
-      /* Without VM, we free user pages here.
-         With VM, spt_destroy() already freed them via frame_free(). */
-      uint32_t* pte;
-      for (pte = pt; pte < pt + PGSIZE / sizeof *pte; pte++)
-        if (*pte & PTE_P)
-          palloc_free_page(pte_get_page(*pte));
-#endif
+      /* User pages are freed by spt_destroy() via frame_free().
+         We only need to free the page tables here. */
       palloc_free_page(pt);
     }
   palloc_free_page(pd);
@@ -248,6 +242,14 @@ void pagedir_set_accessed(uint32_t* pd, const void* vpage, bool accessed) {
       invalidate_pagedir(pd);
     }
   }
+}
+
+/* Returns true if the PTE for virtual page VPAGE in PD is writable.
+   Returns false if PD contains no PTE for VPAGE or if the page is
+   read-only. */
+bool pagedir_is_writable(uint32_t* pd, const void* vpage) {
+  uint32_t* pte = lookup_page(pd, vpage, false);
+  return pte != NULL && (*pte & PTE_P) != 0 && (*pte & PTE_W) != 0;
 }
 
 /* Loads page directory PD into the CPU's page directory base

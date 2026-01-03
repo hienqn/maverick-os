@@ -52,9 +52,7 @@
 #include "userprog/process.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
-#ifdef VM
 #include "vm/vm.h"
-#endif
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * EXCEPTION STATISTICS
@@ -221,7 +219,6 @@ static void page_fault(struct intr_frame* f) {
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
-#ifdef VM
   /* Get the stack pointer. For user faults, use the saved ESP from the
      interrupt frame. For kernel faults (e.g., during syscall), we need
      the user ESP that was saved when entering kernel mode. */
@@ -230,9 +227,8 @@ static void page_fault(struct intr_frame* f) {
   /* Try to handle the fault via the VM system. */
   if (vm_handle_fault(fault_addr, user, write, not_present, esp))
     return; /* Fault handled successfully - return to user. */
-#endif
 
-  /* VM couldn't handle it (or VM not enabled) - this is an invalid access. */
+  /* VM couldn't handle the fault - this is an invalid access. */
   printf("Page fault at %p: %s error %s page in %s context.\n", fault_addr,
          not_present ? "not present" : "rights violation", write ? "writing" : "reading",
          user ? "user" : "kernel");

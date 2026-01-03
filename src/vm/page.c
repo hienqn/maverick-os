@@ -458,3 +458,132 @@ bool spt_create_zero_page(void* spt, void* upage, bool writable) {
 
   return true;
 }
+
+/* ============================================================================
+ * FORK SUPPORT
+ * ============================================================================ */
+
+/* Helper function to clone a single SPT entry.
+   Returns the cloned entry on success, NULL on failure. */
+static struct spt_entry* spt_clone_entry(struct spt_entry* parent_entry, uint32_t* child_pagedir) {
+  struct spt_entry* child_entry = malloc(sizeof(struct spt_entry));
+  if (child_entry == NULL)
+    return NULL;
+
+  /* Copy basic fields. */
+  child_entry->upage = parent_entry->upage;
+  child_entry->writable = parent_entry->writable;
+  child_entry->file = parent_entry->file;
+  child_entry->file_offset = parent_entry->file_offset;
+  child_entry->read_bytes = parent_entry->read_bytes;
+  child_entry->zero_bytes = parent_entry->zero_bytes;
+  child_entry->kpage = NULL;
+  child_entry->swap_slot = 0;
+
+  switch (parent_entry->status) {
+    case PAGE_ZERO:
+    case PAGE_FILE:
+      /* Lazy-loaded pages: just copy the metadata. */
+      child_entry->status = parent_entry->status;
+      break;
+
+    case PAGE_FRAME: {
+      /* Page is in memory: pagedir_dup already copied the frame and installed
+         it in the child's page directory. We just need to:
+         1. Find the child's kpage from the page directory
+         2. Register it with the frame table
+         3. Create the SPT entry */
+      void* child_kpage = pagedir_get_page(child_pagedir, child_entry->upage);
+      if (child_kpage == NULL) {
+        /* Page should have been copied by pagedir_dup - something is wrong. */
+        free(child_entry);
+        return NULL;
+      }
+
+      /* Register the frame with the frame table (pagedir_dup used palloc directly). */
+      if (!frame_register(child_kpage, child_entry->upage, thread_current())) {
+        /* Registration failed - frame might already be registered, which is ok. */
+        /* Just continue with creating the SPT entry. */
+      }
+
+      child_entry->status = PAGE_FRAME;
+      child_entry->kpage = child_kpage;
+
+      /* Unpin the frame so it can be evicted. */
+      frame_unpin(child_kpage);
+      break;
+    }
+
+    case PAGE_SWAP: {
+      /* Page is in swap: read into new frame, then swap out to new slot.
+         This avoids sharing swap slots between processes. */
+      void* temp_kpage = frame_alloc(child_entry->upage, child_entry->writable);
+      if (temp_kpage == NULL) {
+        free(child_entry);
+        return NULL;
+      }
+
+      /* Read parent's swap data into temporary frame. */
+      swap_in(parent_entry->swap_slot, temp_kpage);
+
+      /* The parent's swap slot is now free, so we need to swap parent back out. */
+      size_t parent_new_slot = swap_out(temp_kpage);
+      if (parent_new_slot == SWAP_SLOT_INVALID) {
+        frame_free(temp_kpage);
+        free(child_entry);
+        return NULL;
+      }
+      /* Update parent's swap slot (cast away const for this special case). */
+      ((struct spt_entry*)parent_entry)->swap_slot = parent_new_slot;
+
+      /* Now swap out the child's copy. */
+      size_t child_slot = swap_out(temp_kpage);
+      frame_free(temp_kpage);
+
+      if (child_slot == SWAP_SLOT_INVALID) {
+        free(child_entry);
+        return NULL;
+      }
+
+      child_entry->status = PAGE_SWAP;
+      child_entry->swap_slot = child_slot;
+      break;
+    }
+
+    default:
+      free(child_entry);
+      return NULL;
+  }
+
+  return child_entry;
+}
+
+/* Clone an SPT from parent to child during fork. */
+bool spt_clone(void* child_spt, void* parent_spt, uint32_t* child_pagedir) {
+  struct spt* parent = (struct spt*)parent_spt;
+  struct spt* child = (struct spt*)child_spt;
+  struct hash_iterator i;
+
+  hash_first(&i, &parent->pages);
+  while (hash_next(&i)) {
+    struct spt_entry* parent_entry = hash_entry(hash_cur(&i), struct spt_entry, hash_elem);
+
+    /* Clone this entry. */
+    struct spt_entry* child_entry = spt_clone_entry(parent_entry, child_pagedir);
+    if (child_entry == NULL)
+      return false;
+
+    /* Insert into child's SPT. */
+    if (!spt_insert(child, child_entry)) {
+      /* Failed to insert - free the cloned entry and its resources. */
+      if (child_entry->status == PAGE_FRAME)
+        frame_free(child_entry->kpage);
+      else if (child_entry->status == PAGE_SWAP)
+        swap_free(child_entry->swap_slot);
+      free(child_entry);
+      return false;
+    }
+  }
+
+  return true;
+}

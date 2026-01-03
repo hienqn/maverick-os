@@ -336,4 +336,31 @@ bool spt_create_file_page(void* spt, void* upage, struct file* file, off_t offse
    when handling page faults below the stack pointer. */
 bool spt_create_zero_page(void* spt, void* upage, bool writable);
 
+/* ============================================================================
+ * FORK SUPPORT
+ * ============================================================================ */
+
+/* Clone an SPT from parent to child during fork.
+
+   Iterates through all entries in the parent SPT and creates corresponding
+   entries in the child SPT. For each entry:
+   - PAGE_FRAME: Copy the frame contents to a new frame
+   - PAGE_FILE:  Copy the file metadata (lazy loading preserved)
+   - PAGE_SWAP:  Copy swap data to a new swap slot
+   - PAGE_ZERO:  Copy the entry (lazy loading preserved)
+
+   @param child_spt Pointer to child's initialized (empty) SPT.
+   @param parent_spt Pointer to parent's SPT to clone.
+   @param child_pagedir Child's page directory to install copied pages into.
+
+   @return true if all entries were cloned successfully, false on failure.
+
+   @pre child_spt is initialized and empty
+   @pre parent_spt is a valid SPT
+   @post On success: child_spt contains clones of all parent entries
+   @post On failure: partial state may remain, caller should destroy child_spt
+
+   Called from fork_process() to duplicate parent's virtual address space. */
+bool spt_clone(void* child_spt, void* parent_spt, uint32_t* child_pagedir);
+
 #endif /* vm/page.h */

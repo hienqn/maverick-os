@@ -54,9 +54,7 @@
 #include "userprog/tss.h"
 #include "tests/userprog/kernel/tests.h"
 #endif
-#ifdef VM
 #include "vm/vm.h"
-#endif
 #ifdef THREADS
 #include "tests/threads/tests.h"
 #endif
@@ -92,9 +90,7 @@ static bool format_filesys;
  */
 static const char* filesys_bdev_name;
 static const char* scratch_bdev_name;
-#ifdef VM
 static const char* swap_bdev_name;
-#endif
 #endif /* FILESYS */
 
 /**
@@ -203,11 +199,9 @@ int main(void) {
   filesys_init(format_filesys);
 #endif
 
-#ifdef VM
   /* Initialize virtual memory subsystem.
      Must be after locate_block_devices() so swap partition is available. */
   vm_init();
-#endif
 
   printf("Boot complete.\n");
 
@@ -412,10 +406,8 @@ static char** parse_options(char** argv) {
       filesys_bdev_name = value;
     else if (!strcmp(name, "-scratch"))
       scratch_bdev_name = value;
-#ifdef VM
     else if (!strcmp(name, "-swap"))
       swap_bdev_name = value;
-#endif
 #endif
     else if (!strcmp(name, "-rs"))
       random_init(atoi(value));
@@ -713,9 +705,7 @@ static void usage(void) {
          "  -f                 Format file system device during startup.\n"
          "  -filesys=BDEV      Use BDEV for file system instead of default.\n"
          "  -scratch=BDEV      Use BDEV for scratch instead of default.\n"
-#ifdef VM
          "  -swap=BDEV         Use BDEV for swap instead of default.\n"
-#endif // VM
 #endif // FILESYS
          "  -rs=SEED           Set random number seed to SEED.\n"
          "  -sched=fifo        Use first-in-first-out scheduler.\n"
@@ -757,9 +747,7 @@ static void usage(void) {
 static void locate_block_devices(void) {
   locate_block_device(BLOCK_FILESYS, filesys_bdev_name);
   locate_block_device(BLOCK_SCRATCH, scratch_bdev_name);
-#ifdef VM
   locate_block_device(BLOCK_SWAP, swap_bdev_name);
-#endif
 }
 
 /**

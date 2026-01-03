@@ -11,13 +11,6 @@
 #include <bitmap.h>
 #include <stdio.h>
 
-/* ============================================================================
- * GLOBAL SWAP STATE
- * ============================================================================
- *
- * TODO: Define your global swap state here.
- */
-
 /* Swap block device. NULL if no swap partition. */
 static struct block* swap_block;
 

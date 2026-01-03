@@ -68,6 +68,7 @@
 #include "devices/shutdown.h"
 #include "filesys/filesys.h"
 #include "filesys/wal.h"
+#include "vm/page.h"
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * FORWARD DECLARATIONS
@@ -97,21 +98,64 @@ void syscall_init(void) { intr_register_int(0x30, 3, INTR_ON, syscall_handler, "
  * If validation fails, the process is terminated with exit code -1.
  * ═══════════════════════════════════════════════════════════════════════════*/
 
+/* Helper: Check if a single byte address is valid user memory.
+   With VM/lazy loading, a page might be in SPT but not yet in page table.
+   Returns true if address is mapped (either loaded or lazy-loadable). */
+static bool is_valid_user_byte(void* addr) {
+  if (!is_user_vaddr(addr))
+    return false;
+
+  struct process* pcb = thread_current()->pcb;
+
+  /* Check if page is in page table (already loaded) */
+  if (pagedir_get_page(pcb->pagedir, addr))
+    return true;
+
+  /* Page not in page table - check if it's a valid lazy-loaded page in SPT */
+  struct spt_entry* entry = spt_find(&pcb->spt, addr);
+  return entry != NULL;
+}
+
+/* Helper: Check if a single byte address is valid AND writable user memory.
+   Used when the kernel needs to write to user memory (e.g., read syscall buffer).
+   Returns true if address is mapped and writable. */
+static bool is_writable_user_byte(void* addr) {
+  if (!is_user_vaddr(addr))
+    return false;
+
+  struct process* pcb = thread_current()->pcb;
+
+  /* Check if page is in page table (already loaded) */
+  if (pagedir_get_page(pcb->pagedir, addr)) {
+    /* Page is loaded - check writable bit in page table */
+    return pagedir_is_writable(pcb->pagedir, addr);
+  }
+
+  /* Page not in page table - check SPT for lazy-loaded page */
+  struct spt_entry* entry = spt_find(&pcb->spt, addr);
+  if (entry == NULL)
+    return false;
+
+  /* Check if the SPT entry allows writing */
+  return entry->writable;
+}
+
 /* Validates a 4-byte pointer (suitable for int, void*, etc.).
-   Returns true if all 4 bytes are valid user memory. */
+   Returns true if all 4 bytes are valid user memory.
+   With VM/lazy loading, pages may exist in SPT but not yet be loaded. */
 static bool validate_pointer(void* arg) {
   char* byte_ptr = (char*)arg;
   if (!is_user_vaddr(byte_ptr) || !is_user_vaddr(byte_ptr + 3))
     return false;
 
-  /* Check all 4 bytes are mapped (handles cross-page pointers). */
-  if (!pagedir_get_page(thread_current()->pcb->pagedir, byte_ptr))
+  /* Check all 4 bytes are valid (handles cross-page pointers). */
+  if (!is_valid_user_byte(byte_ptr))
     return false;
-  if (!pagedir_get_page(thread_current()->pcb->pagedir, byte_ptr + 1))
+  if (!is_valid_user_byte(byte_ptr + 1))
     return false;
-  if (!pagedir_get_page(thread_current()->pcb->pagedir, byte_ptr + 2))
+  if (!is_valid_user_byte(byte_ptr + 2))
     return false;
-  if (!pagedir_get_page(thread_current()->pcb->pagedir, byte_ptr + 3))
+  if (!is_valid_user_byte(byte_ptr + 3))
     return false;
 
   return true;
@@ -126,14 +170,13 @@ static void exit_process(struct intr_frame* f, int exit_code) {
 }
 
 /* Validates a null-terminated string.
-   Checks each byte until we find '\0' or an invalid address. */
+   Checks each byte until we find '\0' or an invalid address.
+   With VM/lazy loading, pages may exist in the SPT but not yet be loaded. */
 static bool validate_string(char* str) {
   char* pointer = str;
 
   while (true) {
-    if (!is_user_vaddr(pointer))
-      return false;
-    if (!pagedir_get_page(thread_current()->pcb->pagedir, pointer))
+    if (!is_valid_user_byte(pointer))
       return false;
 
     if (*pointer == '\0')
@@ -142,19 +185,50 @@ static bool validate_string(char* str) {
   }
 }
 
-/* Validates a buffer of SIZE bytes starting at BUFFER. */
+/* Validates a buffer of SIZE bytes starting at BUFFER.
+   With VM/lazy loading, pages may exist in the SPT but not yet be loaded.
+   Optimized to check page-by-page instead of byte-by-byte. */
 static bool validate_buffer(char* buffer, int size) {
-  char* pointer = buffer;
-  int count = 0;
+  if (size <= 0)
+    return true;
 
-  while (count < size) {
-    if (!is_user_vaddr(pointer))
-      return false;
-    if (!pagedir_get_page(thread_current()->pcb->pagedir, pointer))
-      return false;
+  char* start = buffer;
+  char* end = buffer + size - 1;
 
-    pointer++;
-    count++;
+  /* Check each page that the buffer spans. */
+  char* page_start = (char*)pg_round_down(start);
+  char* last_page = (char*)pg_round_down(end);
+
+  for (char* page = page_start; page <= last_page; page += PGSIZE) {
+    /* Check the first byte of each page (or buffer start for first page). */
+    char* check_addr = (page < start) ? start : page;
+    if (!is_valid_user_byte(check_addr))
+      return false;
+  }
+
+  return true;
+}
+
+/* Validates a writable buffer of SIZE bytes starting at BUFFER.
+   Used when the kernel needs to write to user memory (e.g., read syscall).
+   Returns false if any byte is not writable or not mapped.
+   Optimized to check page-by-page instead of byte-by-byte. */
+static bool validate_writable_buffer(char* buffer, int size) {
+  if (size <= 0)
+    return true;
+
+  char* start = buffer;
+  char* end = buffer + size - 1;
+
+  /* Check each page that the buffer spans. */
+  char* page_start = (char*)pg_round_down(start);
+  char* last_page = (char*)pg_round_down(end);
+
+  for (char* page = page_start; page <= last_page; page += PGSIZE) {
+    /* Check the first byte of each page (or buffer start for first page). */
+    char* check_addr = (page < start) ? start : page;
+    if (!is_writable_user_byte(check_addr))
+      return false;
   }
 
   return true;
@@ -175,6 +249,13 @@ static void validate_string_and_exit_if_false(struct intr_frame* f, char* str) {
 
 static void validate_buffer_and_exit_if_false(struct intr_frame* f, char* buffer, int size) {
   if (!validate_buffer(buffer, size)) {
+    exit_process(f, -1);
+  }
+}
+
+static void validate_writable_buffer_and_exit_if_false(struct intr_frame* f, char* buffer,
+                                                       int size) {
+  if (!validate_writable_buffer(buffer, size)) {
     exit_process(f, -1);
   }
 }
@@ -371,7 +452,8 @@ static void syscall_handler(struct intr_frame* f) {
       validate_pointer_and_exit_if_false(f, &args[2]);
       char* buffer = (char*)args[2];
       int size = args[3];
-      validate_buffer_and_exit_if_false(f, buffer, size);
+      /* Use writable buffer validation since we're writing to the buffer */
+      validate_writable_buffer_and_exit_if_false(f, buffer, size);
 
       if (fd == STDIN_FILENO) {
         f->eax = read_from_input(buffer, size);
@@ -488,7 +570,8 @@ static void syscall_handler(struct intr_frame* f) {
       int fd = args[1];
       validate_pointer_and_exit_if_false(f, &args[2]);
       char* name = (char*)args[2];
-      validate_buffer_and_exit_if_false(f, name, NAME_MAX + 1);
+      /* Use writable buffer validation since we're writing to the buffer */
+      validate_writable_buffer_and_exit_if_false(f, name, NAME_MAX + 1);
 
       struct dir* dir = get_dir_from_fd(fd);
       if (dir == NULL) {

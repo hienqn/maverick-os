@@ -77,7 +77,10 @@ TESTCMD += $(FILESYSSOURCE)
 TESTCMD += $(foreach file,$(PUTFILES),-p $(file) -a $(notdir $(file)))
 endif
 ifeq ($(filter vm, $(KERNEL_SUBDIRS)), vm)
+# Add swap unless the test has _NO_SWAP set (e.g., for multi-oom OOM testing)
+ifeq ($($(TEST)_NO_SWAP),)
 TESTCMD += --swap-size=4
+endif
 endif
 TESTCMD += -- -q
 TESTCMD += $(KERNELFLAGS)

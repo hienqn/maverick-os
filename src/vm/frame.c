@@ -160,6 +160,45 @@ void* frame_alloc(void* upage, bool writable UNUSED) {
   return kpage;
 }
 
+/* Register an already-allocated page with the frame table.
+
+   Used when a page was allocated via palloc_get_page directly (e.g., by
+   pagedir_dup during fork) and needs to be tracked by the frame table.
+
+   Returns true if registration succeeded, false on failure. */
+bool frame_register(void* kpage, void* upage, struct thread* owner) {
+  if (kpage == NULL)
+    return false;
+
+  /* Check if already registered. */
+  lock_acquire(&frame_lock);
+  struct frame_entry* existing = frame_find_entry(kpage);
+  if (existing != NULL) {
+    lock_release(&frame_lock);
+    return false; /* Already registered. */
+  }
+  lock_release(&frame_lock);
+
+  /* Create frame table entry. */
+  struct frame_entry* fe = (struct frame_entry*)malloc(sizeof(struct frame_entry));
+  if (fe == NULL)
+    return false;
+
+  /* Initialize entry fields. */
+  fe->kpage = kpage;
+  fe->upage = upage;
+  fe->owner = owner;
+  fe->ref_count = 1;
+  fe->pinned = true; /* Start pinned like frame_alloc. */
+
+  /* Add to frame list. */
+  lock_acquire(&frame_lock);
+  list_push_back(&frame_list, &fe->elem);
+  lock_release(&frame_lock);
+
+  return true;
+}
+
 /* Free a frame and return it to the pool.
 
    This function:

@@ -223,7 +223,7 @@ static void page_fault(struct intr_frame* f) {
   /* Get the stack pointer. For user faults, use the saved ESP from the
      interrupt frame. For kernel faults (e.g., during syscall), we need
      the user ESP that was saved when entering kernel mode. */
-  void* esp = user ? (void*)f->esp : thread_current()->user_stack;
+  void* esp = user ? (void*)f->esp : thread_current()->syscall_esp;
 
   /* Try to handle the fault via the VM system. */
   if (vm_handle_fault(fault_addr, user, write, not_present, esp))

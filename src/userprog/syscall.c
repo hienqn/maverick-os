@@ -149,7 +149,7 @@ static void syscall_handler(struct intr_frame* f) {
   /* Save user ESP for page fault handler. When a fault occurs in kernel mode
      while accessing user memory, the handler needs the user stack pointer
      (not the kernel stack pointer) to check for valid stack growth. */
-  thread_current()->user_stack = (void*)f->esp;
+  thread_current()->syscall_esp = (void*)f->esp;
 
   uint32_t* args = ((uint32_t*)f->esp);
 
@@ -207,6 +207,11 @@ static void syscall_handler(struct intr_frame* f) {
     case SYS_CREATE: {
       char* file_name = (char*)args[1];
       unsigned initial_size = args[2];
+      /* NULL pointer should cause process to exit with -1 */
+      if (file_name == NULL) {
+        exit_process(f, -1);
+        break;
+      }
       f->eax = filesys_create(file_name, initial_size);
       break;
     }
@@ -280,6 +285,17 @@ static void syscall_handler(struct intr_frame* f) {
       char* buffer = (char*)args[2];
       int size = args[3];
 
+      if (size == 0) {
+        f->eax = 0;
+        break;
+      }
+
+      /* Validate buffer is in user space (reject kernel addresses) */
+      if (!is_user_vaddr(buffer) || !is_user_vaddr(buffer + size - 1)) {
+        exit_process(f, -1);
+        break;
+      }
+
       if (fd == STDIN_FILENO) {
         f->eax = read_from_input(buffer, size);
         break;
@@ -290,13 +306,41 @@ static void syscall_handler(struct intr_frame* f) {
       }
 
       struct file* file = get_file_from_fd(fd);
-      f->eax = (file != NULL) ? file_read(file, buffer, size) : -1;
+      if (file == NULL) {
+        f->eax = -1;
+        break;
+      }
+
+      /* Read into kernel buffer first, then copy to user buffer.
+         This ensures we don't hold filesystem locks if user buffer is bad. */
+      char* kbuf = malloc(size);
+      if (kbuf == NULL) {
+        f->eax = -1;
+        break;
+      }
+      int bytes_read = file_read(file, kbuf, size);
+      if (bytes_read > 0) {
+        memcpy(buffer, kbuf, bytes_read); /* May fault on bad user ptr - no locks held */
+      }
+      free(kbuf);
+      f->eax = bytes_read;
       break;
     }
     case SYS_WRITE: {
       int fd = args[1];
       void* buffer = (void*)args[2];
       uint32_t size = args[3];
+
+      if (size == 0) {
+        f->eax = 0;
+        break;
+      }
+
+      /* Validate buffer is in user space (reject kernel addresses) */
+      if (!is_user_vaddr(buffer) || !is_user_vaddr(buffer + size - 1)) {
+        exit_process(f, -1);
+        break;
+      }
 
       if (fd == STDIN_FILENO || fd < 0 || fd >= MAX_FILE_DESCRIPTOR) {
         f->eax = -1;
@@ -309,15 +353,22 @@ static void syscall_handler(struct intr_frame* f) {
       }
 
       struct file* file = get_file_from_fd(fd);
-      if (file != NULL) {
-        /* File data writes go directly through the buffer cache.
-           WAL transactions are used for atomic metadata operations (file creation,
-           directory updates) at the filesys layer, not for every data write. */
-        int bytes_written = file_write(file, buffer, size);
-        f->eax = bytes_written;
-      } else {
+      if (file == NULL) {
         f->eax = -1;
+        break;
       }
+
+      /* Copy user buffer to kernel buffer first.
+         This ensures we don't hold filesystem locks if user buffer is bad. */
+      char* kbuf = malloc(size);
+      if (kbuf == NULL) {
+        f->eax = -1;
+        break;
+      }
+      memcpy(kbuf, buffer, size); /* May fault on bad user ptr - no locks held */
+      int bytes_written = file_write(file, kbuf, size);
+      free(kbuf);
+      f->eax = bytes_written;
       break;
     }
     case SYS_SEEK: {
@@ -443,6 +494,12 @@ static void syscall_handler(struct intr_frame* f) {
     case SYS_LOCK_INIT: {
       lock_t* user_lock = (lock_t*)args[1];
 
+      /* Check for NULL pointer - return false instead of crashing */
+      if (user_lock == NULL) {
+        f->eax = false;
+        break;
+      }
+
       struct process* pcb = thread_current()->pcb;
       lock_acquire(&pcb->exit_lock);
 
@@ -464,16 +521,22 @@ static void syscall_handler(struct intr_frame* f) {
       pcb->lock_table[id] = k_lock;
       lock_release(&pcb->exit_lock);
 
-      *user_lock = (lock_t)id;
+      *user_lock = (lock_t)id; /* Safe: no locks held, validated non-NULL */
       f->eax = true;
       break;
     }
 
     case SYS_LOCK_ACQUIRE: {
       lock_t* user_lock = (lock_t*)args[1];
-      struct process* pcb = thread_current()->pcb;
+      if (user_lock == NULL) {
+        f->eax = false;
+        break;
+      }
+
+      /* Read user memory before acquiring any locks */
       int id = (int)(unsigned char)*user_lock;
 
+      struct process* pcb = thread_current()->pcb;
       lock_acquire(&pcb->exit_lock);
       struct lock* k_lock = (id >= 0 && id < MAX_LOCKS) ? pcb->lock_table[id] : NULL;
       lock_release(&pcb->exit_lock);
@@ -489,8 +552,14 @@ static void syscall_handler(struct intr_frame* f) {
 
     case SYS_LOCK_RELEASE: {
       lock_t* user_lock = (lock_t*)args[1];
-      struct process* pcb = thread_current()->pcb;
+      if (user_lock == NULL) {
+        f->eax = false;
+        break;
+      }
+
+      /* Read user memory before acquiring any locks */
       int id = (int)(unsigned char)*user_lock;
+      struct process* pcb = thread_current()->pcb;
 
       lock_acquire(&pcb->exit_lock);
       struct lock* k_lock = (id >= 0 && id < MAX_LOCKS) ? pcb->lock_table[id] : NULL;
@@ -509,7 +578,8 @@ static void syscall_handler(struct intr_frame* f) {
       sema_t* user_sema = (sema_t*)args[1];
       int val = (int)args[2];
 
-      if (val < 0) {
+      /* Check for NULL pointer or negative value - return false instead of crashing */
+      if (user_sema == NULL || val < 0) {
         f->eax = false;
         break;
       }
@@ -535,16 +605,22 @@ static void syscall_handler(struct intr_frame* f) {
       pcb->sema_table[id] = k_sema;
       lock_release(&pcb->exit_lock);
 
-      *user_sema = (sema_t)id;
+      *user_sema = (sema_t)id; /* Safe: no locks held, validated non-NULL */
       f->eax = true;
       break;
     }
 
     case SYS_SEMA_DOWN: {
       sema_t* user_sema = (sema_t*)args[1];
-      struct process* pcb = thread_current()->pcb;
+      if (user_sema == NULL) {
+        f->eax = false;
+        break;
+      }
+
+      /* Read user memory before acquiring any locks */
       int id = (int)(unsigned char)*user_sema;
 
+      struct process* pcb = thread_current()->pcb;
       lock_acquire(&pcb->exit_lock);
       struct semaphore* k_sema = (id >= 0 && id < MAX_SEMAS) ? pcb->sema_table[id] : NULL;
       lock_release(&pcb->exit_lock);
@@ -560,9 +636,15 @@ static void syscall_handler(struct intr_frame* f) {
 
     case SYS_SEMA_UP: {
       sema_t* user_sema = (sema_t*)args[1];
-      struct process* pcb = thread_current()->pcb;
+      if (user_sema == NULL) {
+        f->eax = false;
+        break;
+      }
+
+      /* Read user memory before acquiring any locks */
       int id = (int)(unsigned char)*user_sema;
 
+      struct process* pcb = thread_current()->pcb;
       lock_acquire(&pcb->exit_lock);
       struct semaphore* k_sema = (id >= 0 && id < MAX_SEMAS) ? pcb->sema_table[id] : NULL;
       lock_release(&pcb->exit_lock);

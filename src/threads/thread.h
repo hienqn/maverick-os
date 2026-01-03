@@ -223,7 +223,8 @@ struct thread {
    * ═══════════════════════════════════════════════════════════════════════*/
   struct process* pcb;              /* Process control block (NULL for kernel threads). */
   struct list_elem pcb_elem;        /* Element in process's thread list. */
-  void* user_stack;                 /* Base of this thread's user stack page. */
+  void* user_stack;                 /* Base of this thread's user stack page (page-aligned). */
+  void* syscall_esp;                /* User ESP saved on syscall entry (for page fault handler). */
   struct pthread_status* my_status; /* Status struct for pthread join synchronization. */
   struct dir* cwd;                  /* Current working directory (per-thread in PintOS). */
 #endif

@@ -358,4 +358,9 @@ bool thread_priority_less(const struct list_elem* a, const struct list_elem* b, 
 /* Returns true if a's priority > b's priority (for list_insert_ordered). */
 bool thread_priority_greater(const struct list_elem* a, const struct list_elem* b, void* aux);
 
+/* Re-inserts a THREAD_READY thread in the ready queue at its correct position.
+   Used after priority donation changes a thread's effective priority.
+   Must be called with interrupts disabled. */
+void thread_reinsert_ready(struct thread* t);
+
 #endif /* threads/thread.h */

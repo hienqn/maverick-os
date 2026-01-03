@@ -406,6 +406,21 @@ bool thread_priority_greater(const struct list_elem* a, const struct list_elem* 
   return ta->eff_priority > tb->eff_priority;
 }
 
+/* Re-inserts a THREAD_READY thread in the ready queue at its correct position.
+   Used after priority donation changes a thread's effective priority.
+   Must be called with interrupts disabled. */
+void thread_reinsert_ready(struct thread* t) {
+  ASSERT(intr_get_level() == INTR_OFF);
+  ASSERT(is_thread(t));
+  ASSERT(t->status == THREAD_READY);
+
+  /* Only relevant for priority-based schedulers */
+  if (active_sched_policy == SCHED_PRIO || active_sched_policy == SCHED_MLFQS) {
+    list_remove(&t->elem);
+    list_insert_ordered(&priority_ready_list, &t->elem, thread_priority_greater, NULL);
+  }
+}
+
 /* Places a thread on the ready structure appropriate for the
    current active scheduling policy.
    

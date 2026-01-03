@@ -264,7 +264,13 @@ void lock_acquire(struct lock* lock) {
       /* Donate priority to the HOLDER (not waiters!) */
       struct thread* holder = lock->holder;
       if (thread_current()->eff_priority > holder->eff_priority) {
+        enum intr_level old_level = intr_disable();
         holder->eff_priority = thread_current()->eff_priority;
+
+        /* If holder is in ready queue, re-insert at correct position */
+        if (holder->status == THREAD_READY) {
+          thread_reinsert_ready(holder);
+        }
 
         /* Chain: if holder is waiting for another lock, propagate */
         struct lock* next_lock = holder->waiting_lock;
@@ -272,10 +278,15 @@ void lock_acquire(struct lock* lock) {
           struct thread* next_holder = next_lock->holder;
           if (holder->eff_priority > next_holder->eff_priority) {
             next_holder->eff_priority = holder->eff_priority;
+            /* Re-sort if in ready queue */
+            if (next_holder->status == THREAD_READY) {
+              thread_reinsert_ready(next_holder);
+            }
           }
           holder = next_holder;
           next_lock = holder->waiting_lock;
         }
+        intr_set_level(old_level);
       }
     }
   }

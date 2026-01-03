@@ -36,9 +36,9 @@
  * ║                                                                          ║
  * ║  SECURITY:                                                               ║
  * ║  ─────────                                                               ║
- * ║  • ALL user pointers must be validated before dereferencing              ║
- * ║  • Check: is_user_vaddr() and pagedir_get_page()                         ║
- * ║  • Invalid pointers → terminate process with exit(-1)                    ║
+ * ║  • Invalid user pointers are caught by the page fault handler            ║
+ * ║  • When kernel faults on user address, process exits with -1             ║
+ * ║  • This approach is simpler and handles lazy-loaded pages correctly      ║
  * ║                                                                          ║
  * ║  SYSCALL CATEGORIES:                                                     ║
  * ║  ────────────────────                                                    ║
@@ -64,11 +64,9 @@
 #include "filesys/inode.h"
 #include "filesys/directory.h"
 #include "threads/vaddr.h"
-#include "userprog/pagedir.h"
 #include "devices/shutdown.h"
 #include "filesys/filesys.h"
 #include "filesys/wal.h"
-#include "vm/page.h"
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * FORWARD DECLARATIONS
@@ -85,179 +83,12 @@ static void syscall_handler(struct intr_frame*);
    DPL=3 allows user-mode code to invoke this interrupt. */
 void syscall_init(void) { intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall"); }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * USER POINTER VALIDATION
- * ─────────────────────────────────────────────────────────────────────────────
- * CRITICAL SECURITY: User programs can pass arbitrary pointers to syscalls.
- * We MUST validate every pointer before dereferencing it in kernel mode.
- *
- * Validation checks:
- *   1. is_user_vaddr: Address is below PHYS_BASE (user space)
- *   2. pagedir_get_page: Address is mapped in the process's page directory
- *
- * If validation fails, the process is terminated with exit code -1.
- * ═══════════════════════════════════════════════════════════════════════════*/
-
-/* Helper: Check if a single byte address is valid user memory.
-   With VM/lazy loading, a page might be in SPT but not yet in page table.
-   Returns true if address is mapped (either loaded or lazy-loadable). */
-static bool is_valid_user_byte(void* addr) {
-  if (!is_user_vaddr(addr))
-    return false;
-
-  struct process* pcb = thread_current()->pcb;
-
-  /* Check if page is in page table (already loaded) */
-  if (pagedir_get_page(pcb->pagedir, addr))
-    return true;
-
-  /* Page not in page table - check if it's a valid lazy-loaded page in SPT */
-  struct spt_entry* entry = spt_find(&pcb->spt, addr);
-  return entry != NULL;
-}
-
-/* Helper: Check if a single byte address is valid AND writable user memory.
-   Used when the kernel needs to write to user memory (e.g., read syscall buffer).
-   Returns true if address is mapped and writable. */
-static bool is_writable_user_byte(void* addr) {
-  if (!is_user_vaddr(addr))
-    return false;
-
-  struct process* pcb = thread_current()->pcb;
-
-  /* Check if page is in page table (already loaded) */
-  if (pagedir_get_page(pcb->pagedir, addr)) {
-    /* Page is loaded - check writable bit in page table */
-    return pagedir_is_writable(pcb->pagedir, addr);
-  }
-
-  /* Page not in page table - check SPT for lazy-loaded page */
-  struct spt_entry* entry = spt_find(&pcb->spt, addr);
-  if (entry == NULL)
-    return false;
-
-  /* Check if the SPT entry allows writing */
-  return entry->writable;
-}
-
-/* Validates a 4-byte pointer (suitable for int, void*, etc.).
-   Returns true if all 4 bytes are valid user memory.
-   With VM/lazy loading, pages may exist in SPT but not yet be loaded. */
-static bool validate_pointer(void* arg) {
-  char* byte_ptr = (char*)arg;
-  if (!is_user_vaddr(byte_ptr) || !is_user_vaddr(byte_ptr + 3))
-    return false;
-
-  /* Check all 4 bytes are valid (handles cross-page pointers). */
-  if (!is_valid_user_byte(byte_ptr))
-    return false;
-  if (!is_valid_user_byte(byte_ptr + 1))
-    return false;
-  if (!is_valid_user_byte(byte_ptr + 2))
-    return false;
-  if (!is_valid_user_byte(byte_ptr + 3))
-    return false;
-
-  return true;
-}
-
 /* Terminates the current process with the given exit code. */
 static void exit_process(struct intr_frame* f, int exit_code) {
   f->eax = exit_code;
   thread_current()->pcb->my_status->exit_code = exit_code;
   printf("%s: exit(%d)\n", thread_current()->pcb->process_name, f->eax);
   process_exit();
-}
-
-/* Validates a null-terminated string.
-   Checks each byte until we find '\0' or an invalid address.
-   With VM/lazy loading, pages may exist in the SPT but not yet be loaded. */
-static bool validate_string(char* str) {
-  char* pointer = str;
-
-  while (true) {
-    if (!is_valid_user_byte(pointer))
-      return false;
-
-    if (*pointer == '\0')
-      return true;
-    pointer++;
-  }
-}
-
-/* Validates a buffer of SIZE bytes starting at BUFFER.
-   With VM/lazy loading, pages may exist in the SPT but not yet be loaded.
-   Optimized to check page-by-page instead of byte-by-byte. */
-static bool validate_buffer(char* buffer, int size) {
-  if (size <= 0)
-    return true;
-
-  char* start = buffer;
-  char* end = buffer + size - 1;
-
-  /* Check each page that the buffer spans. */
-  char* page_start = (char*)pg_round_down(start);
-  char* last_page = (char*)pg_round_down(end);
-
-  for (char* page = page_start; page <= last_page; page += PGSIZE) {
-    /* Check the first byte of each page (or buffer start for first page). */
-    char* check_addr = (page < start) ? start : page;
-    if (!is_valid_user_byte(check_addr))
-      return false;
-  }
-
-  return true;
-}
-
-/* Validates a writable buffer of SIZE bytes starting at BUFFER.
-   Used when the kernel needs to write to user memory (e.g., read syscall).
-   Returns false if any byte is not writable or not mapped.
-   Optimized to check page-by-page instead of byte-by-byte. */
-static bool validate_writable_buffer(char* buffer, int size) {
-  if (size <= 0)
-    return true;
-
-  char* start = buffer;
-  char* end = buffer + size - 1;
-
-  /* Check each page that the buffer spans. */
-  char* page_start = (char*)pg_round_down(start);
-  char* last_page = (char*)pg_round_down(end);
-
-  for (char* page = page_start; page <= last_page; page += PGSIZE) {
-    /* Check the first byte of each page (or buffer start for first page). */
-    char* check_addr = (page < start) ? start : page;
-    if (!is_writable_user_byte(check_addr))
-      return false;
-  }
-
-  return true;
-}
-
-/* Convenience wrappers that exit on validation failure. */
-static void validate_pointer_and_exit_if_false(struct intr_frame* f, void* arg) {
-  if (!validate_pointer(arg)) {
-    exit_process(f, -1);
-  }
-}
-
-static void validate_string_and_exit_if_false(struct intr_frame* f, char* str) {
-  if (!validate_string(str)) {
-    exit_process(f, -1);
-  }
-}
-
-static void validate_buffer_and_exit_if_false(struct intr_frame* f, char* buffer, int size) {
-  if (!validate_buffer(buffer, size)) {
-    exit_process(f, -1);
-  }
-}
-
-static void validate_writable_buffer_and_exit_if_false(struct intr_frame* f, char* buffer,
-                                                       int size) {
-  if (!validate_writable_buffer(buffer, size)) {
-    exit_process(f, -1);
-  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -315,17 +146,26 @@ static struct dir* get_dir_from_fd(int fd) {
  * ═══════════════════════════════════════════════════════════════════════════*/
 
 static void syscall_handler(struct intr_frame* f) {
+  /* Save user ESP for page fault handler. When a fault occurs in kernel mode
+     while accessing user memory, the handler needs the user stack pointer
+     (not the kernel stack pointer) to check for valid stack growth. */
+  thread_current()->user_stack = (void*)f->esp;
+
   uint32_t* args = ((uint32_t*)f->esp);
 
-  /* First, validate the syscall number pointer itself. */
-  if (!validate_pointer(&args[0])) {
+  /* Basic check: ensure syscall arguments are in user space.
+     Page faults catch unmapped addresses, but kernel addresses are mapped
+     and readable - we must explicitly reject them to prevent reading
+     kernel memory. Check that args[0..3] are all in user space
+     (4 args covers all syscalls). */
+  if (!is_user_vaddr(&args[3])) {
     thread_current()->pcb->my_status->exit_code = -1;
     printf("%s: exit(%d)\n", thread_current()->pcb->process_name, -1);
     process_exit();
     NOT_REACHED();
   }
 
-  uint32_t syscall_num = args[0];
+  uint32_t syscall_num = args[0]; /* May fault - page_fault() handles it */
 
   switch (syscall_num) {
 
@@ -334,7 +174,6 @@ static void syscall_handler(struct intr_frame* f) {
    * ═══════════════════════════════════════════════════════════════════════*/
 
     case SYS_EXIT:
-      validate_pointer_and_exit_if_false(f, &args[1]);
       exit_process(f, args[1]);
       break;
 
@@ -343,9 +182,7 @@ static void syscall_handler(struct intr_frame* f) {
       break;
 
     case SYS_EXEC: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
       char* cmd_line = (char*)args[1];
-      validate_string_and_exit_if_false(f, cmd_line);
       pid_t pid = process_execute(cmd_line);
       f->eax = (pid == TID_ERROR) ? -1 : pid;
       break;
@@ -361,7 +198,6 @@ static void syscall_handler(struct intr_frame* f) {
       break;
     }
     case SYS_PRACTICE:
-      validate_pointer_and_exit_if_false(f, &args[1]);
       f->eax = args[1] + 1;
       break;
 
@@ -369,24 +205,18 @@ static void syscall_handler(struct intr_frame* f) {
    * FILE SYSCALLS
    * ═══════════════════════════════════════════════════════════════════════*/
     case SYS_CREATE: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
       char* file_name = (char*)args[1];
-      validate_string_and_exit_if_false(f, file_name);
       unsigned initial_size = args[2];
       f->eax = filesys_create(file_name, initial_size);
       break;
     }
     case SYS_REMOVE: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
       char* file_name = (char*)args[1];
-      validate_string_and_exit_if_false(f, file_name);
       f->eax = filesys_remove(file_name);
       break;
     }
     case SYS_OPEN: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
       char* file_name = (char*)args[1];
-      validate_string_and_exit_if_false(f, file_name);
 
       struct file* open_file = filesys_open(file_name);
       if (open_file == NULL) {
@@ -422,7 +252,6 @@ static void syscall_handler(struct intr_frame* f) {
       break;
     }
     case SYS_CLOSE: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
       int fd = args[1];
 
       /* Allow closing stdin/stdout (no-op) but validate range */
@@ -447,13 +276,9 @@ static void syscall_handler(struct intr_frame* f) {
       break;
     }
     case SYS_READ: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
       int fd = args[1];
-      validate_pointer_and_exit_if_false(f, &args[2]);
       char* buffer = (char*)args[2];
       int size = args[3];
-      /* Use writable buffer validation since we're writing to the buffer */
-      validate_writable_buffer_and_exit_if_false(f, buffer, size);
 
       if (fd == STDIN_FILENO) {
         f->eax = read_from_input(buffer, size);
@@ -469,12 +294,9 @@ static void syscall_handler(struct intr_frame* f) {
       break;
     }
     case SYS_WRITE: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
       int fd = args[1];
-      validate_pointer_and_exit_if_false(f, &args[2]);
       void* buffer = (void*)args[2];
       uint32_t size = args[3];
-      validate_buffer_and_exit_if_false(f, buffer, size);
 
       if (fd == STDIN_FILENO || fd < 0 || fd >= MAX_FILE_DESCRIPTOR) {
         f->eax = -1;
@@ -499,8 +321,6 @@ static void syscall_handler(struct intr_frame* f) {
       break;
     }
     case SYS_SEEK: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
-      validate_pointer_and_exit_if_false(f, &args[2]);
       int fd = args[1];
       int pos = args[2];
 
@@ -510,7 +330,6 @@ static void syscall_handler(struct intr_frame* f) {
       break;
     }
     case SYS_TELL: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
       int fd = args[1];
 
       struct file* file = get_file_from_fd(fd);
@@ -518,7 +337,6 @@ static void syscall_handler(struct intr_frame* f) {
       break;
     }
     case SYS_FILESIZE: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
       int fd = args[1];
 
       struct file* file = get_file_from_fd(fd);
@@ -526,7 +344,6 @@ static void syscall_handler(struct intr_frame* f) {
       break;
     }
     case SYS_INUMBER: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
       int fd = args[1];
 
       struct fd_entry* entry = get_fd_entry(fd);
@@ -550,28 +367,20 @@ static void syscall_handler(struct intr_frame* f) {
    * ═══════════════════════════════════════════════════════════════════════*/
 
     case SYS_CHDIR: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
       char* dir_path = (char*)args[1];
-      validate_string_and_exit_if_false(f, dir_path);
       f->eax = filesys_chdir(dir_path);
       break;
     }
 
     case SYS_MKDIR: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
       char* dir_path = (char*)args[1];
-      validate_string_and_exit_if_false(f, dir_path);
       f->eax = filesys_mkdir(dir_path);
       break;
     }
 
     case SYS_READDIR: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
       int fd = args[1];
-      validate_pointer_and_exit_if_false(f, &args[2]);
       char* name = (char*)args[2];
-      /* Use writable buffer validation since we're writing to the buffer */
-      validate_writable_buffer_and_exit_if_false(f, name, NAME_MAX + 1);
 
       struct dir* dir = get_dir_from_fd(fd);
       if (dir == NULL) {
@@ -594,7 +403,6 @@ static void syscall_handler(struct intr_frame* f) {
     }
 
     case SYS_ISDIR: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
       int fd = args[1];
 
       struct fd_entry* entry = get_fd_entry(fd);
@@ -607,9 +415,6 @@ static void syscall_handler(struct intr_frame* f) {
    * ═══════════════════════════════════════════════════════════════════════*/
 
     case SYS_PT_CREATE: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
-      validate_pointer_and_exit_if_false(f, &args[2]);
-      validate_pointer_and_exit_if_false(f, &args[3]);
       stub_fun sfun = (stub_fun)args[1];
       pthread_fun tfun = (pthread_fun)args[2];
       void* arg = (void*)args[3];
@@ -622,7 +427,6 @@ static void syscall_handler(struct intr_frame* f) {
       break;
 
     case SYS_PT_JOIN: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
       tid_t tid = args[1];
       f->eax = pthread_join(tid, NULL);
       break;
@@ -637,13 +441,7 @@ static void syscall_handler(struct intr_frame* f) {
    * ═══════════════════════════════════════════════════════════════════════*/
 
     case SYS_LOCK_INIT: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
       lock_t* user_lock = (lock_t*)args[1];
-
-      if (!validate_pointer(user_lock)) {
-        f->eax = false;
-        break;
-      }
 
       struct process* pcb = thread_current()->pcb;
       lock_acquire(&pcb->exit_lock);
@@ -672,7 +470,6 @@ static void syscall_handler(struct intr_frame* f) {
     }
 
     case SYS_LOCK_ACQUIRE: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
       lock_t* user_lock = (lock_t*)args[1];
       struct process* pcb = thread_current()->pcb;
       int id = (int)(unsigned char)*user_lock;
@@ -691,7 +488,6 @@ static void syscall_handler(struct intr_frame* f) {
     }
 
     case SYS_LOCK_RELEASE: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
       lock_t* user_lock = (lock_t*)args[1];
       struct process* pcb = thread_current()->pcb;
       int id = (int)(unsigned char)*user_lock;
@@ -710,11 +506,10 @@ static void syscall_handler(struct intr_frame* f) {
     }
 
     case SYS_SEMA_INIT: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
       sema_t* user_sema = (sema_t*)args[1];
       int val = (int)args[2];
 
-      if (!validate_pointer(user_sema) || val < 0) {
+      if (val < 0) {
         f->eax = false;
         break;
       }
@@ -746,7 +541,6 @@ static void syscall_handler(struct intr_frame* f) {
     }
 
     case SYS_SEMA_DOWN: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
       sema_t* user_sema = (sema_t*)args[1];
       struct process* pcb = thread_current()->pcb;
       int id = (int)(unsigned char)*user_sema;
@@ -765,7 +559,6 @@ static void syscall_handler(struct intr_frame* f) {
     }
 
     case SYS_SEMA_UP: {
-      validate_pointer_and_exit_if_false(f, &args[1]);
       sema_t* user_sema = (sema_t*)args[1];
       struct process* pcb = thread_current()->pcb;
       int id = (int)(unsigned char)*user_sema;

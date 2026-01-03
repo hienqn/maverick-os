@@ -52,6 +52,7 @@
 #include "userprog/process.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
+#include "threads/vaddr.h"
 #include "vm/vm.h"
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -228,7 +229,20 @@ static void page_fault(struct intr_frame* f) {
   if (vm_handle_fault(fault_addr, user, write, not_present, esp))
     return; /* Fault handled successfully - return to user. */
 
-  /* VM couldn't handle the fault - this is an invalid access. */
+  /* VM couldn't handle the fault - this is an invalid access.
+     Check if this is kernel code accessing user memory (syscall context).
+     In this case, we should kill the user process, not panic the kernel. */
+  if (!user && is_user_vaddr(fault_addr)) {
+    /* Kernel code tried to access invalid user memory (bad syscall pointer).
+       Kill the user process with exit code -1. */
+    f->eax = -1;
+    thread_current()->pcb->my_status->exit_code = -1;
+    printf("%s: exit(%d)\n", thread_current()->pcb->process_name, -1);
+    process_exit();
+    NOT_REACHED();
+  }
+
+  /* User fault or kernel fault on kernel address - use standard kill. */
   printf("Page fault at %p: %s error %s page in %s context.\n", fault_addr,
          not_present ? "not present" : "rights violation", write ? "writing" : "reading",
          user ? "user" : "kernel");

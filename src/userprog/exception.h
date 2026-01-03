@@ -6,10 +6,52 @@
  * ║  Handles CPU exceptions caused by user programs. Most exceptions         ║
  * ║  result in terminating the offending process with exit code -1.          ║
  * ║                                                                          ║
- * ║  Page faults are currently handled as errors, but for virtual memory     ║
- * ║  they would trigger demand paging, stack growth, or copy-on-write.       ║
- * ║                                                                          ║
  * ╚══════════════════════════════════════════════════════════════════════════╝
+ *
+ * PAGE FAULT HANDLING ALGORITHM
+ * ─────────────────────────────
+ *
+ * When a page fault occurs, the handler follows this decision tree:
+ *
+ *   Page Fault at address A
+ *         │
+ *         ▼
+ *   ┌─────────────────────────────┐
+ *   │ Call vm_handle_fault(A)     │
+ *   └─────────────┬───────────────┘
+ *                 │
+ *         ┌───────┴───────┐
+ *         │ Handled?      │
+ *         └───────┬───────┘
+ *            yes/ \no
+ *              /   \
+ *             ▼     ▼
+ *     ┌─────────┐  ┌─────────────────────────────┐
+ *     │ Return  │  │ Is kernel accessing user    │
+ *     │ to user │  │ address? (syscall context)  │
+ *     └─────────┘  └─────────────┬───────────────┘
+ *                           yes/ \no
+ *                             /   \
+ *                            ▼     ▼
+ *                    ┌───────────┐ ┌───────────┐
+ *                    │ Kill user │ │ Kill/Panic│
+ *                    │ process   │ │           │
+ *                    └───────────┘ └───────────┘
+ *
+ * vm_handle_fault() checks (in order):
+ *   1. Stack growth: Is A below esp but within allowed growth range?
+ *   2. Demand paging: Is there an SPT entry for this page?
+ *   3. If SPT entry exists, load page (from file, swap, or zero-fill)
+ *
+ * Stack Growth Detection:
+ *   - Valid if fault_addr >= esp - 32 (PUSHA instruction pushes 32 bytes)
+ *   - Valid if fault_addr >= STACK_BOTTOM (stack cannot grow indefinitely)
+ *   - Must be a write access to a not-present page
+ *
+ * Termination Conditions:
+ *   - Access to unmapped memory (no SPT entry, not valid stack growth)
+ *   - Write to read-only page (protection violation)
+ *   - Access to kernel address from user mode
  */
 
 #ifndef USERPROG_EXCEPTION_H

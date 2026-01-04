@@ -10,8 +10,8 @@ const config: Config = {
   url: 'https://hienqn.github.io',
   baseUrl: '/',
 
-  organizationName: 'your-org',
-  projectName: 'group0',
+  organizationName: 'hienqn',
+  projectName: 'maverick-os',
 
   onBrokenLinks: 'throw',
   onBrokenMarkdownLinks: 'warn',
@@ -33,7 +33,7 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/your-org/group0/tree/main/website/',
+          editUrl: 'https://github.com/hienqn/maverick-os/tree/main/website/',
           showLastUpdateTime: true,
           showLastUpdateAuthor: true,
         },
@@ -66,7 +66,7 @@ const config: Config = {
           position: 'left',
         },
         {
-          href: 'https://github.com/your-org/group0',
+          href: 'https://github.com/hienqn/maverick-os',
           label: 'GitHub',
           position: 'right',
         },

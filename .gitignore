@@ -287,3 +287,8 @@ pintos/**/build
 .cache
 # Allow Docusaurus CSS modules
 !website/**/*.module.css
+
+# Docusaurus
+website/.docusaurus/
+website/build/
+website/node_modules/

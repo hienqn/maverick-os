@@ -7,8 +7,8 @@ const config: Config = {
   tagline: 'Learn Operating Systems Through Real Code',
   favicon: 'img/favicon.ico',
 
-  url: 'https://your-org.github.io',
-  baseUrl: '/group0/',
+  url: 'https://hienqn.github.io',
+  baseUrl: '/',
 
   organizationName: 'your-org',
   projectName: 'group0',
@@ -105,7 +105,7 @@ const config: Config = {
     prism: {
       theme: prismThemes.github,
       darkTheme: prismThemes.dracula,
-      additionalLanguages: ['c', 'asm', 'bash', 'makefile'],
+      additionalLanguages: ['c', 'nasm', 'bash', 'makefile'],
     },
     mermaid: {
       theme: {light: 'default', dark: 'dark'},

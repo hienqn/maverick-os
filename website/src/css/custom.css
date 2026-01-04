@@ -1,0 +1,365 @@
+/**
+ * PintOS Documentation - Custom Styles
+ * Optimized for CS students learning OS concepts
+ */
+
+:root {
+  /* Primary colors - deep blue for trust and learning */
+  --ifm-color-primary: #2e5a88;
+  --ifm-color-primary-dark: #295175;
+  --ifm-color-primary-darker: #274d6f;
+  --ifm-color-primary-darkest: #1f3f5b;
+  --ifm-color-primary-light: #33639b;
+  --ifm-color-primary-lighter: #3568a1;
+  --ifm-color-primary-lightest: #4078b5;
+
+  /* Code block styling */
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+
+  /* Better contrast for learning */
+  --ifm-font-size-base: 17px;
+  --ifm-line-height-base: 1.7;
+
+  /* Spacing */
+  --ifm-spacing-horizontal: 1.5rem;
+}
+
+/* Dark mode */
+[data-theme='dark'] {
+  --ifm-color-primary: #5a9bd5;
+  --ifm-color-primary-dark: #4690d0;
+  --ifm-color-primary-darker: #3c8acd;
+  --ifm-color-primary-darkest: #2a73b3;
+  --ifm-color-primary-light: #6ea6da;
+  --ifm-color-primary-lighter: #78acdd;
+  --ifm-color-primary-lightest: #9cc3e8;
+  --docusaurus-highlighted-code-line-bg: rgba(255, 255, 255, 0.1);
+}
+
+/* Hero section on landing page */
+.hero {
+  background: linear-gradient(135deg, #1a3a5c 0%, #2e5a88 50%, #4078b5 100%);
+}
+
+.hero__title {
+  font-size: 3.5rem;
+  font-weight: 800;
+}
+
+.hero__subtitle {
+  font-size: 1.5rem;
+  opacity: 0.9;
+}
+
+/* Feature cards */
+.feature-card {
+  padding: 2rem;
+  border-radius: 12px;
+  background: var(--ifm-card-background-color);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.feature-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+/* Code blocks with line numbers */
+.prism-code {
+  counter-reset: line;
+}
+
+.prism-code .token-line::before {
+  counter-increment: line;
+  content: counter(line);
+  display: inline-block;
+  width: 2rem;
+  margin-right: 1rem;
+  text-align: right;
+  color: var(--ifm-color-gray-500);
+}
+
+/* Memory layout visualization */
+.memory-layout {
+  font-family: var(--ifm-font-family-monospace);
+  border: 2px solid var(--ifm-color-primary);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.memory-region {
+  padding: 0.75rem 1rem;
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--ifm-color-gray-300);
+}
+
+.memory-region:last-child {
+  border-bottom: none;
+}
+
+.memory-region.kernel {
+  background: #fee2e2;
+}
+
+.memory-region.user {
+  background: #dbeafe;
+}
+
+.memory-region.stack {
+  background: #dcfce7;
+}
+
+[data-theme='dark'] .memory-region.kernel {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+[data-theme='dark'] .memory-region.user {
+  background: rgba(59, 130, 246, 0.2);
+}
+
+[data-theme='dark'] .memory-region.stack {
+  background: rgba(34, 197, 94, 0.2);
+}
+
+/* Animated flow controls */
+.flow-controls {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1rem 0;
+  padding: 0.75rem;
+  background: var(--ifm-card-background-color);
+  border-radius: 8px;
+}
+
+.flow-controls button {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 4px;
+  background: var(--ifm-color-primary);
+  color: white;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.flow-controls button:hover {
+  background: var(--ifm-color-primary-dark);
+}
+
+.flow-controls button:disabled {
+  background: var(--ifm-color-gray-400);
+  cursor: not-allowed;
+}
+
+/* Code walkthrough component */
+.code-walkthrough {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin: 1.5rem 0;
+}
+
+@media (max-width: 768px) {
+  .code-walkthrough {
+    grid-template-columns: 1fr;
+  }
+}
+
+.code-walkthrough__code {
+  position: relative;
+}
+
+.code-walkthrough__explanation {
+  padding: 1rem;
+  background: var(--ifm-card-background-color);
+  border-radius: 8px;
+  border-left: 4px solid var(--ifm-color-primary);
+}
+
+.code-walkthrough__step-title {
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  color: var(--ifm-color-primary);
+}
+
+/* Interactive diagram */
+.interactive-diagram {
+  width: 100%;
+  min-height: 400px;
+  background: var(--ifm-card-background-color);
+  border-radius: 12px;
+  border: 1px solid var(--ifm-color-gray-200);
+  overflow: hidden;
+}
+
+.interactive-diagram svg {
+  width: 100%;
+  height: 100%;
+}
+
+.interactive-diagram .node {
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+.interactive-diagram .node:hover {
+  transform: scale(1.05);
+}
+
+/* Concept map */
+.concept-map {
+  width: 100%;
+  height: 500px;
+  background: var(--ifm-card-background-color);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.concept-map .concept-node {
+  fill: var(--ifm-color-primary);
+  cursor: pointer;
+}
+
+.concept-map .code-node {
+  fill: var(--ifm-color-success);
+  cursor: pointer;
+}
+
+.concept-map .link {
+  stroke: var(--ifm-color-gray-400);
+  stroke-width: 2;
+}
+
+/* Timeline component */
+.timeline {
+  position: relative;
+  padding-left: 2rem;
+}
+
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 0.5rem;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--ifm-color-primary);
+}
+
+.timeline-item {
+  position: relative;
+  padding-bottom: 2rem;
+}
+
+.timeline-item::before {
+  content: '';
+  position: absolute;
+  left: -1.75rem;
+  top: 0.25rem;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--ifm-color-primary);
+  border: 2px solid white;
+}
+
+.timeline-item__version {
+  font-weight: 700;
+  font-size: 1.25rem;
+  color: var(--ifm-color-primary);
+}
+
+.timeline-item__date {
+  color: var(--ifm-color-gray-600);
+  font-size: 0.875rem;
+}
+
+/* Quiz component */
+.quiz {
+  background: var(--ifm-card-background-color);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin: 1.5rem 0;
+  border: 1px solid var(--ifm-color-gray-200);
+}
+
+.quiz__question {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+.quiz__options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.quiz__option {
+  padding: 0.75rem 1rem;
+  border: 2px solid var(--ifm-color-gray-300);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.quiz__option:hover {
+  border-color: var(--ifm-color-primary);
+  background: rgba(46, 90, 136, 0.05);
+}
+
+.quiz__option--correct {
+  border-color: var(--ifm-color-success);
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.quiz__option--incorrect {
+  border-color: var(--ifm-color-danger);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.quiz__explanation {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: rgba(46, 90, 136, 0.1);
+  border-radius: 8px;
+  border-left: 4px solid var(--ifm-color-primary);
+}
+
+/* Admonitions for tips and warnings */
+.admonition-tip {
+  border-left-color: var(--ifm-color-success);
+}
+
+.admonition-caution {
+  border-left-color: var(--ifm-color-warning);
+}
+
+.admonition-danger {
+  border-left-color: var(--ifm-color-danger);
+}
+
+/* Table of contents improvements */
+.table-of-contents {
+  font-size: 0.875rem;
+}
+
+.table-of-contents__link--active {
+  font-weight: 600;
+}
+
+/* Print styles */
+@media print {
+  .navbar,
+  .footer,
+  .pagination-nav,
+  .table-of-contents {
+    display: none;
+  }
+
+  .markdown {
+    max-width: 100%;
+  }
+}

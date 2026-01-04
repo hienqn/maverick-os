@@ -285,3 +285,5 @@ cscope.po.out
 pintos/**/build
 
 .cache
+# Allow Docusaurus CSS modules
+!website/**/*.module.css

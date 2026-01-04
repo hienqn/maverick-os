@@ -1,0 +1,90 @@
+.container {
+  background: var(--ifm-card-background-color);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin: 1.5rem 0;
+  border: 1px solid var(--ifm-color-gray-200);
+}
+
+.title {
+  margin: 0 0 1rem;
+  text-align: center;
+  color: var(--ifm-color-primary);
+}
+
+.diagramWrapper {
+  position: relative;
+  width: 100%;
+  overflow: auto;
+}
+
+.diagram {
+  width: 100%;
+  min-height: 400px;
+  display: block;
+}
+
+.node {
+  transition: transform 0.2s;
+}
+
+.node:hover .nodeRect {
+  filter: brightness(1.1);
+}
+
+.node.hovered .nodeRect {
+  stroke: var(--ifm-color-primary-dark);
+  stroke-width: 3;
+}
+
+.nodeRect {
+  transition: all 0.2s;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
+}
+
+.nodeLabel {
+  fill: white;
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.edgeLabel {
+  fill: var(--ifm-color-gray-600);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+[data-theme='dark'] .edgeLabel {
+  fill: var(--ifm-color-gray-400);
+}
+
+.tooltip {
+  position: fixed;
+  background: var(--ifm-color-gray-900);
+  color: white;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  max-width: 250px;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  pointer-events: none;
+}
+
+.hint {
+  text-align: center;
+  margin-top: 1rem;
+  font-size: 0.85rem;
+  color: var(--ifm-color-gray-500);
+}
+
+@media (max-width: 768px) {
+  .diagram {
+    min-height: 300px;
+  }
+
+  .nodeLabel {
+    font-size: 10px;
+  }
+}

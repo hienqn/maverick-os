@@ -1,247 +1,318 @@
-# PintOS - CS162 Operating System Implementation
+<h1 align="center">
+  PintOS
+</h1>
 
-A complete implementation of the PintOS educational operating system for UC Berkeley's CS162 (Operating Systems and Systems Programming) course. This project implements core operating system components including thread scheduling, process management, file systems, and virtual memory.
+<p align="center">
+  <strong>A Complete Educational Operating System Implementation</strong>
+</p>
 
-## Table of Contents
+<p align="center">
+  <a href="#features">Features</a> •
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#architecture">Architecture</a> •
+  <a href="#testing">Testing</a> •
+  <a href="#documentation">Documentation</a>
+</p>
 
-- [Overview](#overview)
-- [Project Structure](#project-structure)
-- [Features](#features)
-- [Prerequisites](#prerequisites)
-- [Building and Running](#building-and-running)
-- [Testing](#testing)
-- [Components](#components)
-- [Learning Resources](#learning-resources)
-- [Development](#development)
-- [License](#license)
+<p align="center">
+  <img src="https://img.shields.io/badge/version-1.4.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/platform-x86-lightgrey.svg" alt="Platform">
+  <img src="https://img.shields.io/badge/license-Stanford-green.svg" alt="License">
+  <img src="https://img.shields.io/badge/course-CS162-orange.svg" alt="Course">
+</p>
+
+---
 
 ## Overview
 
-PintOS is a simple operating system framework for the x86 architecture that runs on both real hardware and the QEMU and Bochs emulators. This repository contains a fully-featured implementation of all major PintOS projects:
-
-- **Project 1**: Threads and Scheduling
-- **Project 2**: User Programs
-- **Project 3**: Virtual Memory
-- **Project 4**: File Systems
-
-## Project Structure
+PintOS is a simple operating system framework for the x86 architecture, developed at Stanford University for teaching OS fundamentals. This repository contains a **fully-featured implementation** of all four major PintOS projects from UC Berkeley's CS162 course.
 
 ```
-cs162-pintos/
-├── src/
-│   ├── threads/        # Thread management and scheduling
-│   ├── userprog/       # User program loading and system calls
-│   ├── vm/             # Virtual memory management
-│   ├── filesys/        # File system implementation
-│   ├── devices/        # Device drivers (timer, keyboard, disk, etc.)
-│   ├── lib/            # Standard library implementations
-│   ├── tests/          # Test suites for all components
-│   ├── examples/       # Example user programs
-│   └── utils/          # Utility programs
-├── .claude/            # Claude Code learning commands
-└── README.md
+┌─────────────────────────────────────────────────────────────────┐
+│                        User Programs                            │
+├─────────────────────────────────────────────────────────────────┤
+│  System Call Interface (exec, fork, wait, open, read, write...) │
+├───────────────┬───────────────┬───────────────┬─────────────────┤
+│    Process    │    Virtual    │     File      │     Device      │
+│   Management  │    Memory     │    System     │    Drivers      │
+├───────────────┴───────────────┴───────────────┴─────────────────┤
+│              Thread Scheduler (Priority / MLFQS)                │
+├─────────────────────────────────────────────────────────────────┤
+│                    Hardware Abstraction                         │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ## Features
 
-### Threads & Scheduling
-- **Priority Scheduling**: Threads scheduled based on priority levels
-- **Priority Donation**: Prevents priority inversion through priority donation chains
-- **MLFQS Scheduler**: Multi-Level Feedback Queue Scheduler with advanced load balancing
-- **Synchronization Primitives**: Semaphores, locks, and condition variables
-- **Alarm Clock**: Efficient thread sleeping without busy-waiting
+### Project 1: Threads & Scheduling
 
-### User Programs
-- **Program Loading**: ELF binary loading and execution
-- **System Calls**: Complete syscall interface for file operations, process control, and I/O
-- **Process Management**: Process creation, execution, waiting, and termination
-- **Argument Passing**: Command-line argument parsing and stack setup
-- **Memory Safety**: User memory access validation and protection
+| Feature | Description |
+|---------|-------------|
+| **Priority Scheduler** | Threads scheduled based on priority levels (0-63) |
+| **Priority Donation** | Prevents priority inversion through donation chains |
+| **MLFQS** | Multi-Level Feedback Queue with dynamic priorities |
+| **Alarm Clock** | Efficient sleep without busy-waiting |
 
-### File System
-- **Buffer Cache**: LRU-based disk block caching with write-behind and read-ahead
-- **Prefetching**: Sequential access pattern detection and optimization
-- **Extensible Files**: Dynamic file growth with indexed allocation
-- **Subdirectories**: Hierarchical directory structure with absolute and relative paths
-- **Synchronization**: Fine-grained locking for concurrent file access
-- **File Operations**: Create, open, read, write, seek, close, and remove
+### Project 2: User Programs
 
-### Virtual Memory
-- **Lazy Loading**: Pages loaded on-demand via page faults
-- **Page Management**: Efficient page table and frame management
-- **Swap Space**: Disk-backed swap for memory-intensive workloads
-- **Memory-Mapped Files**: mmap/munmap system call support
+| Feature | Description |
+|---------|-------------|
+| **Process Management** | `fork()`, `exec()`, `wait()`, `exit()` |
+| **System Calls** | 20+ syscalls for file/process operations |
+| **Argument Passing** | Stack-based argument marshalling |
+| **Memory Safety** | User pointer validation via page faults |
 
-## Prerequisites
+### Project 3: Virtual Memory
 
-- GCC cross-compiler for i386-elf target
+| Feature | Description |
+|---------|-------------|
+| **Demand Paging** | Lazy loading of executable pages |
+| **Frame Management** | Clock algorithm for page eviction |
+| **Swap Space** | Disk-backed memory for large workloads |
+| **Memory-Mapped Files** | `mmap()` / `munmap()` support |
+| **Copy-on-Write Fork** | Efficient process forking |
+
+### Project 4: File System
+
+| Feature | Description |
+|---------|-------------|
+| **Buffer Cache** | 64-block LRU cache with write-behind |
+| **Extensible Files** | Indexed allocation up to 8MB |
+| **Subdirectories** | Hierarchical paths with `.` and `..` |
+| **Symbolic Links** | `symlink()` and `readlink()` |
+| **Write-Ahead Logging** | Crash-consistent transactions |
+
+## Quick Start
+
+### Prerequisites
+
+- GCC cross-compiler for `i386-elf`
 - QEMU or Bochs emulator
-- Make build system
-- Perl (for testing utilities)
+- GNU Make
+- Perl 5.x
 
-## Building and Running
-
-### Build the kernel
+### Build & Run
 
 ```bash
+# Clone the repository
+git clone https://github.com/your-repo/pintos.git
+cd pintos
+
+# Build the threads project
 cd src/threads
 make
-```
 
-### Run in QEMU
-
-```bash
-cd src/threads/build
+# Run a test in QEMU
+cd build
 pintos --qemu -- run alarm-multiple
-```
 
-### Run specific tests
-
-```bash
-cd src/threads
+# Run all tests for a component
+cd src/userprog
 make check
 ```
 
-### Build other components
+### Build Other Components
 
 ```bash
-# User programs
-cd src/userprog
-make
+cd src/userprog && make    # User programs
+cd src/vm && make          # Virtual memory
+cd src/filesys && make     # File system
+```
 
-# File system
-cd src/filesys
-make
+## Architecture
 
-# Virtual memory
-cd src/vm
-make
+### Project Structure
+
+```
+src/
+├── threads/          # Core threading and scheduling
+│   ├── thread.c      # Thread lifecycle & context switch
+│   ├── synch.c       # Locks, semaphores, condition vars
+│   └── fixed-point.h # MLFQS arithmetic
+│
+├── userprog/         # User program support
+│   ├── process.c     # ELF loading & process management
+│   ├── syscall.c     # System call dispatch
+│   └── exception.c   # Page fault handling
+│
+├── vm/               # Virtual memory
+│   ├── page.c        # Supplemental page table
+│   ├── frame.c       # Physical frame management
+│   └── swap.c        # Swap partition
+│
+├── filesys/          # File system
+│   ├── inode.c       # Indexed file blocks
+│   ├── directory.c   # Directory operations
+│   ├── cache.c       # Buffer cache
+│   └── wal.c         # Write-ahead logging
+│
+└── devices/          # Hardware drivers
+    ├── timer.c       # System timer
+    ├── block.c       # Block device abstraction
+    └── ide.c         # IDE disk driver
+```
+
+### Memory Layout
+
+```
+┌──────────────────────┐ 0xFFFFFFFF
+│    Kernel Space      │
+│  (Direct Mapped)     │
+├──────────────────────┤ PHYS_BASE (0xC0000000)
+│                      │
+│    User Stack        │
+│         ↓            │
+│                      │
+│         ↑            │
+│    Memory Maps       │
+│                      │
+├──────────────────────┤
+│    User Heap         │
+├──────────────────────┤
+│    BSS Segment       │
+├──────────────────────┤
+│    Data Segment      │
+├──────────────────────┤
+│    Code Segment      │
+├──────────────────────┤ 0x08048000
+│    Unmapped          │
+└──────────────────────┘ 0x00000000
 ```
 
 ## Testing
 
-Each component includes comprehensive test suites:
+### Run Test Suites
 
 ```bash
-# Run all thread tests
-cd src/threads
-make check
+# All tests for a component
+cd src/threads && make check
+cd src/userprog && make check
+cd src/filesys && make check
 
-# Run specific test
+# Individual test
 cd src/threads/build
-make tests/threads/alarm-multiple.result
+make tests/threads/priority-donate-chain.result
 
-# Run all userprog tests
-cd src/userprog
-make check
-
-# Run all filesys tests
-cd src/filesys
-make check
+# View test output
+cat tests/threads/priority-donate-chain.output
 ```
 
-Test results are stored in `*.result` files and can be compared against expected outputs in `*.ck` files.
+### Test Categories
 
-## Components
+| Component | Tests | Coverage |
+|-----------|-------|----------|
+| Threads | 27 | Alarm, priority, donation, MLFQS |
+| Userprog | 76 | Args, syscalls, processes, robustness |
+| VM | 40+ | Page faults, eviction, mmap, swap |
+| Filesys | 50+ | Cache, growth, directories, persistence |
 
-### Thread System (`src/threads/`)
+## Documentation
 
-- **thread.c/h**: Thread creation, scheduling, and context switching
-- **synch.c/h**: Synchronization primitives (locks, semaphores, condition variables)
-- **fixed-point.h**: Fixed-point arithmetic for MLFQS calculations
-- **interrupt.c/h**: Interrupt handling framework
-- **malloc.c/h**: Kernel memory allocation
+- **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes
+- **[docs/](docs/)** - Design documents and implementation guides
+  - Project design specs
+  - Implementation plans
+  - Concept explanations
 
-### User Programs (`src/userprog/`)
+### Interactive Learning
 
-- **process.c/h**: Process loading, execution, and management
-- **syscall.c/h**: System call handler and implementations
-- **exception.c/h**: Page fault and exception handling
-- **pagedir.c/h**: Page directory management
+This repository includes Claude Code commands for exploring OS concepts:
 
-### File System (`src/filesys/`)
-
-- **filesys.c/h**: High-level file system operations
-- **inode.c/h**: Inode structure with indexed allocation
-- **directory.c/h**: Directory operations and path resolution
-- **cache.c/h**: Buffer cache implementation
-- **cache_prefetch.c/h**: Read-ahead prefetching logic
-- **file.c/h**: File descriptor operations
-- **free-map.c/h**: Free block bitmap management
-
-### Devices (`src/devices/`)
-
-- **timer.c/h**: System timer and alarm clock
-- **kbd.c/h**: Keyboard driver
-- **block.c/h**: Block device abstraction
-- **ide.c/h**: IDE disk driver
-
-## Learning Resources
-
-This repository includes interactive Claude Code commands for learning OS concepts:
-
-- `/explain` - Explain OS concepts in the context of the Pintos codebase
-- `/debug-learn` - Debug code while learning underlying OS concepts
-- `/quiz` - Test your OS knowledge with interactive quizzes
-- `/explore` - Take guided tours through parts of the OS
-- `/challenge` - Get coding challenges to practice OS concepts
-- `/trace` - Trace code execution paths to understand control flow
-
-To use these commands, type them in Claude Code when working with this repository.
+| Command | Description |
+|---------|-------------|
+| `/explain` | Explain OS concepts in context |
+| `/trace` | Trace code execution paths |
+| `/debug-learn` | Debug while learning concepts |
+| `/quiz` | Test your OS knowledge |
+| `/explore` | Guided codebase tours |
+| `/challenge` | Coding challenges |
 
 ## Development
 
 ### Code Style
 
-This project follows the CS162 coding standards:
-- K&R indentation style (2 spaces)
-- Comprehensive comments and documentation
-- Descriptive variable and function names
-- Maximum 80 characters per line
+- K&R indentation (2 spaces)
+- 80 character line limit
+- Descriptive names
+- Comprehensive comments
 
-### Pre-commit Hooks
-
-A pre-commit script is available to ensure code quality:
+### Environment Setup
 
 ```bash
-# Set up the pre-commit hook
+# Configure shell with PintOS utilities
+./setup-shell.sh
+
+# Install pre-commit hooks
 cp .pre-commit.sh .git/hooks/pre-commit
 chmod +x .git/hooks/pre-commit
 ```
 
-### Shell Environment
-
-Set up the development environment:
-
-```bash
-./setup-shell.sh
-```
-
-This configures the shell with helpful aliases and environment variables for PintOS development.
-
 ## Implementation Highlights
 
-### Priority Donation
-The thread scheduler implements multi-level priority donation to handle nested resource acquisition and prevent priority inversion. Donations propagate through chains of locks and are properly released when locks are freed.
+<details>
+<summary><strong>Priority Donation</strong></summary>
 
-### MLFQS Scheduler
-The Multi-Level Feedback Queue Scheduler uses fixed-point arithmetic to calculate priorities dynamically based on recent CPU usage and niceness values, ensuring fair scheduling without starvation.
+Multi-level priority donation handles nested lock acquisition:
 
-### Buffer Cache
-The file system buffer cache uses a clock algorithm (second-chance) for eviction, implements write-behind to batch disk writes, and includes read-ahead prefetching for sequential access patterns.
+```
+Thread H (pri=63) waiting on Lock A held by
+  Thread M (pri=31) waiting on Lock B held by
+    Thread L (pri=0)
 
-### Indexed Inodes
-Files use a two-level indexed allocation scheme with direct blocks, indirect blocks, and doubly-indirect blocks, supporting files up to 8MB in size while maintaining efficient access for small files.
+→ L receives donation of 63, runs, releases B
+→ M receives donation of 63, runs, releases A
+→ H finally acquires A and runs
+```
+</details>
+
+<details>
+<summary><strong>MLFQS Scheduler</strong></summary>
+
+Dynamic priority based on CPU usage:
+```
+priority = PRI_MAX - (recent_cpu / 4) - (nice * 2)
+recent_cpu = (2 * load_avg) / (2 * load_avg + 1) * recent_cpu + nice
+load_avg = (59/60) * load_avg + (1/60) * ready_threads
+```
+Uses 17.14 fixed-point arithmetic for precision.
+</details>
+
+<details>
+<summary><strong>Buffer Cache</strong></summary>
+
+64-block cache with clock eviction:
+- **Read-ahead**: Prefetches next block on sequential access
+- **Write-behind**: Flushes dirty blocks every 30 seconds
+- **Coalescing**: Batches writes to same sector
+</details>
+
+<details>
+<summary><strong>Indexed Inodes</strong></summary>
+
+Two-level indexed allocation:
+```
+┌─────────────────┐
+│   Inode Block   │
+├─────────────────┤
+│ 123 Direct      │ → 123 blocks × 512B = 63KB
+│ 1 Indirect      │ → 128 blocks × 512B = 64KB
+│ 1 Doubly-Indir  │ → 128² blocks × 512B = 8MB
+└─────────────────┘
+Max file size: ~8MB
+```
+</details>
 
 ## License
 
 Copyright (C) 2004-2006 Board of Trustees, Leland Stanford Jr. University.
-All rights reserved.
 
-This project is licensed under the Stanford PintOS License. See [src/LICENSE](src/LICENSE) for full details.
-
-PintOS was originally developed at Stanford University and has been adapted for educational use in operating systems courses worldwide.
+This project is licensed under the [Stanford PintOS License](src/LICENSE).
 
 ---
 
-**Note**: This is an educational project completed as part of CS162. The code is provided for reference and learning purposes. If you are currently taking CS162 or a similar course, please adhere to your institution's academic integrity policies.
+<p align="center">
+  <sub>
+    Built for <strong>CS162: Operating Systems</strong> at UC Berkeley<br>
+    For educational and reference purposes only
+  </sub>
+</p>

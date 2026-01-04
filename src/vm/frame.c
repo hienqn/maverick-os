@@ -199,6 +199,37 @@ bool frame_register(void* kpage, void* upage, struct thread* owner) {
   return true;
 }
 
+/* =========================================================================
+ * frame.c - Frame Table
+ *
+ * The frame table keeps track of all physical frames allocated to
+ * user processes. Each frame is represented by a frame_entry struct,
+ * which records information such as the kernel virtual address (kpage),
+ * the associated user page (upage), the owning thread, the reference
+ * count (for COW/shared frames), and whether the frame is pinned.
+ *
+ * Main functions:
+ * - frame_alloc(): Allocates a physical frame, inserts it into the table.
+ * - frame_register(): Registers a frame allocated outside of frame_alloc.
+ * - frame_share(): Increases the reference count of a frame (for COW).
+ * - frame_free(): Decrements reference count, frees the frame if no longer used.
+ *
+ * Synchronization:
+ *   The frame table is protected by the frame_lock, which must be
+ *   acquired before modifying the table.
+ * ========================================================================= */
+
+void frame_share(void* kpage) {
+  if (kpage == NULL)
+    return;
+
+  lock_acquire(&frame_lock);
+  struct frame_entry* fe = frame_find_entry(kpage);
+  if (fe != NULL)
+    fe->ref_count++;
+  lock_release(&frame_lock);
+}
+
 /* Free a frame and return it to the pool.
 
    This function:
@@ -335,6 +366,15 @@ void* frame_evict(void) {
 
     /* Skip pinned frames. */
     if (fe->pinned) {
+      e = clock_advance(e);
+      continue;
+    }
+
+    /* Skip shared frames (COW pages with multiple references).
+       We can't safely evict these because we only track one owner,
+       but multiple processes have SPT entries pointing to this frame.
+       Evicting would leave other sharers with dangling kpage pointers. */
+    if (fe->ref_count > 1) {
       e = clock_advance(e);
       continue;
     }

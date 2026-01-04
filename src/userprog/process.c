@@ -504,15 +504,12 @@ static void fork_process(void* aux) {
     } else {
       /* Only call pagedir_dup if pagedir_create succeeded */
       uint32_t* child_pagedir = t->pcb->pagedir;
-      uint32_t* parent_pagedir = load_info->parent_process->pagedir;
-      success = pagedup_success = pagedir_dup(child_pagedir, parent_pagedir);
 
       /* Clone supplemental page table from parent to child.
          This is required for lazy-loaded pages (PAGE_FILE, PAGE_ZERO) that
          are not yet in the hardware page table but exist in the SPT. */
-      if (success) {
-        success = spt_clone(&t->pcb->spt, &load_info->parent_process->spt, child_pagedir);
-      }
+      uint32_t* parent_pagedir = load_info->parent_process->main_thread->pcb->pagedir;
+      spt_clone(&t->pcb->spt, &load_info->parent_process->spt, child_pagedir, parent_pagedir);
     }
   }
 

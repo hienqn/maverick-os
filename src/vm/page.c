@@ -43,6 +43,7 @@
 #include "vm/frame.h"
 #include "vm/swap.h"
 #include "threads/malloc.h"
+#include "threads/palloc.h"
 #include "threads/vaddr.h"
 #include "threads/thread.h"
 #include "userprog/pagedir.h"
@@ -328,6 +329,7 @@ bool spt_load_page(void* entry) {
     }
 
     case PAGE_FRAME:
+    case PAGE_COW:
       /* Page already loaded - should not happen. */
       frame_free(kpage);
       return false;
@@ -465,7 +467,8 @@ bool spt_create_zero_page(void* spt, void* upage, bool writable) {
 
 /* Helper function to clone a single SPT entry.
    Returns the cloned entry on success, NULL on failure. */
-static struct spt_entry* spt_clone_entry(struct spt_entry* parent_entry, uint32_t* child_pagedir) {
+static struct spt_entry* spt_clone_entry(struct spt_entry* parent_entry, uint32_t* child_pagedir,
+                                         uint32_t* parent_pagedir) {
   struct spt_entry* child_entry = malloc(sizeof(struct spt_entry));
   if (child_entry == NULL)
     return NULL;
@@ -487,30 +490,35 @@ static struct spt_entry* spt_clone_entry(struct spt_entry* parent_entry, uint32_
       child_entry->status = parent_entry->status;
       break;
 
+    case PAGE_COW:
     case PAGE_FRAME: {
-      /* Page is in memory: pagedir_dup already copied the frame and installed
-         it in the child's page directory. We just need to:
-         1. Find the child's kpage from the page directory
-         2. Register it with the frame table
-         3. Create the SPT entry */
-      void* child_kpage = pagedir_get_page(child_pagedir, child_entry->upage);
-      if (child_kpage == NULL) {
-        /* Page should have been copied by pagedir_dup - something is wrong. */
+      /* Page is in memory: share the parent's frame for copy-on-write.
+         For PAGE_FRAME: convert to COW sharing.
+         For PAGE_COW: add another sharer to existing COW page.
+
+         Steps:
+         1. Map parent's kpage into child's page directory (read-only)
+         2. Mark parent's page read-only (if not already)
+         3. Increment ref_count via frame_share()
+         4. Set child entry to PAGE_COW, pointing to same kpage
+         Note: Parent's status is updated in spt_clone() after all entries succeed. */
+
+      /* 1. Map parent's frame into child's page directory (read-only). */
+      if (!pagedir_set_page(child_pagedir, child_entry->upage, parent_entry->kpage, false)) {
         free(child_entry);
         return NULL;
       }
 
-      /* Register the frame with the frame table (pagedir_dup used palloc directly). */
-      if (!frame_register(child_kpage, child_entry->upage, thread_current())) {
-        /* Registration failed - frame might already be registered, which is ok. */
-        /* Just continue with creating the SPT entry. */
-      }
+      /* 2. Mark parent's page read-only for COW. */
+      pagedir_set_writable(parent_pagedir, parent_entry->upage, false);
 
-      child_entry->status = PAGE_FRAME;
-      child_entry->kpage = child_kpage;
+      /* 3. Increment ref_count. */
+      frame_share(parent_entry->kpage);
 
-      /* Unpin the frame so it can be evicted. */
-      frame_unpin(child_kpage);
+      /* 4. Child points to same kpage with COW status. */
+      child_entry->status = PAGE_COW;
+      child_entry->kpage = parent_entry->kpage;
+      /* Note: child_entry->writable preserves original writability for later COW copy. */
       break;
     }
 
@@ -558,31 +566,50 @@ static struct spt_entry* spt_clone_entry(struct spt_entry* parent_entry, uint32_
   return child_entry;
 }
 
-/* Clone an SPT from parent to child during fork. */
-bool spt_clone(void* child_spt, void* parent_spt, uint32_t* child_pagedir) {
+/* Clone an SPT from parent to child during fork.
+
+   Two-pass approach for COW safety:
+   Pass 1: Create all child entries (parent entries unchanged except page table permissions)
+   Pass 2: Mark parent PAGE_FRAME entries as PAGE_COW (only after Pass 1 succeeds)
+
+   This ensures parent state is not corrupted if fork fails partway through. */
+bool spt_clone(void* child_spt, void* parent_spt, uint32_t* child_pagedir,
+               uint32_t* parent_pagedir) {
   struct spt* parent = (struct spt*)parent_spt;
   struct spt* child = (struct spt*)child_spt;
   struct hash_iterator i;
 
+  /* Pass 1: Create all child entries. */
   hash_first(&i, &parent->pages);
   while (hash_next(&i)) {
     struct spt_entry* parent_entry = hash_entry(hash_cur(&i), struct spt_entry, hash_elem);
 
     /* Clone this entry. */
-    struct spt_entry* child_entry = spt_clone_entry(parent_entry, child_pagedir);
+    struct spt_entry* child_entry = spt_clone_entry(parent_entry, child_pagedir, parent_pagedir);
     if (child_entry == NULL)
       return false;
 
     /* Insert into child's SPT. */
     if (!spt_insert(child, child_entry)) {
       /* Failed to insert - free the cloned entry and its resources. */
-      if (child_entry->status == PAGE_FRAME)
-        frame_free(child_entry->kpage);
+      if (child_entry->status == PAGE_COW || child_entry->status == PAGE_FRAME)
+        frame_free(child_entry->kpage); /* Decrements ref_count */
       else if (child_entry->status == PAGE_SWAP)
         swap_free(child_entry->swap_slot);
       free(child_entry);
       return false;
     }
+  }
+
+  /* Pass 2: Mark parent PAGE_FRAME entries as PAGE_COW.
+     Only runs after all child entries are successfully created. */
+  hash_first(&i, &parent->pages);
+  while (hash_next(&i)) {
+    struct spt_entry* parent_entry = hash_entry(hash_cur(&i), struct spt_entry, hash_elem);
+    if (parent_entry->status == PAGE_FRAME) {
+      parent_entry->status = PAGE_COW;
+    }
+    /* PAGE_COW entries stay as PAGE_COW (already shared). */
   }
 
   return true;

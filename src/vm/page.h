@@ -77,6 +77,9 @@ enum page_status {
   PAGE_FILE   /* Page is backed by a file (executable segment or mmap).
                  The file, file_offset, read_bytes, and zero_bytes fields
                  specify how to load the page. */
+  ,
+  PAGE_COW /* Page is marked for copy-on-write. Shared until a write occurs,
+                at which point a private copy is made for the process. */
 };
 
 /* ============================================================================
@@ -361,6 +364,7 @@ bool spt_create_zero_page(void* spt, void* upage, bool writable);
    @post On failure: partial state may remain, caller should destroy child_spt
 
    Called from fork_process() to duplicate parent's virtual address space. */
-bool spt_clone(void* child_spt, void* parent_spt, uint32_t* child_pagedir);
+bool spt_clone(void* child_spt, void* parent_spt, uint32_t* child_pagedir,
+               uint32_t* parent_pagedir);
 
 #endif /* vm/page.h */

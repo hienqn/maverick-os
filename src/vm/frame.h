@@ -174,6 +174,13 @@ void* frame_alloc(void* upage, bool writable);
    on failure. The frame starts pinned. */
 bool frame_register(void* kpage, void* upage, struct thread* owner);
 
+/* Increment the reference count for a frame.
+   KPAGE: Kernel virtual address of the frame to share.
+   
+   Used when a frame is shared by multiple processes or mappings.
+   The frame will not be freed until all references are released. */
+void frame_share(void* kpage);
+
 /* Free a frame and remove it from the frame table.
    KPAGE: Kernel virtual address of frame to free. */
 void frame_free(void* kpage);

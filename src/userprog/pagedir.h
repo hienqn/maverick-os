@@ -119,6 +119,14 @@ void pagedir_set_accessed(uint32_t* pd, const void* vpage, bool accessed);
    @return true if writable, false if read-only or unmapped. */
 bool pagedir_is_writable(uint32_t* pd, const void* vpage);
 
+/* Sets the writable bit for user virtual page VPAGE in PD.
+   Used for copy-on-write: mark shared pages read-only, then restore
+   write permission after copying.
+   @param pd       Page directory
+   @param vpage    User virtual address (page-aligned)
+   @param writable true for read/write, false for read-only */
+void pagedir_set_writable(uint32_t* pd, void* vpage, bool writable);
+
 /* ─────────────────────────────────────────────────────────────────────────
  * Page Directory Activation (CR3 Register)
  * ───────────────────────────────────────────────────────────────────────── */

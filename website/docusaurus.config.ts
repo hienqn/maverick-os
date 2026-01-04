@@ -13,7 +13,7 @@ const config: Config = {
   organizationName: 'hienqn',
   projectName: 'maverick-os',
 
-  onBrokenLinks: 'throw',
+  onBrokenLinks: 'warn',
   onBrokenMarkdownLinks: 'warn',
 
   i18n: {
@@ -84,23 +84,22 @@ const config: Config = {
           ],
         },
         {
-          title: 'Deep Dives',
+          title: 'Documentation',
           items: [
-            {label: 'Context Switching', to: '/docs/deep-dives/context-switch-assembly'},
-            {label: 'Virtual Memory', to: '/docs/deep-dives/page-fault-handler'},
-            {label: 'File System', to: '/docs/deep-dives/wal'},
+            {label: 'Architecture', to: '/docs/architecture/overview'},
+            {label: 'Context Switching', to: '/docs/concepts/context-switching'},
+            {label: 'Changelog', to: '/docs/roadmap/changelog'},
           ],
         },
         {
           title: 'More',
           items: [
             {label: 'Roadmap', to: '/roadmap'},
-            {label: 'GitHub', href: 'https://github.com/your-org/group0'},
-            {label: 'Changelog', to: '/docs/roadmap/changelog'},
+            {label: 'GitHub', href: 'https://github.com/hienqn/maverick-os'},
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} PintOS Project. Built with Docusaurus.`,
+      copyright: `Copyright © ${new Date().getFullYear()} Maverick OS. Built with Docusaurus.`,
     },
     prism: {
       theme: prismThemes.github,

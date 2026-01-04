@@ -80,3 +80,14 @@ export PATH="$PATH:/home/workspace/group0/src/utils"
 # Pintos development aliases
 alias rebuild-index='cd /home/workspace/group0/src/threads && bear -- make && cp compile_commands.json /home/workspace/group0/ && cd - && echo "✓ Code navigation index rebuilt!"'
 
+
+# bun completions
+[ -s "/run/host_virtiofs/Users/hienn/hienn/cs162-workspace/.workspace/.bun/_bun" ] && source "/run/host_virtiofs/Users/hienn/hienn/cs162-workspace/.workspace/.bun/_bun"
+
+# bun
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+
+# bun
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"

@@ -8,7 +8,7 @@ const config: Config = {
   favicon: 'img/favicon.ico',
 
   url: 'https://hienqn.github.io',
-  baseUrl: '/',
+  baseUrl: '/maverick-os/',
 
   organizationName: 'hienqn',
   projectName: 'maverick-os',

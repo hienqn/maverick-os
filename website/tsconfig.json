@@ -1,15 +1,22 @@
 {
-  "extends": "@docusaurus/tsconfig",
   "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
     "baseUrl": ".",
     "jsx": "react-jsx",
+    "lib": ["DOM", "DOM.Iterable", "ES2020"],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "noEmit": true
+    "noEmit": true,
+    "allowSyntheticDefaultImports": true,
+    "paths": {
+      "@site/*": ["./*"]
+    }
   },
   "include": ["src/", "docs/", "sidebars.ts", "docusaurus.config.ts"]
 }

@@ -22,8 +22,10 @@
  *    - Skip if pinned
  *    - If accessed bit set: clear it, give second chance
  *    - If accessed bit clear: evict this frame
- * 3. Write dirty pages to swap before evicting
- * 4. Update owner's SPT to reflect page is now in swap
+ * 3. Handle dirty pages:
+ *    - Mmap pages (writable file-backed): write back to file
+ *    - Other dirty pages: write to swap
+ * 4. Update owner's SPT to reflect new page location
  *
  * SYNCHRONIZATION:
  * ----------------
@@ -36,6 +38,7 @@
 #include "vm/frame.h"
 #include "vm/page.h"
 #include "vm/swap.h"
+#include "filesys/file.h"
 #include "threads/malloc.h"
 #include "threads/palloc.h"
 #include "threads/synch.h"
@@ -411,49 +414,76 @@ void* frame_evict(void) {
     void* upage = fe->upage;
     struct thread* owner = fe->owner;
 
-    /* Check if dirty - need to write to swap. */
+    /* Flush TLB before checking dirty bit.
+       The CPU may cache the dirty bit in the TLB and not write it to
+       the page table in memory immediately. Reloading CR3 flushes the TLB,
+       forcing any cached dirty bits to be written back to memory.
+       This ensures pagedir_is_dirty() returns the correct value.
+
+       We need to temporarily switch to the owner's page directory to flush
+       the right TLB entries, then restore the original page directory. */
+    uint32_t* orig_pd = active_pd();
+    pagedir_activate(pd);
+    pagedir_activate(orig_pd);
+
+    /* Get SPT entry to determine how to handle eviction. */
+    struct spt_entry* spte = NULL;
+    if (owner->pcb != NULL) {
+      spte = spt_find(&owner->pcb->spt, upage);
+    }
+
+    /* Check if dirty - need to write back data.
+       We check both the hardware dirty bit AND our software pinned_dirty flag.
+       The hardware bit can be unreliable due to TLB caching, but pinned_dirty
+       is set when loading from swap and guarantees we preserve the data. */
     bool dirty = pagedir_is_dirty(pd, upage);
+    if (spte != NULL && spte->pinned_dirty) {
+      dirty = true;
+    }
 
     if (dirty) {
-      /* Write to swap. */
-      size_t swap_slot = swap_out(kpage);
-      if (swap_slot == SWAP_SLOT_INVALID) {
-        /* Swap is full, try next frame. */
-        e = clock_advance(e);
-        if (e == start) {
-          lock_release(&frame_lock);
-          return NULL;
+      /* Check if this is an mmap page (writable file-backed).
+         Only mmap pages should be written back to file.
+         Executable segment pages (is_mmap=false) go to swap. */
+      if (spte != NULL && spte->file != NULL && spte->writable && spte->is_mmap) {
+        /* Mmap page: write back to file, can reload later. */
+        file_write_at(spte->file, kpage, spte->read_bytes, spte->file_offset);
+        spte->status = PAGE_FILE;
+        spte->kpage = NULL;
+      } else {
+        /* Other dirty pages: write to swap. */
+        size_t swap_slot = swap_out(kpage);
+        if (swap_slot == SWAP_SLOT_INVALID) {
+          /* Swap is full, try next frame. */
+          e = clock_advance(e);
+          if (e == start) {
+            lock_release(&frame_lock);
+            return NULL;
+          }
+          continue;
         }
-        continue;
-      }
 
-      /* Update SPT entry to reflect page is now in swap. */
-      /* We need to access owner's SPT. */
-      if (owner->pcb != NULL) {
-        struct spt_entry* spte = spt_find(&owner->pcb->spt, upage);
+        /* Update SPT entry to reflect page is now in swap. */
         if (spte != NULL) {
           spte->status = PAGE_SWAP;
           spte->swap_slot = swap_slot;
           spte->kpage = NULL;
+          /* Set pinned_dirty so that when loaded from swap and evicted again,
+             we always write back to swap even if HW dirty bit is wrong. */
+          spte->pinned_dirty = true;
         }
       }
     } else {
       /* Not dirty - just update SPT. */
-      /* For file-backed pages, can reload from file. */
-      /* For zero pages, can just re-zero. */
-      if (owner->pcb != NULL) {
-        struct spt_entry* spte = spt_find(&owner->pcb->spt, upage);
-        if (spte != NULL) {
-          /* If it was originally a file page, revert to PAGE_FILE. */
-          /* If it was a zero page, revert to PAGE_ZERO. */
-          /* For now, just mark as PAGE_SWAP with invalid slot if not file-backed. */
-          if (spte->file != NULL) {
-            spte->status = PAGE_FILE;
-          } else {
-            spte->status = PAGE_ZERO;
-          }
-          spte->kpage = NULL;
+      if (spte != NULL) {
+        if (spte->file != NULL) {
+          /* File-backed: can reload from file. */
+          spte->status = PAGE_FILE;
+        } else {
+          /* Zero page: can just re-zero. */
+          spte->status = PAGE_ZERO;
         }
+        spte->kpage = NULL;
       }
     }
 

@@ -347,9 +347,13 @@ bool spt_load_page(void* entry) {
   }
 
   /* If page came from swap, mark it dirty so it will be written back
-     to swap if evicted (we freed the old swap slot, can't reload from there). */
+     to swap if evicted (we freed the old swap slot, can't reload from there).
+     We set both the hardware dirty bit AND our software pinned_dirty flag.
+     The hardware bit can be unreliable due to TLB caching, so pinned_dirty
+     provides a guaranteed fallback. */
   if (e->status == PAGE_SWAP) {
     pagedir_set_dirty(pd, e->upage, true);
+    e->pinned_dirty = true;
   }
 
   /* Update entry status and kernel page address. */
@@ -405,6 +409,8 @@ bool spt_create_file_page(void* spt, void* upage, struct file* file, off_t offse
   /* Initialize unused fields. */
   entry->kpage = NULL;
   entry->swap_slot = 0;
+  entry->is_mmap = false;      /* Executable pages, not mmap */
+  entry->pinned_dirty = false; /* Not loaded from swap */
 
   /* Insert into SPT. */
   if (!spt_insert(spt, entry)) {
@@ -451,6 +457,8 @@ bool spt_create_zero_page(void* spt, void* upage, bool writable) {
   entry->file_offset = 0;
   entry->read_bytes = 0;
   entry->zero_bytes = 0;
+  entry->is_mmap = false;      /* Not an mmap page */
+  entry->pinned_dirty = false; /* Not loaded from swap */
 
   /* Insert into SPT. */
   if (!spt_insert(spt, entry)) {
@@ -480,6 +488,8 @@ static struct spt_entry* spt_clone_entry(struct spt_entry* parent_entry, uint32_
   child_entry->file_offset = parent_entry->file_offset;
   child_entry->read_bytes = parent_entry->read_bytes;
   child_entry->zero_bytes = parent_entry->zero_bytes;
+  child_entry->is_mmap = parent_entry->is_mmap;
+  child_entry->pinned_dirty = parent_entry->pinned_dirty;
   child_entry->kpage = NULL;
   child_entry->swap_slot = 0;
 

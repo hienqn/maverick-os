@@ -128,6 +128,18 @@ struct spt_entry {
   size_t read_bytes; /* Number of bytes to read from file */
   size_t zero_bytes; /* Number of bytes to zero-fill after read_bytes */
 
+  /* Whether this is an mmap page (vs executable segment).
+     Mmap pages are written back to file on eviction/unmap.
+     Executable pages go to swap on eviction (never written back). */
+  bool is_mmap;
+
+  /* Software dirty flag that can't be overwritten by TLB.
+     Set when page is loaded from swap to ensure it's written back
+     to swap when evicted (since the original swap slot was freed).
+     The hardware dirty bit can be unreliable due to TLB caching,
+     so this provides a guaranteed fallback. */
+  bool pinned_dirty;
+
   /* Hash table element for storing in the hash table.
      Used internally by the hash table implementation. */
   struct hash_elem hash_elem;

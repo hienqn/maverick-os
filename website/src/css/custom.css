@@ -84,6 +84,25 @@ a:hover {
   box-shadow: none;
 }
 
+/* Blog header */
+.hero.hero--primary {
+  background: var(--ifm-background-color);
+  padding: 2rem 0;
+}
+
+.hero__title {
+  font-size: 1.75rem;
+  font-weight: 400;
+  color: var(--ifm-font-color-base);
+}
+
+.hero__subtitle {
+  font-size: 1rem;
+  font-weight: 400;
+  color: var(--ifm-font-color-secondary);
+  margin-top: 0.25rem;
+}
+
 /* Blog styling */
 .blog-post-item {
   border-bottom: 1px solid var(--ifm-hr-border-color);

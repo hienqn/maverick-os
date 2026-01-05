@@ -1,0 +1,14 @@
+# -*- perl -*-
+use strict;
+use warnings;
+use tests::tests;
+check_expected ([<<'EOF']);
+(pipe-eof) begin
+(pipe-eof) pipe()
+(pipe-eof) write end closed
+(pipe-eof) first read got 4 bytes
+(pipe-eof) second read returned 0 (EOF)
+(pipe-eof) end
+pipe-eof: exit(0)
+EOF
+pass;

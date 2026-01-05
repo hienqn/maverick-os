@@ -166,3 +166,5 @@ bool symlink(const char* target, const char* linkpath) {
 int readlink(const char* path, char* buf, size_t bufsize) {
   return syscall3(SYS_READLINK, path, buf, bufsize);
 }
+
+int pipe(int pipefd[2]) { return syscall1(SYS_PIPE, pipefd); }

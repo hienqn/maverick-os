@@ -67,6 +67,9 @@ int inumber(int fd);
 bool symlink(const char* target, const char* linkpath);
 int readlink(const char* path, char* buf, size_t bufsize);
 
+/* Pipes. */
+int pipe(int pipefd[2]);
+
 pid_t fork(void);
 
 #endif /* lib/user/syscall.h */

@@ -44,6 +44,9 @@ enum {
   /* Symbolic links. */
   SYS_SYMLINK,  /* Create a symbolic link. */
   SYS_READLINK, /* Read the target of a symbolic link. */
+
+  /* Pipes. */
+  SYS_PIPE, /* Create a pipe. */
 };
 
 #endif /* lib/syscall-nr.h */

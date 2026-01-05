@@ -3,8 +3,8 @@ import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
-  title: 'PintOS Blog',
-  tagline: 'Learn Operating Systems Through Interactive Posts',
+  title: 'MaverickOS',
+  tagline: 'Learn Operating Systems Through Code',
   favicon: 'img/favicon.ico',
 
   url: 'https://hienqn.github.io',
@@ -33,7 +33,7 @@ const config: Config = {
         docs: false,
         blog: {
           showReadingTime: true,
-          blogTitle: 'PintOS Blog',
+          blogTitle: 'MaverickOS Blog',
           blogDescription: 'Learn OS concepts through interactive visualizations',
           blogSidebarTitle: 'Recent Posts',
           blogSidebarCount: 10,
@@ -54,9 +54,9 @@ const config: Config = {
   themeConfig: {
     image: 'img/pintos-social-card.png',
     navbar: {
-      title: 'PintOS Blog',
+      title: 'MaverickOS',
       logo: {
-        alt: 'PintOS Logo',
+        alt: 'MaverickOS Logo',
         src: 'img/logo.svg',
       },
       items: [
@@ -68,11 +68,6 @@ const config: Config = {
         {
           to: '/blog/tags',
           label: 'Topics',
-          position: 'left',
-        },
-        {
-          to: '/roadmap',
-          label: 'Roadmap',
           position: 'left',
         },
         {
@@ -90,26 +85,17 @@ const config: Config = {
           items: [
             {label: 'All Posts', to: '/blog'},
             {label: 'OS Concepts', to: '/blog/tags/os-concepts'},
-            {label: 'Data Structures', to: '/blog/tags/data-structures'},
-          ],
-        },
-        {
-          title: 'Topics',
-          items: [
-            {label: 'Algorithms', to: '/blog/tags/algorithms'},
-            {label: 'Systems Programming', to: '/blog/tags/systems'},
-            {label: 'PintOS', to: '/blog/tags/pintos'},
+            {label: 'Systems', to: '/blog/tags/systems'},
           ],
         },
         {
           title: 'More',
           items: [
-            {label: 'Roadmap', to: '/roadmap'},
             {label: 'GitHub', href: 'https://github.com/hienqn/maverick-os'},
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} Maverick OS. Built with Docusaurus.`,
+      copyright: `Copyright © ${new Date().getFullYear()} MaverickOS`,
     },
     prism: {
       theme: prismThemes.github,
@@ -118,10 +104,6 @@ const config: Config = {
     },
     mermaid: {
       theme: {light: 'default', dark: 'dark'},
-    },
-    tableOfContents: {
-      minHeadingLevel: 2,
-      maxHeadingLevel: 4,
     },
     colorMode: {
       defaultMode: 'light',

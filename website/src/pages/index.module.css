@@ -1,108 +1,50 @@
-.heroBanner {
-  padding: 4rem 0;
-  text-align: center;
-  position: relative;
-  overflow: hidden;
-}
-
-.buttons {
+.main {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-top: 2rem;
+  min-height: calc(100vh - 60px - 200px);
 }
 
-/* Featured Posts Section */
-.featuredSection {
-  padding: 4rem 0;
-}
-
-.sectionTitle {
+.container {
   text-align: center;
-  margin-bottom: 2rem;
-  font-size: 2rem;
+  padding: 2rem;
 }
 
-.featuredPost {
-  margin-bottom: 2rem;
-}
-
-.postLink {
-  text-decoration: none;
-  color: inherit;
-  display: block;
-  height: 100%;
-}
-
-.postLink:hover {
-  text-decoration: none;
-}
-
-.postLink .card {
-  height: 100%;
-  transition: transform 0.2s, box-shadow 0.2s;
-}
-
-.postLink:hover .card {
-  transform: translateY(-4px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
-}
-
-.postTags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-
-.postTag {
-  font-size: 0.75rem;
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
-  background: var(--ifm-color-primary-lightest);
-  color: var(--ifm-color-primary-darkest);
-}
-
-[data-theme='dark'] .postTag {
-  background: rgba(90, 155, 213, 0.2);
-  color: var(--ifm-color-primary-lighter);
-}
-
-.readMore {
-  color: var(--ifm-color-primary);
-  font-weight: 600;
-}
-
-/* Topics Section */
-.topicsSection {
-  padding: 4rem 0;
-  background: var(--ifm-background-surface-color);
-}
-
-.topicsGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 1rem;
-  margin-top: 2rem;
-}
-
-.topicCard {
-  padding: 1.5rem;
-  border-radius: 8px;
-  background: var(--ifm-card-background-color);
-  border: 1px solid var(--ifm-color-gray-200);
-  text-align: center;
-  text-decoration: none;
-  transition: all 0.2s;
-}
-
-.topicCard:hover {
-  text-decoration: none;
-  border-color: var(--ifm-color-primary);
-  transform: translateY(-2px);
-}
-
-.topicName {
-  font-weight: 600;
+.title {
+  font-size: 3rem;
+  font-weight: 300;
+  letter-spacing: -0.02em;
+  margin: 0 0 1rem 0;
   color: var(--ifm-font-color-base);
+}
+
+.subtitle {
+  font-size: 1.1rem;
+  font-weight: 400;
+  color: var(--ifm-font-color-secondary);
+  margin: 0 0 2rem 0;
+}
+
+.links {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+.link {
+  font-size: 0.95rem;
+  color: var(--ifm-font-color-secondary);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.link:hover {
+  color: var(--ifm-font-color-base);
+  text-decoration: none;
+}
+
+.separator {
+  color: var(--ifm-font-color-secondary);
+  opacity: 0.5;
 }

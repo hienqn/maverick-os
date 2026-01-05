@@ -1,0 +1,46 @@
+# Grading rubric for stdio tests
+
+Functionality:
+- Test basic file stream operations
+
+  4  stdio-fopen
+  4  stdio-fclose
+  4  stdio-fread
+  4  stdio-fwrite
+
+- Test character I/O
+
+  3  stdio-fgetc
+  3  stdio-fputc
+  3  stdio-ungetc
+
+- Test string I/O
+
+  4  stdio-fgets
+  4  stdio-fputs
+
+- Test formatted I/O
+
+  5  stdio-fprintf
+  5  stdio-fscanf
+  4  stdio-sscanf
+
+- Test positioning
+
+  4  stdio-fseek
+  4  stdio-ftell
+
+- Test error handling
+
+  3  stdio-feof
+  3  stdio-ferror
+
+- Test standard streams
+
+  4  stdio-stdout
+  4  stdio-stdin
+
+- Test buffering behavior
+
+  4  stdio-buffer
+  4  stdio-linebuf

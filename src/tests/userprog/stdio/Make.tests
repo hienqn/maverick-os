@@ -1,0 +1,56 @@
+# -*- makefile -*-
+
+# stdio library test suite
+
+tests/userprog/stdio_TESTS = $(addprefix tests/userprog/stdio/,\
+  stdio-fopen stdio-fclose stdio-fread stdio-fwrite \
+  stdio-fgetc stdio-fputc stdio-ungetc \
+  stdio-fgets stdio-fputs \
+  stdio-fprintf stdio-fscanf stdio-sscanf \
+  stdio-fseek stdio-ftell \
+  stdio-feof stdio-ferror \
+  stdio-stdout stdio-stdin \
+  stdio-buffer stdio-linebuf)
+
+tests/userprog/stdio_PROGS = $(tests/userprog/stdio_TESTS)
+
+# File operations tests
+tests/userprog/stdio/stdio-fopen_SRC = tests/userprog/stdio/stdio-fopen.c tests/main.c
+tests/userprog/stdio/stdio-fclose_SRC = tests/userprog/stdio/stdio-fclose.c tests/main.c
+
+# Binary I/O tests
+tests/userprog/stdio/stdio-fread_SRC = tests/userprog/stdio/stdio-fread.c tests/main.c
+tests/userprog/stdio/stdio-fwrite_SRC = tests/userprog/stdio/stdio-fwrite.c tests/main.c
+
+# Character I/O tests
+tests/userprog/stdio/stdio-fgetc_SRC = tests/userprog/stdio/stdio-fgetc.c tests/main.c
+tests/userprog/stdio/stdio-fputc_SRC = tests/userprog/stdio/stdio-fputc.c tests/main.c
+tests/userprog/stdio/stdio-ungetc_SRC = tests/userprog/stdio/stdio-ungetc.c tests/main.c
+
+# String I/O tests
+tests/userprog/stdio/stdio-fgets_SRC = tests/userprog/stdio/stdio-fgets.c tests/main.c
+tests/userprog/stdio/stdio-fputs_SRC = tests/userprog/stdio/stdio-fputs.c tests/main.c
+
+# Formatted I/O tests
+tests/userprog/stdio/stdio-fprintf_SRC = tests/userprog/stdio/stdio-fprintf.c tests/main.c
+tests/userprog/stdio/stdio-fscanf_SRC = tests/userprog/stdio/stdio-fscanf.c tests/main.c
+tests/userprog/stdio/stdio-sscanf_SRC = tests/userprog/stdio/stdio-sscanf.c tests/main.c
+
+# Positioning tests
+tests/userprog/stdio/stdio-fseek_SRC = tests/userprog/stdio/stdio-fseek.c tests/main.c
+tests/userprog/stdio/stdio-ftell_SRC = tests/userprog/stdio/stdio-ftell.c tests/main.c
+
+# Error handling tests
+tests/userprog/stdio/stdio-feof_SRC = tests/userprog/stdio/stdio-feof.c tests/main.c
+tests/userprog/stdio/stdio-ferror_SRC = tests/userprog/stdio/stdio-ferror.c tests/main.c
+
+# Standard stream tests
+tests/userprog/stdio/stdio-stdout_SRC = tests/userprog/stdio/stdio-stdout.c tests/main.c
+tests/userprog/stdio/stdio-stdin_SRC = tests/userprog/stdio/stdio-stdin.c tests/main.c
+
+# Buffering tests
+tests/userprog/stdio/stdio-buffer_SRC = tests/userprog/stdio/stdio-buffer.c tests/main.c
+tests/userprog/stdio/stdio-linebuf_SRC = tests/userprog/stdio/stdio-linebuf.c tests/main.c
+
+# All programs include test library
+$(foreach prog,$(tests/userprog/stdio_PROGS),$(eval $(prog)_SRC += tests/lib.c))

@@ -167,3 +167,9 @@ tests/userprog/rox-child_PUTFILES += tests/userprog/child-rox
 tests/userprog/rox-multichild_PUTFILES += tests/userprog/child-rox
 tests/userprog/fork-tree_PUTFILES += tests/userprog/fork-help
 tests/userprog/fork-file_PUTFILES += tests/userprog/sample.txt
+
+# Include stdio test suite
+include $(SRCDIR)/tests/userprog/stdio/Make.tests
+
+# Include pipe test suite
+include $(SRCDIR)/tests/userprog/pipe/Make.tests

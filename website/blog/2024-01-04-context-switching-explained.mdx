@@ -1,0 +1,134 @@
+---
+slug: context-switching-explained
+title: Context Switching Explained with Animated Diagrams
+tags: [os-concepts, scheduling, threads]
+description: Visualize how the CPU switches between processes with animated diagrams
+---
+
+import AnimatedFlow from '@site/src/components/AnimatedFlow';
+import CodeWalkthrough from '@site/src/components/CodeWalkthrough';
+
+Context switching is the mechanism that allows multiple processes to share a single CPU. Let's visualize how it works.
+
+{/* truncate */}
+
+## What is a Context Switch?
+
+When the scheduler decides to run a different thread, the kernel must:
+
+1. **Save** the current thread's CPU state (registers, stack pointer)
+2. **Switch** page tables (if changing processes)
+3. **Restore** the new thread's CPU state
+4. **Resume** execution at the new thread's saved instruction
+
+## Visualizing the Process
+
+<AnimatedFlow
+  title="Context Switch Flow"
+  states={[
+    { id: 'thread_a_running', label: 'Thread A Running', color: '#4CAF50' },
+    { id: 'timer_interrupt', label: 'Timer Interrupt', color: '#FF9800' },
+    { id: 'save_state_a', label: 'Save A State', color: '#2196F3' },
+    { id: 'scheduler', label: 'Scheduler Picks B', color: '#9C27B0' },
+    { id: 'restore_state_b', label: 'Restore B State', color: '#2196F3' },
+    { id: 'thread_b_running', label: 'Thread B Running', color: '#4CAF50' },
+  ]}
+  transitions={[
+    { from: 'thread_a_running', to: 'timer_interrupt', label: 'tick!' },
+    { from: 'timer_interrupt', to: 'save_state_a', label: 'enter kernel' },
+    { from: 'save_state_a', to: 'scheduler', label: 'push regs' },
+    { from: 'scheduler', to: 'restore_state_b', label: 'select next' },
+    { from: 'restore_state_b', to: 'thread_b_running', label: 'pop regs' },
+  ]}
+  autoPlay={true}
+  loop={true}
+/>
+
+## The Assembly: switch_threads
+
+The heart of context switching in PintOS is the `switch_threads` function in `threads/switch.S`. Let's walk through it:
+
+<CodeWalkthrough
+  title="switch_threads Assembly"
+  language="nasm"
+  sourceFile="threads/switch.S"
+  code={`switch_threads:
+      # Save caller's register state.
+      pushl %ebx
+      pushl %ebp
+      pushl %esi
+      pushl %edi
+
+      # Get offsetof (struct thread, stack).
+      mov thread_stack_ofs, %edx
+
+      # Save current stack pointer to old thread's stack.
+      movl SWITCH_CUR(%esp), %eax
+      movl %esp, (%eax,%edx,1)
+
+      # Restore stack pointer from new thread's stack.
+      movl SWITCH_NEXT(%esp), %ecx
+      movl (%ecx,%edx,1), %esp
+
+      # Restore caller's register state.
+      popl %edi
+      popl %esi
+      popl %ebp
+      popl %ebx
+      ret`}
+  steps={[
+    {
+      lines: [3, 4, 5, 6],
+      title: 'Save Callee-Saved Registers',
+      explanation: 'Push the four callee-saved registers (ebx, ebp, esi, edi) onto the current thread stack. These must be preserved across function calls.',
+    },
+    {
+      lines: [9],
+      title: 'Get Stack Offset',
+      explanation: 'Load the offset of the stack field within struct thread. This tells us where each thread stores its stack pointer.',
+    },
+    {
+      lines: [12, 13],
+      title: 'Save Current Stack Pointer',
+      explanation: 'Save ESP to the current thread structure. SWITCH_CUR(%esp) points to the first argument (current thread).',
+    },
+    {
+      lines: [16, 17],
+      title: 'Load New Stack Pointer',
+      explanation: 'Load the new thread stack pointer into ESP. This is the magic moment - we are now on a different stack!',
+    },
+    {
+      lines: [20, 21, 22, 23],
+      title: 'Restore Registers',
+      explanation: 'Pop the saved registers from the NEW thread stack. These were saved when this thread was switched out previously.',
+    },
+    {
+      lines: [24],
+      title: 'Return to New Thread',
+      explanation: 'The ret instruction pops the return address from the new stack and jumps there, resuming the new thread.',
+    },
+  ]}
+/>
+
+## Why This Matters
+
+Understanding context switching helps you:
+
+- **Debug threading issues**: Know where to look when threads behave unexpectedly
+- **Optimize performance**: Context switches have overhead (~1-10 microseconds)
+- **Implement synchronization**: Understand when preemption can occur
+- **Design schedulers**: Know what state must be saved and restored
+
+## Key Insight
+
+The clever part of `switch_threads` is that it returns to a *different* place than where it was called. When Thread A calls `switch_threads(A, B)`, it returns in Thread B's context, and Thread B resumes wherever *it* left off.
+
+```
+Thread A calls switch_threads(A, B)
+  → saves A's registers
+  → switches to B's stack
+  → restores B's registers
+  → returns to B's caller (not A's!)
+```
+
+This is why the function appears to "teleport" - the return address on the stack belongs to whoever was running before.

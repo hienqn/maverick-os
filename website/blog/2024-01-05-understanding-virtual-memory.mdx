@@ -1,0 +1,143 @@
+---
+slug: understanding-virtual-memory
+title: Understanding Virtual Memory - A Visual Guide
+tags: [os-concepts, virtual-memory, pintos]
+description: Learn how virtual memory works with interactive visualizations
+---
+
+import MemoryLayout from '@site/src/components/MemoryLayout';
+import Quiz from '@site/src/components/Quiz';
+
+Virtual memory is one of the most important concepts in operating systems. Let's explore it visually.
+
+{/* truncate */}
+
+## What is Virtual Memory?
+
+Virtual memory creates an abstraction that gives each process the illusion of having its own private address space. Instead of directly accessing physical RAM, programs use virtual addresses that the CPU translates to physical addresses at runtime.
+
+<MemoryLayout
+  title="PintOS Virtual Address Space"
+  regions={[
+    {
+      id: 'kernel',
+      label: 'Kernel Space',
+      startAddress: '0xC0000000',
+      endAddress: '0xFFFFFFFF',
+      color: 'kernel',
+      description: 'Kernel code and data, mapped into every process',
+    },
+    {
+      id: 'stack',
+      label: 'User Stack',
+      startAddress: '0xBFFFFFFE',
+      endAddress: '0xBFFFE000',
+      size: '8 KB',
+      color: 'stack',
+      description: 'Grows downward, used for function calls and local variables',
+    },
+    {
+      id: 'heap',
+      label: 'Heap',
+      startAddress: '0x08100000',
+      endAddress: '0x08200000',
+      color: 'heap',
+      description: 'Dynamic memory allocation via malloc/free',
+    },
+    {
+      id: 'data',
+      label: 'Data Segment',
+      startAddress: '0x08050000',
+      endAddress: '0x08100000',
+      color: 'data',
+      description: 'Global and static variables',
+    },
+    {
+      id: 'code',
+      label: 'Code Segment',
+      startAddress: '0x08048000',
+      endAddress: '0x08050000',
+      color: 'code',
+      description: 'Executable instructions (read-only)',
+    },
+  ]}
+/>
+
+## Key Concepts
+
+### Page Tables
+
+Page tables are the data structure that maps virtual addresses to physical frames. In PintOS, we use a two-level page table:
+
+1. **Page Directory**: Top-level table with 1024 entries
+2. **Page Tables**: Second-level tables, each with 1024 entries
+3. **Page Offset**: Bottom 12 bits address within a 4KB page
+
+### Demand Paging
+
+Pages are loaded only when accessed, not all at once:
+
+```c
+// In exception.c - page fault handler
+static void
+page_fault (struct intr_frame *f)
+{
+  void *fault_addr = (void *) rcr2(); // Get faulting address
+
+  // Look up in supplemental page table
+  struct spt_entry *spte = spt_find(fault_addr);
+
+  if (spte != NULL) {
+    // Load the page from disk/swap
+    load_page(spte);
+  } else {
+    // Invalid access - terminate process
+    kill(f);
+  }
+}
+```
+
+## Quiz: Test Your Understanding
+
+<Quiz
+  title="Virtual Memory Quiz"
+  topic="OS Concepts"
+  questions={[
+    {
+      question: 'What happens when a process accesses an unmapped virtual address?',
+      options: [
+        { text: 'The process continues normally', isCorrect: false },
+        { text: 'A page fault occurs', isCorrect: true },
+        { text: 'The kernel terminates immediately', isCorrect: false },
+        { text: 'The address is automatically mapped to frame 0', isCorrect: false },
+      ],
+      explanation: 'A page fault exception is raised, allowing the kernel to handle the situation - either by loading the page from disk or terminating the process if the access is invalid.',
+    },
+    {
+      question: 'Why does the kernel occupy the high address range (above 0xC0000000)?',
+      options: [
+        { text: 'It runs faster at higher addresses', isCorrect: false },
+        { text: 'So it can be mapped into every process address space', isCorrect: true },
+        { text: 'To protect it from user code', isCorrect: false },
+        { text: 'Historical convention only', isCorrect: false },
+      ],
+      explanation: 'Placing the kernel at high addresses allows it to be mapped into every process, enabling fast system calls without switching page tables.',
+    },
+    {
+      question: 'What is the size of a page in x86?',
+      options: [
+        { text: '1 KB', isCorrect: false },
+        { text: '4 KB', isCorrect: true },
+        { text: '8 KB', isCorrect: false },
+        { text: '64 KB', isCorrect: false },
+      ],
+      explanation: 'x86 uses 4KB (4096 byte) pages by default. This is why the page offset is 12 bits (2^12 = 4096).',
+    },
+  ]}
+/>
+
+## Further Reading
+
+- **Page Fault Handling**: Deep dive into how PintOS handles page faults
+- **Swap Space**: Managing memory when physical RAM is exhausted
+- **Copy-on-Write**: Efficient forking with lazy page copying

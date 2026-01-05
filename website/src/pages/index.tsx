@@ -18,8 +18,8 @@ function HomepageHeader() {
         <div className={styles.buttons}>
           <Link
             className="button button--secondary button--lg"
-            to="/docs">
-            Get Started
+            to="/blog">
+            Browse All Posts
           </Link>
         </div>
       </div>
@@ -27,45 +27,77 @@ function HomepageHeader() {
   );
 }
 
-type FeatureItem = {
+type FeaturedPostItem = {
   title: string;
   description: string;
   link: string;
+  tags: string[];
 };
 
-const FeatureList: FeatureItem[] = [
+const FeaturedPosts: FeaturedPostItem[] = [
   {
-    title: 'Interactive Visualizations',
-    description: 'Understand complex OS concepts through animated diagrams and code walkthroughs.',
-    link: '/docs/architecture/overview',
+    title: 'Understanding Virtual Memory',
+    description: 'Learn how virtual memory works with interactive memory layout visualizations and quizzes.',
+    link: '/blog/understanding-virtual-memory',
+    tags: ['OS Concepts', 'Virtual Memory'],
   },
   {
-    title: 'Theory Meets Code',
-    description: 'Every OS concept is mapped to its actual implementation in PintOS.',
-    link: '/docs/concepts/threads-and-processes',
+    title: 'Context Switching Explained',
+    description: 'Visualize how the CPU switches between processes with animated diagrams and code walkthroughs.',
+    link: '/blog/context-switching-explained',
+    tags: ['OS Concepts', 'Scheduling'],
   },
   {
-    title: 'Project Guides',
-    description: 'Step-by-step guides for all four projects: Threads, User Programs, VM, and File Systems.',
-    link: '/docs/projects/threads/overview',
-  },
-  {
-    title: 'Roadmap',
-    description: 'Track completed features and see what is planned for the future.',
-    link: '/docs/roadmap/changelog',
+    title: 'Hash Tables in PintOS',
+    description: 'Deep dive into the hash table implementation used throughout PintOS with interactive diagrams.',
+    link: '/blog/hash-tables-in-pintos',
+    tags: ['Data Structures', 'PintOS'],
   },
 ];
 
-function Feature({title, description, link}: FeatureItem) {
+function FeaturedPost({title, description, link, tags}: FeaturedPostItem) {
   return (
-    <div className={clsx('col col--6', styles.feature)}>
-      <Link to={link} className={styles.featureLink}>
+    <div className={clsx('col col--4', styles.featuredPost)}>
+      <Link to={link} className={styles.postLink}>
         <div className="card padding--lg">
+          <div className={styles.postTags}>
+            {tags.map((tag, idx) => (
+              <span key={idx} className={styles.postTag}>{tag}</span>
+            ))}
+          </div>
           <Heading as="h3">{title}</Heading>
           <p>{description}</p>
+          <span className={styles.readMore}>Read more &rarr;</span>
         </div>
       </Link>
     </div>
+  );
+}
+
+const topics = [
+  { name: 'OS Concepts', link: '/blog/tags/os-concepts' },
+  { name: 'Data Structures', link: '/blog/tags/data-structures' },
+  { name: 'Algorithms', link: '/blog/tags/algorithms' },
+  { name: 'Systems Programming', link: '/blog/tags/systems' },
+  { name: 'PintOS', link: '/blog/tags/pintos' },
+];
+
+function TopicsSection() {
+  return (
+    <section className={styles.topicsSection}>
+      <div className="container">
+        <Heading as="h2" className={styles.sectionTitle}>
+          Browse by Topic
+        </Heading>
+        <div className={styles.topicsGrid}>
+          {topics.map((topic, idx) => (
+            <Link key={idx} to={topic.link} className={styles.topicCard}>
+              <span className={styles.topicName}>{topic.name}</span>
+            </Link>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -73,18 +105,22 @@ export default function Home(): JSX.Element {
   return (
     <Layout
       title="Home"
-      description="Learn Operating Systems concepts through the PintOS educational OS">
+      description="Learn Operating Systems concepts through interactive blog posts">
       <HomepageHeader />
       <main>
-        <section className={styles.features}>
+        <section className={styles.featuredSection}>
           <div className="container">
+            <Heading as="h2" className={styles.sectionTitle}>
+              Featured Posts
+            </Heading>
             <div className="row">
-              {FeatureList.map((props, idx) => (
-                <Feature key={idx} {...props} />
+              {FeaturedPosts.map((props, idx) => (
+                <FeaturedPost key={idx} {...props} />
               ))}
             </div>
           </div>
         </section>
+        <TopicsSection />
       </main>
     </Layout>
   );

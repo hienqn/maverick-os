@@ -3,8 +3,8 @@ import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
-  title: 'PintOS Documentation',
-  tagline: 'Learn Operating Systems Through Real Code',
+  title: 'PintOS Blog',
+  tagline: 'Learn Operating Systems Through Interactive Posts',
   favicon: 'img/favicon.ico',
 
   url: 'https://hienqn.github.io',
@@ -30,13 +30,20 @@ const config: Config = {
     [
       'classic',
       {
-        docs: {
-          sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/hienqn/maverick-os/tree/main/website/',
-          showLastUpdateTime: true,
-          showLastUpdateAuthor: true,
+        docs: false,
+        blog: {
+          showReadingTime: true,
+          blogTitle: 'PintOS Blog',
+          blogDescription: 'Learn OS concepts through interactive visualizations',
+          blogSidebarTitle: 'Recent Posts',
+          blogSidebarCount: 10,
+          postsPerPage: 9,
+          feedOptions: {
+            type: null,
+          },
+          tagsBasePath: 'tags',
+          routeBasePath: 'blog',
         },
-        blog: false,
         theme: {
           customCss: './src/css/custom.css',
         },
@@ -47,17 +54,21 @@ const config: Config = {
   themeConfig: {
     image: 'img/pintos-social-card.png',
     navbar: {
-      title: 'PintOS',
+      title: 'PintOS Blog',
       logo: {
         alt: 'PintOS Logo',
         src: 'img/logo.svg',
       },
       items: [
         {
-          type: 'docSidebar',
-          sidebarId: 'tutorialSidebar',
+          to: '/blog',
+          label: 'Blog',
           position: 'left',
-          label: 'Documentation',
+        },
+        {
+          to: '/blog/tags',
+          label: 'Topics',
+          position: 'left',
         },
         {
           to: '/roadmap',
@@ -75,19 +86,19 @@ const config: Config = {
       style: 'dark',
       links: [
         {
-          title: 'Learn',
+          title: 'Blog',
           items: [
-            {label: 'Getting Started', to: '/docs/getting-started/installation'},
-            {label: 'OS Concepts', to: '/docs/concepts/threads-and-processes'},
-            {label: 'Project Guides', to: '/docs/projects/threads/overview'},
+            {label: 'All Posts', to: '/blog'},
+            {label: 'OS Concepts', to: '/blog/tags/os-concepts'},
+            {label: 'Data Structures', to: '/blog/tags/data-structures'},
           ],
         },
         {
-          title: 'Documentation',
+          title: 'Topics',
           items: [
-            {label: 'Architecture', to: '/docs/architecture/overview'},
-            {label: 'Context Switching', to: '/docs/concepts/context-switching'},
-            {label: 'Changelog', to: '/docs/roadmap/changelog'},
+            {label: 'Algorithms', to: '/blog/tags/algorithms'},
+            {label: 'Systems Programming', to: '/blog/tags/systems'},
+            {label: 'PintOS', to: '/blog/tags/pintos'},
           ],
         },
         {

@@ -8,7 +8,6 @@ interface RoadmapItem {
   status: 'done' | 'in-progress' | 'planned';
   version?: string;
   description: string;
-  link?: string;
 }
 
 const roadmapData: RoadmapItem[] = [
@@ -17,41 +16,35 @@ const roadmapData: RoadmapItem[] = [
     status: 'done',
     version: 'v1.4.0',
     description: 'Efficient process forking with lazy page copying',
-    link: '/docs/projects/vm/cow-fork',
   },
   {
     title: 'Virtual Memory',
     status: 'done',
     version: 'v1.3.0',
     description: 'Demand paging, frame table, swap space, mmap',
-    link: '/docs/projects/vm/overview',
   },
   {
     title: 'Write-Ahead Logging',
     status: 'done',
     version: 'v1.2.0',
     description: 'Crash-consistent filesystem transactions',
-    link: '/docs/projects/filesys/wal',
   },
   {
     title: 'Symbolic Links',
     status: 'done',
     version: 'v1.1.0',
     description: 'symlink() and readlink() support',
-    link: '/docs/projects/filesys/subdirectories',
   },
   {
     title: 'Buffer Cache & Extensible Files',
     status: 'done',
     version: 'v1.0.0',
     description: '64-block cache, indexed inodes up to 8MB',
-    link: '/docs/projects/filesys/overview',
   },
   {
     title: 'SMP Support',
     status: 'planned',
     description: 'Symmetric multiprocessing with spinlocks, per-CPU data, APIC',
-    link: '/docs/roadmap/future-smp',
   },
   {
     title: 'VFS Layer',
@@ -101,11 +94,6 @@ export default function Roadmap(): JSX.Element {
                   </div>
                   <h3>{item.title}</h3>
                   <p>{item.description}</p>
-                  {item.link && (
-                    <Link to={item.link} className={styles.link}>
-                      Learn more →
-                    </Link>
-                  )}
                 </div>
               ))}
             </div>
@@ -121,11 +109,6 @@ export default function Roadmap(): JSX.Element {
                   </div>
                   <h3>{item.title}</h3>
                   <p>{item.description}</p>
-                  {item.link && (
-                    <Link to={item.link} className={styles.link}>
-                      View plan →
-                    </Link>
-                  )}
                 </div>
               ))}
             </div>
@@ -135,7 +118,9 @@ export default function Roadmap(): JSX.Element {
             <h2>Version History</h2>
             <p>
               For a detailed changelog, see the{' '}
-              <Link to="/docs/roadmap/changelog">Changelog</Link>.
+              <Link to="https://github.com/hienqn/maverick-os/releases">
+                GitHub Releases
+              </Link>.
             </p>
           </section>
         </div>

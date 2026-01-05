@@ -239,6 +239,7 @@ struct process {
    * See vm/mmap.h for details.
    * ═══════════════════════════════════════════════════════════════════════*/
   struct list mmap_list; /* List of mmap_region structs. */
+  struct lock mmap_lock; /* Protects mmap_list and mmap operations. */
 };
 
 /* ═══════════════════════════════════════════════════════════════════════════

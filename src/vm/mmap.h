@@ -14,21 +14,42 @@ struct file;
  * MEMORY-MAPPED FILES (mmap)
  * ============================================================================
  *
- * Memory-mapped files allow processes to access file contents as if they
- * were in memory. This implementation uses lazy loading via the SPT.
+ * This module provides memory-mapped file support, allowing processes to
+ * access file contents directly through virtual memory addresses.
  *
- * Key features:
- *   - Lazy loading: pages loaded on first access (page fault)
- *   - Dirty writeback: modified pages written back on munmap/exit
- *   - Per-process: each process has its own mmap_list
+ * FEATURES:
+ *   - Lazy loading: pages are loaded from disk on first access (page fault)
+ *   - Automatic writeback: dirty pages are written back on unmap or exit
+ *   - Per-process isolation: each process has its own mapping list
  *
- * Future: Will integrate with address_space for shared file pages.
- * See docs/ADDRESS_SPACE_DESIGN.md for the evolution plan.
+ * USAGE:
+ *
+ *   // In syscall handler for SYS_MMAP:
+ *   void* result = mmap_create(addr, length, fd, 0);
+ *   if (result == MAP_FAILED) { ... handle error ... }
+ *
+ *   // In syscall handler for SYS_MUNMAP:
+ *   struct mmap_region* region = mmap_find_region(addr);
+ *   if (region != NULL) {
+ *     mmap_destroy(region->start_addr, region->length);
+ *   }
+ *
+ *   // In process_exit() - clean up all mappings:
+ *   mmap_destroy_all();  // Call BEFORE spt_destroy()
+ *
+ * INITIALIZATION:
+ *   Before using mmap, the process must have initialized:
+ *   - pcb->mmap_list (via list_init)
+ *   - pcb->mmap_lock (via lock_init)
+ *   - pcb->spt (supplemental page table)
+ *
+ * THREAD SAFETY:
+ *   All public functions are thread-safe. Internal locking via pcb->mmap_lock.
  *
  * ============================================================================
  */
 
-/* Return value for failed mmap. */
+/* Returned by mmap_create on failure. */
 #define MAP_FAILED ((void*)-1)
 
 /* ============================================================================
@@ -36,108 +57,83 @@ struct file;
  * ============================================================================
  */
 
-/* A memory-mapped region in a process's address space. */
+/* Represents a memory-mapped region in a process's address space.
+ *
+ * Each region maps a contiguous range of virtual addresses to a file.
+ * The region tracks all information needed for lazy loading and writeback.
+ */
 struct mmap_region {
+  /* Address range */
   void* start_addr;  /* Page-aligned starting virtual address. */
-  size_t length;     /* Requested length in bytes. */
+  size_t length;     /* Requested length in bytes (may not be page-aligned). */
   size_t page_count; /* Number of pages: DIV_ROUND_UP(length, PGSIZE). */
 
-  struct file* file; /* Private file reference (via file_reopen). */
-  off_t offset;      /* Starting offset in file. */
+  /* File backing */
+  struct file* file; /* Private file handle (from file_reopen). */
+  off_t offset;      /* Starting offset within the file. */
 
-  /* Future: for address_space integration. */
-  block_sector_t inode_sector; /* Inode sector for future page cache lookup. */
-  bool writable;               /* Mapping permissions (for future COW). */
+  /* Metadata */
+  block_sector_t inode_sector; /* Inode sector (for future page sharing). */
+  bool writable;               /* Write permission for this mapping. */
 
   struct list_elem elem; /* Element in process's mmap_list. */
 };
 
 /* ============================================================================
- * MMAP LIFECYCLE
+ * PUBLIC API
  * ============================================================================
  */
 
 /* Create a new memory mapping.
-
-   Maps LENGTH bytes from file FD starting at file offset OFFSET
-   into the process's virtual address space at ADDR.
-
-   @param addr    Page-aligned virtual address for the mapping.
-   @param length  Number of bytes to map (will be rounded up to page boundary).
-   @param fd      File descriptor of an open file.
-   @param offset  Page-aligned offset within the file.
-
-   @return The mapped address on success, MAP_FAILED on error.
-
-   Validation (return MAP_FAILED if any fail):
-   - addr != NULL and page-aligned
-   - offset is page-aligned
-   - length > 0
-   - fd is a valid file (not stdin/stdout, not a directory)
-   - file length > 0
-   - address range doesn't overlap existing mappings or stack
-
-   Implementation steps:
-   1. Validate all parameters
-   2. Get file from fd, call file_reopen() for independent reference
-   3. Allocate and initialize mmap_region
-   4. Create SPT entries for each page (PAGE_FILE status, lazy loading)
-   5. Add region to process's mmap_list
-   6. Return the mapped address */
+ *
+ * Maps a file into the process's virtual address space. The mapping uses
+ * lazy loading - pages are not read from disk until first accessed.
+ *
+ * @param addr    Virtual address for mapping (must be page-aligned, non-NULL).
+ * @param length  Bytes to map (rounded up to page boundary internally).
+ * @param fd      Open file descriptor (must be a regular file, not stdin/stdout).
+ * @param offset  Starting offset in file (must be page-aligned).
+ *
+ * @return The mapped address on success, MAP_FAILED on error.
+ *
+ * Fails if:
+ *   - addr is NULL or not page-aligned
+ *   - offset is not page-aligned
+ *   - length is 0
+ *   - fd is invalid, stdin/stdout, or a directory
+ *   - file is empty
+ *   - address range overlaps existing mappings or reserved regions (stack)
+ */
 void* mmap_create(void* addr, size_t length, int fd, off_t offset);
 
 /* Remove a memory mapping.
-
-   Unmaps the region starting at ADDR with LENGTH bytes.
-
-   @param addr    Starting address of the mapping (must match mmap_create).
-   @param length  Length of the mapping.
-
-   @return 0 on success, -1 if no such mapping exists.
-
-   Implementation steps:
-   1. Find the mmap_region by address
-   2. For each page in the region:
-      a. Look up SPT entry
-      b. If PAGE_FRAME and dirty: write back to file
-      c. Free the frame (if loaded)
-      d. Remove SPT entry
-   3. Close the file reference
-   4. Remove region from list and free it */
+ *
+ * Unmaps the region and writes back any dirty pages to the file.
+ * The addr and length must exactly match the original mmap_create call.
+ *
+ * @param addr    Starting address of the mapping.
+ * @param length  Length of the mapping.
+ *
+ * @return 0 on success, -1 if no matching mapping exists.
+ */
 int mmap_destroy(void* addr, size_t length);
 
 /* Remove all memory mappings for the current process.
-
-   Called during process_exit(), BEFORE spt_destroy().
-   Writes back all dirty pages and frees all resources. */
+ *
+ * Writes back all dirty pages and frees all mapping resources.
+ * Must be called during process exit, BEFORE destroying the SPT.
+ */
 void mmap_destroy_all(void);
 
-/* ============================================================================
- * MMAP UTILITIES
- * ============================================================================
+/* Find the mmap_region containing a given address.
+ *
+ * @param addr  Any virtual address (need not be page-aligned).
+ *
+ * @return Pointer to the mmap_region, or NULL if addr is not mapped.
+ *
+ * NOTE: The returned pointer is only valid while the mapping exists.
+ *       Do not cache the pointer across operations that might unmap it.
  */
-
-/* Find the mmap_region containing the given address.
-
-   @param addr  A virtual address (need not be page-aligned).
-
-   @return Pointer to the mmap_region if found, NULL otherwise. */
 struct mmap_region* mmap_find_region(void* addr);
-
-/* Check if an address range is available for mapping.
-
-   @param addr    Starting address (must be page-aligned).
-   @param length  Length in bytes.
-
-   @return true if the range is free (no SPT entries, not in stack region). */
-bool mmap_range_available(void* addr, size_t length);
-
-/* Write back a single page to the file if dirty.
-
-   @param region  The mmap_region containing the page.
-   @param upage   The user virtual address of the page.
-
-   @return true if writeback succeeded (or page wasn't dirty). */
-bool mmap_writeback_page(struct mmap_region* region, void* upage);
 
 #endif /* vm/mmap.h */

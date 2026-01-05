@@ -5,6 +5,7 @@
 #include "filesys/file.h"
 #include "filesys/inode.h"
 #include "threads/malloc.h"
+#include "threads/synch.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "userprog/pagedir.h"
@@ -24,6 +25,13 @@ static struct list* get_mmap_list(void) {
   return &t->pcb->mmap_list;
 }
 
+/* Get the current process's mmap_lock. */
+static struct lock* get_mmap_lock(void) {
+  struct thread* t = thread_current();
+  ASSERT(t->pcb != NULL);
+  return &t->pcb->mmap_lock;
+}
+
 /* Get the current process's SPT. */
 static struct spt* get_spt(void) {
   struct thread* t = thread_current();
@@ -38,17 +46,54 @@ static uint32_t* get_pagedir(void) {
   return t->pcb->pagedir;
 }
 
+/* Forward declarations for static functions. */
+static struct mmap_region* mmap_find_region_locked(void* addr);
+static bool mmap_range_available(void* addr, size_t length);
+static bool mmap_writeback_page(struct mmap_region* region, void* upage);
+
+/* Clean up all pages in a region: writeback dirty pages, free frames, remove SPT entries.
+   Does NOT free the region struct or close the file - caller handles that. */
+static void mmap_cleanup_pages(struct mmap_region* region) {
+  struct spt* spt = get_spt();
+  uint32_t* pd = get_pagedir();
+
+  for (size_t i = 0; i < region->page_count; i++) {
+    void* upage = (uint8_t*)region->start_addr + i * PGSIZE;
+
+    struct spt_entry* entry = spt_find(spt, upage);
+    if (entry == NULL) {
+      continue; /* Defensive check */
+    }
+
+    if (entry->status == PAGE_FRAME) {
+      if (pagedir_is_dirty(pd, upage)) {
+        mmap_writeback_page(region, upage);
+      }
+      frame_free(entry->kpage);
+      pagedir_clear_page(pd, upage);
+    }
+
+    spt_remove(spt, upage);
+  }
+}
+
 /* Get file from file descriptor.
-   Returns NULL if fd is invalid. */
+   Returns NULL if fd is invalid or not a file. */
 static struct file* get_file_from_fd(int fd) {
   struct thread* t = thread_current();
   ASSERT(t->pcb != NULL);
 
-  /* TODO: Implement - look up fd in process's fd_table.
-     Return NULL for invalid fd (stdin=0, stdout=1, out of range, not a file). */
+  /* Validate fd range (stdin=0, stdout=1 are not valid for mmap) */
+  if (fd < 2 || fd >= MAX_FILE_DESCRIPTOR) {
+    return NULL;
+  }
 
-  (void)fd; /* Suppress unused warning. */
-  return NULL;
+  struct fd_entry* entry = &t->pcb->fd_table[fd];
+  if (entry->type != FD_FILE || entry->file == NULL) {
+    return NULL;
+  }
+
+  return entry->file;
 }
 
 /* ============================================================================
@@ -57,141 +102,162 @@ static struct file* get_file_from_fd(int fd) {
  */
 
 void* mmap_create(void* addr, size_t length, int fd, off_t offset) {
-  /* TODO: Implement mmap_create.
+  /* Validate parameters */
+  if (addr == NULL || pg_ofs(addr) != 0) {
+    return MAP_FAILED;
+  }
 
-     Steps:
-     1. Validate parameters:
-        - addr != NULL
-        - addr is page-aligned: pg_ofs(addr) == 0
-        - offset is page-aligned: pg_ofs(offset) == 0
-        - length > 0
-        - fd >= 2 (not stdin/stdout)
+  if (pg_ofs((void*)(uintptr_t)offset) != 0) {
+    return MAP_FAILED;
+  }
 
-     2. Get file from fd:
-        - Use get_file_from_fd(fd)
-        - Return MAP_FAILED if NULL or is a directory
+  if (length == 0) {
+    return MAP_FAILED;
+  }
 
-     3. Check file properties:
-        - file_length(file) > 0
-        - Return MAP_FAILED if empty file
+  if (fd < 2) {
+    return MAP_FAILED;
+  }
 
-     4. Calculate page count:
-        - size_t page_count = DIV_ROUND_UP(length, PGSIZE);
+  /* Get file from fd */
+  struct file* file = get_file_from_fd(fd);
+  if (file == NULL) {
+    return MAP_FAILED;
+  }
 
-     5. Check address range is available:
-        - Use mmap_range_available(addr, page_count * PGSIZE)
-        - Check it doesn't overlap with stack (below PHYS_BASE)
+  /* Verify it's not a directory (get_file_from_fd already filters this, but double-check) */
+  struct inode* inode = file_get_inode(file);
+  if (inode_is_dir(inode)) {
+    return MAP_FAILED;
+  }
 
-     6. Create private file reference:
-        - struct file* map_file = file_reopen(file);
-        - Return MAP_FAILED if NULL
+  /* Check file properties */
+  off_t file_size = file_length(file);
+  if (file_size <= 0) {
+    return MAP_FAILED;
+  }
 
-     7. Allocate mmap_region:
-        - malloc(sizeof(struct mmap_region))
-        - Fill in all fields including inode_sector for future use:
-          region->inode_sector = inode_get_inumber(file_get_inode(map_file));
+  /* Calculate page count */
+  size_t page_count = DIV_ROUND_UP(length, PGSIZE);
 
-     8. Create SPT entries for each page:
-        for (size_t i = 0; i < page_count; i++) {
-          void* upage = addr + i * PGSIZE;
-          off_t file_ofs = offset + i * PGSIZE;
-          size_t read_bytes = (remaining > PGSIZE) ? PGSIZE : remaining;
-          size_t zero_bytes = PGSIZE - read_bytes;
+  /* Acquire lock to protect mmap_list and prevent race conditions */
+  struct lock* mmap_lock = get_mmap_lock();
+  lock_acquire(mmap_lock);
 
-          if (!spt_create_file_page(spt, upage, map_file, file_ofs,
-                                     read_bytes, zero_bytes, true)) {
-            // Cleanup on failure: remove already-created entries, close file
-            ...
-            return MAP_FAILED;
-          }
-          remaining -= read_bytes;
-        }
+  /* Check address range is available (while holding lock) */
+  if (!mmap_range_available(addr, page_count * PGSIZE)) {
+    lock_release(mmap_lock);
+    return MAP_FAILED;
+  }
 
-     9. Add region to mmap_list:
-        - list_push_back(get_mmap_list(), &region->elem);
+  /* Create private file reference */
+  struct file* map_file = file_reopen(file);
+  if (map_file == NULL) {
+    lock_release(mmap_lock);
+    return MAP_FAILED;
+  }
 
-     10. Return the mapped address.
-  */
+  /* Allocate mmap_region */
+  struct mmap_region* region = malloc(sizeof(struct mmap_region));
+  if (region == NULL) {
+    file_close(map_file);
+    lock_release(mmap_lock);
+    return MAP_FAILED;
+  }
 
-  (void)addr;
-  (void)length;
-  (void)fd;
-  (void)offset;
+  /* Fill in all fields */
+  region->start_addr = addr;
+  region->length = length;
+  region->page_count = page_count;
+  region->file = map_file;
+  region->offset = offset;
+  /* TODO: inode_sector stored for potential future use (e.g., sharing detection) */
+  region->inode_sector = inode_get_inumber(file_get_inode(map_file));
+  region->writable = true;
 
-  return MAP_FAILED; /* TODO: Replace with actual implementation. */
+  /* Create SPT entries for each page */
+  struct spt* spt = get_spt();
+  size_t remaining = length;
+
+  for (size_t i = 0; i < page_count; i++) {
+    void* upage = (uint8_t*)addr + i * PGSIZE;
+    off_t file_ofs = offset + i * PGSIZE;
+    size_t read_bytes = (remaining > PGSIZE) ? PGSIZE : remaining;
+    size_t zero_bytes = PGSIZE - read_bytes;
+
+    if (!spt_create_file_page(spt, upage, map_file, file_ofs, read_bytes, zero_bytes, true)) {
+      /* Cleanup on failure: remove already-created entries */
+      for (size_t j = 0; j < i; j++) {
+        void* cleanup_page = (uint8_t*)addr + j * PGSIZE;
+        spt_remove(spt, cleanup_page);
+      }
+      file_close(map_file);
+      free(region);
+      lock_release(mmap_lock);
+      return MAP_FAILED;
+    }
+    /* Mark this as an mmap page (so eviction writes back to file, not swap) */
+    struct spt_entry* entry = spt_find(spt, upage);
+    if (entry != NULL) {
+      entry->is_mmap = true;
+    }
+    remaining -= read_bytes;
+  }
+
+  /* Add region to mmap_list (while holding lock) */
+  list_push_back(get_mmap_list(), &region->elem);
+
+  /* Release lock before returning */
+  lock_release(mmap_lock);
+
+  /* Return the mapped address */
+  return addr;
 }
 
 int mmap_destroy(void* addr, size_t length) {
-  /* TODO: Implement mmap_destroy.
+  /* Acquire lock to protect mmap_list */
+  struct lock* mmap_lock = get_mmap_lock();
+  lock_acquire(mmap_lock);
 
-     Steps:
-     1. Find the region:
-        - Use mmap_find_region(addr)
-        - Verify region->start_addr == addr and region->length == length
-        - Return -1 if not found or mismatch
+  /* Find the region (using internal version since we already hold the lock) */
+  struct mmap_region* region = mmap_find_region_locked(addr);
+  if (region == NULL) {
+    lock_release(mmap_lock);
+    return -1;
+  }
 
-     2. For each page in the region:
-        for (size_t i = 0; i < region->page_count; i++) {
-          void* upage = region->start_addr + i * PGSIZE;
+  /* Verify region matches exactly */
+  if (region->start_addr != addr || region->length != length) {
+    lock_release(mmap_lock);
+    return -1;
+  }
 
-          a. Look up SPT entry:
-             struct spt_entry* entry = spt_find(spt, upage);
+  /* Clean up pages, close file, remove from list, free region */
+  mmap_cleanup_pages(region);
+  file_close(region->file);
+  list_remove(&region->elem);
+  lock_release(mmap_lock);
+  free(region);
 
-          b. If entry->status == PAGE_FRAME (page is loaded):
-             - Check if dirty: pagedir_is_dirty(pd, upage)
-             - If dirty: mmap_writeback_page(region, upage)
-             - Free the frame: frame_free(entry->kpage)
-             - Clear page table entry: pagedir_clear_page(pd, upage)
-
-          c. Remove SPT entry:
-             - spt_remove(spt, upage) or just free the entry
-        }
-
-     3. Close file reference:
-        - file_close(region->file);
-
-     4. Remove from list and free:
-        - list_remove(&region->elem);
-        - free(region);
-
-     5. Return 0.
-  */
-
-  (void)addr;
-  (void)length;
-
-  return -1; /* TODO: Replace with actual implementation. */
+  return 0;
 }
 
 void mmap_destroy_all(void) {
-  /* TODO: Implement mmap_destroy_all.
+  struct lock* mmap_lock = get_mmap_lock();
+  lock_acquire(mmap_lock);
 
-     Called from process_exit() BEFORE spt_destroy().
+  struct list* mmap_list = get_mmap_list();
 
-     Steps:
-     1. Get the mmap_list.
+  while (!list_empty(mmap_list)) {
+    struct list_elem* e = list_pop_front(mmap_list);
+    struct mmap_region* region = list_entry(e, struct mmap_region, elem);
 
-     2. While list is not empty:
-        - Get first element
-        - Call mmap_destroy(region->start_addr, region->length)
-        OR iterate and destroy inline (more efficient, avoid repeated lookups)
+    mmap_cleanup_pages(region);
+    file_close(region->file);
+    free(region);
+  }
 
-     Alternative implementation (inline destruction):
-     while (!list_empty(mmap_list)) {
-       struct list_elem* e = list_pop_front(mmap_list);
-       struct mmap_region* region = list_entry(e, struct mmap_region, elem);
-
-       // Writeback dirty pages
-       for (size_t i = 0; i < region->page_count; i++) {
-         void* upage = region->start_addr + i * PGSIZE;
-         mmap_writeback_page(region, upage);
-         // Note: SPT entries will be cleaned up by spt_destroy()
-       }
-
-       file_close(region->file);
-       free(region);
-     }
-  */
+  lock_release(mmap_lock);
 }
 
 /* ============================================================================
@@ -199,87 +265,134 @@ void mmap_destroy_all(void) {
  * ============================================================================
  */
 
+/* Internal version that assumes lock is already held. */
+static struct mmap_region* mmap_find_region_locked(void* addr) {
+  struct list* mmap_list = get_mmap_list();
+  struct list_elem* e;
+
+  for (e = list_begin(mmap_list); e != list_end(mmap_list); e = list_next(e)) {
+    struct mmap_region* region = list_entry(e, struct mmap_region, elem);
+    void* start = region->start_addr;
+    void* end = (uint8_t*)start + region->page_count * PGSIZE;
+
+    if (addr >= start && addr < end) {
+      return region;
+    }
+  }
+
+  return NULL;
+}
+
+/* Find region and hold lock. Caller must release *lock_out when done. */
+static struct mmap_region* mmap_find_region_hold_lock(void* addr, struct lock** lock_out) {
+  struct lock* mmap_lock = get_mmap_lock();
+  lock_acquire(mmap_lock);
+
+  struct mmap_region* region = mmap_find_region_locked(addr);
+
+  if (region != NULL) {
+    *lock_out = mmap_lock;
+    return region;
+  }
+
+  /* No region found, release lock */
+  lock_release(mmap_lock);
+  *lock_out = NULL;
+  return NULL;
+}
+
 struct mmap_region* mmap_find_region(void* addr) {
-  /* TODO: Implement mmap_find_region.
-
-     Steps:
-     1. Get the mmap_list.
-
-     2. Iterate through all regions:
-        for each region in mmap_list:
-          void* start = region->start_addr;
-          void* end = start + region->page_count * PGSIZE;
-          if (addr >= start && addr < end)
-            return region;
-
-     3. Return NULL if not found.
-  */
-
-  (void)addr;
-
-  return NULL; /* TODO: Replace with actual implementation. */
+  struct lock* held_lock;
+  struct mmap_region* region = mmap_find_region_hold_lock(addr, &held_lock);
+  if (held_lock != NULL) {
+    lock_release(held_lock);
+  }
+  return region;
 }
 
-bool mmap_range_available(void* addr, size_t length) {
-  /* TODO: Implement mmap_range_available.
+/* Check if address range is available for mmap.
+   NOTE: Caller must hold mmap_lock to prevent TOCTOU races. */
+static bool mmap_range_available(void* addr, size_t length) {
+  /* Check basic validity */
+  if (!is_user_vaddr(addr)) {
+    return false;
+  }
 
-     Steps:
-     1. Check basic validity:
-        - addr must be in user space: is_user_vaddr(addr)
-        - addr + length must not overflow and must be in user space
+  /* Check that addr + length doesn't overflow and stays in user space */
+  uintptr_t addr_val = (uintptr_t)addr;
+  uintptr_t end_val = addr_val + length;
 
-     2. Check for SPT conflicts:
-        - For each page in the range, check if spt_find() returns non-NULL
-        - If any page already has an SPT entry, return false
+  /* Check for overflow: if addition wrapped around, end_val < addr_val */
+  if (end_val < addr_val) {
+    return false;
+  }
 
-     3. Check stack region:
-        - Ensure range doesn't overlap with potential stack area
-        - Stack grows down from PHYS_BASE
-        - A common approach: reject if range overlaps [PHYS_BASE - MAX_STACK_SIZE, PHYS_BASE)
+  /* Check that end address is still in user space */
+  if ((void*)end_val >= PHYS_BASE) {
+    return false;
+  }
 
-     4. Return true if all checks pass.
-  */
+  /* Check for SPT conflicts */
+  struct spt* spt = get_spt();
+  size_t page_count = DIV_ROUND_UP(length, PGSIZE);
 
-  (void)addr;
-  (void)length;
+  for (size_t i = 0; i < page_count; i++) {
+    void* upage = (uint8_t*)addr + i * PGSIZE;
+    if (spt_find(spt, upage) != NULL) {
+      return false; /* Page already has an SPT entry */
+    }
+  }
 
-  return false; /* TODO: Replace with actual implementation. */
+  /* Check stack region */
+  /* Stack region: [PHYS_BASE - MAX_STACK_SIZE, PHYS_BASE) */
+  size_t max_stack_size = MAX_STACK_PAGES * PGSIZE;
+  uint8_t* stack_start = (uint8_t*)PHYS_BASE - max_stack_size;
+  void* stack_end = PHYS_BASE;
+
+  /* Mmap range: [addr, addr + length) */
+  /* Check if ranges overlap: mmap_start < stack_end AND mmap_end > stack_start */
+  if (addr < stack_end && (uint8_t*)addr + length > stack_start) {
+    return false; /* Range overlaps with stack region */
+  }
+
+  /* All checks passed */
+  return true;
 }
 
-bool mmap_writeback_page(struct mmap_region* region, void* upage) {
-  /* TODO: Implement mmap_writeback_page.
+/* Write back a single mmap page to file if dirty. */
+static bool mmap_writeback_page(struct mmap_region* region, void* upage) {
+  /* Get page directory and SPT */
+  uint32_t* pd = get_pagedir();
+  struct spt* spt = get_spt();
 
-     Steps:
-     1. Get page directory and SPT.
+  /* Look up the SPT entry */
+  struct spt_entry* entry = spt_find(spt, upage);
+  if (entry == NULL || entry->status != PAGE_FRAME) {
+    return true; /* Nothing to write back */
+  }
 
-     2. Look up the SPT entry:
-        struct spt_entry* entry = spt_find(spt, upage);
-        if (entry == NULL || entry->status != PAGE_FRAME)
-          return true;  // Nothing to write back
+  /* Kernel page must be valid for a loaded frame */
+  ASSERT(entry->kpage != NULL);
 
-     3. Check if page is dirty:
-        if (!pagedir_is_dirty(pd, upage))
-          return true;  // Not modified, nothing to do
+  /* Check if page is dirty */
+  if (!pagedir_is_dirty(pd, upage)) {
+    return true; /* Not modified, nothing to do */
+  }
 
-     4. Calculate file offset for this page:
-        off_t page_offset = region->offset +
-                            ((upage - region->start_addr) / PGSIZE) * PGSIZE;
+  /* Calculate file offset for this page */
+  off_t page_offset = region->offset + ((uintptr_t)upage - (uintptr_t)region->start_addr);
 
-     5. Calculate bytes to write:
-        - Usually PGSIZE, but last page may be partial
-        size_t write_bytes = ...;
+  /* Calculate bytes to write: use read_bytes from SPT entry (original file data portion) */
+  size_t write_bytes = entry->read_bytes;
 
-     6. Write to file:
-        file_write_at(region->file, entry->kpage, write_bytes, page_offset);
+  /* Write to file */
+  off_t bytes_written = file_write_at(region->file, entry->kpage, write_bytes, page_offset);
+  if (bytes_written != (off_t)write_bytes) {
+    return false; /* Write failed */
+  }
 
-     7. Clear dirty bit (optional, but good practice):
-        pagedir_set_dirty(pd, upage, false);
+  /* Clear dirty bit */
+  pagedir_set_dirty(pd, upage, false);
 
-     8. Return true.
-  */
-
-  (void)region;
-  (void)upage;
-
-  return true; /* TODO: Replace with actual implementation. */
+  return true;
 }

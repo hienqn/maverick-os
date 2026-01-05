@@ -208,6 +208,7 @@ static void pcb_init(struct process* pcb, struct thread* main_thread) {
 
   /* Initialize memory-mapped files list */
   list_init(&pcb->mmap_list);
+  lock_init(&pcb->mmap_lock);
 }
 /* ═══════════════════════════════════════════════════════════════════════════
  * USERPROG INITIALIZATION

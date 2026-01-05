@@ -664,52 +664,49 @@ static void syscall_handler(struct intr_frame* f) {
      * ═══════════════════════════════════════════════════════════════════════*/
 
     case SYS_MMAP: {
-      /* TODO: Implement mmap syscall.
+      int fd = (int)args[1];
+      void* addr = (void*)args[2];
 
-         Current user library signature (src/lib/user/syscall.c):
-           mapid_t mmap(int fd, void* addr);
+      /* Basic security check: ensure address is in user space */
+      if (!is_user_vaddr(addr)) {
+        f->eax = (uint32_t)MAP_FAILED;
+        break;
+      }
 
-         Design document signature (docs/MMAP_DESIGN.md):
-           void* mmap(void* addr, size_t length, int fd, off_t offset);
+      /* Get file length for the mapping */
+      struct file* file = get_file_from_fd(fd);
+      if (file == NULL) {
+        f->eax = (uint32_t)MAP_FAILED;
+        break;
+      }
+      off_t file_size = file_length(file);
 
-         You may need to update the user library to match your chosen interface.
-
-         For the simpler interface:
-           int fd = (int)args[1];
-           void* addr = (void*)args[2];
-           // Map entire file at addr
-           f->eax = (uint32_t)mmap_create(addr, file_length, fd, 0);
-
-         For the POSIX-style interface:
-           void* addr = (void*)args[1];
-           size_t length = (size_t)args[2];
-           int fd = (int)args[3];
-           off_t offset = (off_t)args[4];
-           f->eax = (uint32_t)mmap_create(addr, length, fd, offset);
-      */
-      f->eax = (uint32_t)MAP_FAILED;
+      /* Let mmap_create handle all validation (page-alignment, file validity, etc.) */
+      void* result = mmap_create(addr, (size_t)file_size, fd, 0);
+      f->eax = (uint32_t)result;
       break;
     }
 
     case SYS_MUNMAP: {
-      /* TODO: Implement munmap syscall.
+      /* mapid_t is actually the address returned from mmap */
+      void* addr = (void*)args[1];
 
-         Current user library signature:
-           void munmap(mapid_t mapid);
+      /* Validate address is in user space */
+      if (!is_user_vaddr(addr)) {
+        f->eax = -1;
+        break;
+      }
 
-         Design document signature:
-           int munmap(void* addr, size_t length);
+      /* Find the region containing this address */
+      struct mmap_region* region = mmap_find_region(addr);
+      if (region == NULL) {
+        f->eax = -1;
+        break;
+      }
 
-         For the simpler interface (using mapid as address):
-           void* addr = (void*)args[1];
-           mmap_destroy(addr, 0);  // Length ignored, find by addr
-
-         For the POSIX-style interface:
-           void* addr = (void*)args[1];
-           size_t length = (size_t)args[2];
-           f->eax = mmap_destroy(addr, length);
-      */
-      f->eax = -1;
+      /* Unmap the region using its start address and length */
+      int result = mmap_destroy(region->start_addr, region->length);
+      f->eax = result;
       break;
     }
 

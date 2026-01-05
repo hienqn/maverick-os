@@ -22,7 +22,6 @@ const config: Config = {
 
   markdown: {
     mermaid: true,
-    onBrokenMarkdownLinks: 'warn',
   },
 
   themes: ['@docusaurus/theme-mermaid'],

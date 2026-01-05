@@ -26,8 +26,13 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'OS Concepts',
       items: [
+        'concepts/index',
         'concepts/threads-and-processes',
         'concepts/context-switching',
+        'concepts/system-calls',
+        'concepts/virtual-memory',
+        'concepts/scheduling',
+        'concepts/priority-donation',
       ],
     },
     {
@@ -35,6 +40,18 @@ const sidebars: SidebarsConfig = {
       label: 'Project Guides',
       items: [
         'projects/threads/overview',
+        'projects/userprog/overview',
+        'projects/vm/overview',
+        'projects/filesys/overview',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Deep Dives',
+      items: [
+        'deep-dives/context-switch-assembly',
+        'deep-dives/page-fault-handling',
+        'deep-dives/wal-crash-recovery',
       ],
     },
     {

@@ -14,7 +14,6 @@ const config: Config = {
   projectName: 'maverick-os',
 
   onBrokenLinks: 'warn',
-  onBrokenMarkdownLinks: 'warn',
 
   i18n: {
     defaultLocale: 'en',
@@ -23,6 +22,7 @@ const config: Config = {
 
   markdown: {
     mermaid: true,
+    onBrokenMarkdownLinks: 'warn',
   },
 
   themes: ['@docusaurus/theme-mermaid'],

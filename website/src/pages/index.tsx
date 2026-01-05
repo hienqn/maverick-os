@@ -14,7 +14,7 @@ export default function Home(): JSX.Element {
           <p className={styles.subtitle}>
             MaverickOS is an educational operating system extended from UC Berkeley's CS162 course.
             Beyond the original projects, I've added features like a write-ahead logging (WAL) system,
-            virtual memory with demand paging, and extended POSIX system calls.
+            virtual memory with demand paging, extended POSIX system calls and many other features.
             This blog captures key OS concepts and maps them directly to concrete implementations,
             aiming to bridge the gap between lecture theory and real code.
           </p>

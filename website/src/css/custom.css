@@ -21,7 +21,6 @@
   /* Clean backgrounds */
   --ifm-background-color: #ffffff;
   --ifm-navbar-background-color: #ffffff;
-  --ifm-footer-background-color: #1a1a1a;
 
   /* Subtle borders */
   --ifm-hr-border-color: #e5e5e5;
@@ -40,13 +39,17 @@
 
   --ifm-background-color: #0d0d0d;
   --ifm-navbar-background-color: #0d0d0d;
-  --ifm-footer-background-color: #000000;
 }
 
-/* Navbar */
+/* Navbar - borderless */
 .navbar {
   box-shadow: none;
-  border-bottom: 1px solid var(--ifm-hr-border-color);
+  border-bottom: none;
+  background: transparent;
+}
+
+[data-theme='dark'] .navbar {
+  background: transparent;
 }
 
 .navbar__title {
@@ -54,14 +57,14 @@
   letter-spacing: -0.01em;
 }
 
-/* Footer */
-.footer {
-  border-top: 1px solid #333;
+.navbar__link {
+  font-weight: 400;
 }
 
-.footer--dark {
-  background: var(--ifm-footer-background-color);
+.navbar__link--active {
+  font-weight: 500;
 }
+
 
 /* Links */
 a {

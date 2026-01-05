@@ -77,26 +77,6 @@ const config: Config = {
         },
       ],
     },
-    footer: {
-      style: 'dark',
-      links: [
-        {
-          title: 'Blog',
-          items: [
-            {label: 'All Posts', to: '/blog'},
-            {label: 'OS Concepts', to: '/blog/tags/os-concepts'},
-            {label: 'Systems', to: '/blog/tags/systems'},
-          ],
-        },
-        {
-          title: 'More',
-          items: [
-            {label: 'GitHub', href: 'https://github.com/hienqn/maverick-os'},
-          ],
-        },
-      ],
-      copyright: `Copyright © ${new Date().getFullYear()} MaverickOS`,
-    },
     prism: {
       theme: prismThemes.github,
       darkTheme: prismThemes.dracula,

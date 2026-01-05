@@ -70,6 +70,7 @@ vm_SRC  = vm/vm.c			# VM initialization.
 vm_SRC += vm/page.c			# Supplemental page table.
 vm_SRC += vm/frame.c			# Frame table.
 vm_SRC += vm/swap.c			# Swap space.
+vm_SRC += vm/mmap.c			# Memory-mapped files.
 
 # Filesystem code.
 filesys_SRC  = filesys/filesys.c	# Filesystem core.

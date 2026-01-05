@@ -67,6 +67,7 @@
 #include "devices/shutdown.h"
 #include "filesys/filesys.h"
 #include "filesys/wal.h"
+#include "vm/mmap.h"
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * FORWARD DECLARATIONS
@@ -655,6 +656,60 @@ static void syscall_handler(struct intr_frame* f) {
         sema_up(k_sema);
         f->eax = true;
       }
+      break;
+    }
+
+      /* ═══════════════════════════════════════════════════════════════════════
+     * MEMORY-MAPPED FILES
+     * ═══════════════════════════════════════════════════════════════════════*/
+
+    case SYS_MMAP: {
+      /* TODO: Implement mmap syscall.
+
+         Current user library signature (src/lib/user/syscall.c):
+           mapid_t mmap(int fd, void* addr);
+
+         Design document signature (docs/MMAP_DESIGN.md):
+           void* mmap(void* addr, size_t length, int fd, off_t offset);
+
+         You may need to update the user library to match your chosen interface.
+
+         For the simpler interface:
+           int fd = (int)args[1];
+           void* addr = (void*)args[2];
+           // Map entire file at addr
+           f->eax = (uint32_t)mmap_create(addr, file_length, fd, 0);
+
+         For the POSIX-style interface:
+           void* addr = (void*)args[1];
+           size_t length = (size_t)args[2];
+           int fd = (int)args[3];
+           off_t offset = (off_t)args[4];
+           f->eax = (uint32_t)mmap_create(addr, length, fd, offset);
+      */
+      f->eax = (uint32_t)MAP_FAILED;
+      break;
+    }
+
+    case SYS_MUNMAP: {
+      /* TODO: Implement munmap syscall.
+
+         Current user library signature:
+           void munmap(mapid_t mapid);
+
+         Design document signature:
+           int munmap(void* addr, size_t length);
+
+         For the simpler interface (using mapid as address):
+           void* addr = (void*)args[1];
+           mmap_destroy(addr, 0);  // Length ignored, find by addr
+
+         For the POSIX-style interface:
+           void* addr = (void*)args[1];
+           size_t length = (size_t)args[2];
+           f->eax = mmap_destroy(addr, length);
+      */
+      f->eax = -1;
       break;
     }
 

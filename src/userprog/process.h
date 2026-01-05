@@ -231,6 +231,14 @@ struct process {
    * fixed offsets from PHYS_BASE to avoid collisions.
    * ═══════════════════════════════════════════════════════════════════════*/
   bool stack_slots[MAX_THREADS]; /* true = slot in use. */
+
+  /* ═══════════════════════════════════════════════════════════════════════
+   * MEMORY-MAPPED FILES
+   * ─────────────────────────────────────────────────────────────────────────
+   * List of mmap_region structs tracking all memory-mapped files.
+   * See vm/mmap.h for details.
+   * ═══════════════════════════════════════════════════════════════════════*/
+  struct list mmap_list; /* List of mmap_region structs. */
 };
 
 /* ═══════════════════════════════════════════════════════════════════════════

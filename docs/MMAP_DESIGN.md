@@ -444,3 +444,79 @@ Tests are in `src/tests/vm/`:
 | `src/userprog/process.c` | **Modify** - Init in pcb_init, cleanup in exit |
 | `src/userprog/syscall.c` | **Modify** - Add syscall handlers |
 | `src/Makefile.build` | **Modify** - Add vm/mmap.c |
+
+---
+
+## Future: Address Space Integration
+
+This initial mmap implementation uses **per-process frames** (no sharing between processes). A future enhancement will add Linux-style `address_space` for shared file pages.
+
+See `docs/ADDRESS_SPACE_DESIGN.md` for the full design.
+
+### Current vs Future Architecture
+
+```
+CURRENT (Phase 1 - implement this first):
+┌──────────────┐     ┌──────────────┐
+│  Process A   │     │  Process B   │
+│  mmap(fileF) │     │  mmap(fileF) │
+└──────┬───────┘     └──────┬───────┘
+       │                    │
+       ▼                    ▼
+┌──────────────┐     ┌──────────────┐
+│  Frame A     │     │  Frame B     │   ← Separate frames (no sharing)
+│  (copy of F) │     │  (copy of F) │
+└──────────────┘     └──────────────┘
+
+FUTURE (Phase 2 - address_space):
+┌──────────────┐     ┌──────────────┐
+│  Process A   │     │  Process B   │
+│  mmap(fileF) │     │  mmap(fileF) │
+└──────┬───────┘     └──────┬───────┘
+       │                    │
+       └────────┬───────────┘
+                ▼
+       ┌────────────────┐
+       │ address_space  │
+       │   (file F)     │
+       │ ┌────────────┐ │
+       │ │ Shared     │ │   ← Single frame, shared read-only
+       │ │ Frame      │ │      COW on write
+       │ └────────────┘ │
+       └────────────────┘
+```
+
+### Preparing for Future Integration
+
+When implementing mmap now, structure your code to make future `address_space` integration easy:
+
+1. **Store `inode_sector` in `mmap_region`** (even if unused now):
+   ```c
+   struct mmap_region {
+     ...
+     block_sector_t inode_sector;  /* For future address_space lookup */
+   };
+   ```
+
+2. **Use `PAGE_FILE` status for now** - later we'll add `PAGE_MMAP_SHARED`
+
+3. **Keep page loading logic modular** - the `spt_load_page()` path for `PAGE_FILE` will later check `address_space` first
+
+4. **Track writable flag per-region** - needed for future COW:
+   ```c
+   struct mmap_region {
+     ...
+     bool writable;  /* For future COW support */
+   };
+   ```
+
+### Integration Points (for later)
+
+When adding `address_space`, you'll modify:
+
+| Location | Change |
+|----------|--------|
+| `spt_load_page()` for PAGE_FILE | Check `find_get_page()` before loading from disk |
+| `mmap_create()` | Use `PAGE_MMAP_SHARED` instead of `PAGE_FILE` |
+| `vm_handle_fault()` | Handle COW for shared pages |
+| `munmap` | Call `put_page()` instead of freeing frame directly |

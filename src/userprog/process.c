@@ -121,6 +121,7 @@
 #include "threads/vaddr.h"
 #include "vm/page.h"
 #include "vm/frame.h"
+#include "vm/mmap.h"
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * FORWARD DECLARATIONS
@@ -204,6 +205,9 @@ static void pcb_init(struct process* pcb, struct thread* main_thread) {
 
   /* Initialize supplemental page table for VM */
   spt_init(&pcb->spt);
+
+  /* Initialize memory-mapped files list */
+  list_init(&pcb->mmap_list);
 }
 /* ═══════════════════════════════════════════════════════════════════════════
  * USERPROG INITIALIZATION
@@ -698,6 +702,9 @@ void process_exit(void) {
     cond_wait(&cur->pcb->exit_cond, &cur->pcb->exit_lock);
   }
   lock_release(&cur->pcb->exit_lock);
+
+  /* Clean up memory-mapped files (must be before spt_destroy). */
+  mmap_destroy_all();
 
   /* Destroy the supplemental page table (frees all frames and swap slots). */
   spt_destroy(&cur->pcb->spt);

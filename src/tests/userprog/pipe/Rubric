@@ -2,34 +2,34 @@ Functionality of pipe system call:
 
 - Basic pipe operations
 3	pipe-simple
-3	pipe-read-write
+3	pipe-rdwr
 2	pipe-close
 3	pipe-two-pipes
 
 - Fork and pipe inheritance
 5	pipe-fork
-4	pipe-fork-reverse
-4	pipe-fork-close
-5	pipe-fork-multi
-5	pipe-fork-chain
+4	pipe-fk-rev
+4	pipe-fk-cls
+5	pipe-fk-mul
+5	pipe-fk-chn
 
 - Blocking behavior
-5	pipe-block-read
-5	pipe-block-write
+5	pipe-blk-rd
+5	pipe-blk-wr
 
 - EOF semantics
 4	pipe-eof
-4	pipe-eof-partial
+4	pipe-eof-pt
 
 - Data integrity
-3	pipe-data-small
-5	pipe-data-large
-3	pipe-data-order
-3	pipe-data-chunk
+3	pipe-dat-sm
+5	pipe-dat-lg
+3	pipe-dat-ord
+3	pipe-dat-chk
 
 - Error handling
 3	pipe-bad-fd
 3	pipe-bad-ptr
-2	pipe-double-close
-3	pipe-write-closed
+2	pipe-dbl-cls
+3	pipe-wr-cls
 3	pipe-read-only

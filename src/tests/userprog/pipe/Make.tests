@@ -3,55 +3,55 @@
 # Pipe test suite
 
 tests/userprog/pipe_TESTS = $(addprefix tests/userprog/pipe/,\
-  pipe-simple pipe-read-write pipe-close pipe-two-pipes \
-  pipe-fork pipe-fork-reverse pipe-fork-close pipe-fork-multi pipe-fork-chain \
-  pipe-block-read pipe-block-write \
-  pipe-eof pipe-eof-partial \
-  pipe-data-small pipe-data-large pipe-data-order pipe-data-chunk \
-  pipe-bad-fd pipe-bad-ptr pipe-double-close pipe-write-closed pipe-read-only)
+  pipe-simple pipe-rdwr pipe-close pipe-two-pipes \
+  pipe-fork pipe-fk-rev pipe-fk-cls pipe-fk-mul pipe-fk-chn \
+  pipe-blk-rd pipe-blk-wr \
+  pipe-eof pipe-eof-pt \
+  pipe-dat-sm pipe-dat-lg pipe-dat-ord pipe-dat-chk \
+  pipe-bad-fd pipe-bad-ptr pipe-dbl-cls pipe-wr-cls pipe-read-only)
 
 tests/userprog/pipe_PROGS = $(tests/userprog/pipe_TESTS)
 
 # Source file definitions - basic tests
 tests/userprog/pipe/pipe-simple_SRC = tests/userprog/pipe/pipe-simple.c tests/main.c
-tests/userprog/pipe/pipe-read-write_SRC = tests/userprog/pipe/pipe-read-write.c tests/main.c
+tests/userprog/pipe/pipe-rdwr_SRC = tests/userprog/pipe/pipe-rdwr.c tests/main.c
 tests/userprog/pipe/pipe-close_SRC = tests/userprog/pipe/pipe-close.c tests/main.c
 tests/userprog/pipe/pipe-two-pipes_SRC = tests/userprog/pipe/pipe-two-pipes.c tests/main.c
 
 # Source file definitions - fork tests
 tests/userprog/pipe/pipe-fork_SRC = tests/userprog/pipe/pipe-fork.c tests/main.c
-tests/userprog/pipe/pipe-fork-reverse_SRC = tests/userprog/pipe/pipe-fork-reverse.c tests/main.c
-tests/userprog/pipe/pipe-fork-close_SRC = tests/userprog/pipe/pipe-fork-close.c tests/main.c
-tests/userprog/pipe/pipe-fork-multi_SRC = tests/userprog/pipe/pipe-fork-multi.c tests/main.c
-tests/userprog/pipe/pipe-fork-chain_SRC = tests/userprog/pipe/pipe-fork-chain.c tests/main.c
+tests/userprog/pipe/pipe-fk-rev_SRC = tests/userprog/pipe/pipe-fk-rev.c tests/main.c
+tests/userprog/pipe/pipe-fk-cls_SRC = tests/userprog/pipe/pipe-fk-cls.c tests/main.c
+tests/userprog/pipe/pipe-fk-mul_SRC = tests/userprog/pipe/pipe-fk-mul.c tests/main.c
+tests/userprog/pipe/pipe-fk-chn_SRC = tests/userprog/pipe/pipe-fk-chn.c tests/main.c
 
 # Source file definitions - blocking tests
-tests/userprog/pipe/pipe-block-read_SRC = tests/userprog/pipe/pipe-block-read.c tests/main.c
-tests/userprog/pipe/pipe-block-write_SRC = tests/userprog/pipe/pipe-block-write.c tests/main.c
+tests/userprog/pipe/pipe-blk-rd_SRC = tests/userprog/pipe/pipe-blk-rd.c tests/main.c
+tests/userprog/pipe/pipe-blk-wr_SRC = tests/userprog/pipe/pipe-blk-wr.c tests/main.c
 
 # Source file definitions - EOF tests
 tests/userprog/pipe/pipe-eof_SRC = tests/userprog/pipe/pipe-eof.c tests/main.c
-tests/userprog/pipe/pipe-eof-partial_SRC = tests/userprog/pipe/pipe-eof-partial.c tests/main.c
+tests/userprog/pipe/pipe-eof-pt_SRC = tests/userprog/pipe/pipe-eof-pt.c tests/main.c
 
 # Source file definitions - data integrity tests
-tests/userprog/pipe/pipe-data-small_SRC = tests/userprog/pipe/pipe-data-small.c tests/main.c
-tests/userprog/pipe/pipe-data-large_SRC = tests/userprog/pipe/pipe-data-large.c tests/main.c
-tests/userprog/pipe/pipe-data-order_SRC = tests/userprog/pipe/pipe-data-order.c tests/main.c
-tests/userprog/pipe/pipe-data-chunk_SRC = tests/userprog/pipe/pipe-data-chunk.c tests/main.c
+tests/userprog/pipe/pipe-dat-sm_SRC = tests/userprog/pipe/pipe-dat-sm.c tests/main.c
+tests/userprog/pipe/pipe-dat-lg_SRC = tests/userprog/pipe/pipe-dat-lg.c tests/main.c
+tests/userprog/pipe/pipe-dat-ord_SRC = tests/userprog/pipe/pipe-dat-ord.c tests/main.c
+tests/userprog/pipe/pipe-dat-chk_SRC = tests/userprog/pipe/pipe-dat-chk.c tests/main.c
 
 # Source file definitions - error handling tests
 tests/userprog/pipe/pipe-bad-fd_SRC = tests/userprog/pipe/pipe-bad-fd.c tests/main.c
 tests/userprog/pipe/pipe-bad-ptr_SRC = tests/userprog/pipe/pipe-bad-ptr.c tests/main.c
-tests/userprog/pipe/pipe-double-close_SRC = tests/userprog/pipe/pipe-double-close.c tests/main.c
-tests/userprog/pipe/pipe-write-closed_SRC = tests/userprog/pipe/pipe-write-closed.c tests/main.c
+tests/userprog/pipe/pipe-dbl-cls_SRC = tests/userprog/pipe/pipe-dbl-cls.c tests/main.c
+tests/userprog/pipe/pipe-wr-cls_SRC = tests/userprog/pipe/pipe-wr-cls.c tests/main.c
 tests/userprog/pipe/pipe-read-only_SRC = tests/userprog/pipe/pipe-read-only.c tests/main.c
 
 # All programs include test library
 $(foreach prog,$(tests/userprog/pipe_PROGS),$(eval $(prog)_SRC += tests/lib.c))
 
 # Extended timeouts for blocking and large data tests
-tests/userprog/pipe/pipe-block-read.output: TIMEOUT = 120
-tests/userprog/pipe/pipe-block-write.output: TIMEOUT = 120
-tests/userprog/pipe/pipe-data-large.output: TIMEOUT = 180
-tests/userprog/pipe/pipe-fork-chain.output: TIMEOUT = 120
-tests/userprog/pipe/pipe-fork-multi.output: TIMEOUT = 120
+tests/userprog/pipe/pipe-blk-rd.output: TIMEOUT = 120
+tests/userprog/pipe/pipe-blk-wr.output: TIMEOUT = 120
+tests/userprog/pipe/pipe-dat-lg.output: TIMEOUT = 180
+tests/userprog/pipe/pipe-fk-chn.output: TIMEOUT = 120
+tests/userprog/pipe/pipe-fk-mul.output: TIMEOUT = 120

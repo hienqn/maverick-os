@@ -2,6 +2,7 @@
 use strict;
 use warnings;
 use tests::tests;
+our ($test);
 
 # The order of children reading may vary, so we use a more flexible check.
 # Each child should read one of 'A', 'B', or 'C'.
@@ -14,10 +15,10 @@ my $found_all_finished = 0;
 my @children_read;
 
 for my $line (@output) {
-  $found_begin = 1 if $line =~ /\(pipe-fork-multi\) begin/;
-  $found_end++ if $line =~ /\(pipe-fork-multi\) end/;
-  $found_all_finished = 1 if $line =~ /\(pipe-fork-multi\) all children finished/;
-  if ($line =~ /\(pipe-fork-multi\) child \d+ read: ([ABC])/) {
+  $found_begin = 1 if $line =~ /\(pipe-fk-mul\) begin/;
+  $found_end++ if $line =~ /\(pipe-fk-mul\) end/;
+  $found_all_finished = 1 if $line =~ /\(pipe-fk-mul\) all children finished/;
+  if ($line =~ /\(pipe-fk-mul\) child \d+ read: ([ABC])/) {
     push @children_read, $1;
   }
 }

@@ -2,6 +2,7 @@
 use strict;
 use warnings;
 use tests::tests;
+our ($test);
 
 # The child writes after a delay, so the order should be:
 # parent about to read -> child wrote -> parent read

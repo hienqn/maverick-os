@@ -2,6 +2,7 @@
 
 #include <syscall.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include "tests/lib.h"
 #include "tests/main.h"
@@ -88,6 +89,98 @@ void test_main(void) {
     free(ptrs[i]);
   }
   msg("freed all 20 blocks");
+
+  /* === EDGE CASES === */
+
+  /* Test malloc(0) - should return NULL or unique pointer */
+  msg("testing malloc(0)...");
+  void* zero_alloc = malloc(0);
+  /* Either NULL or valid pointer is acceptable per C standard */
+  msg("malloc(0) returned %p", zero_alloc);
+  free(zero_alloc); /* Should be safe even if NULL */
+  msg("malloc(0) handled correctly");
+
+  /* Test free(NULL) - should be a no-op */
+  msg("testing free(NULL)...");
+  free(NULL);
+  msg("free(NULL) succeeded");
+
+  /* Test realloc(NULL, n) - should behave like malloc(n) */
+  msg("testing realloc(NULL, 50)...");
+  char* realloc_null = realloc(NULL, 50);
+  if (realloc_null == NULL)
+    fail("realloc(NULL, 50) returned NULL");
+  memset(realloc_null, 'D', 50);
+  msg("realloc(NULL, n) works like malloc");
+  free(realloc_null);
+
+  /* Test realloc to smaller size */
+  msg("testing realloc shrink...");
+  char* shrink = malloc(200);
+  if (shrink == NULL)
+    fail("malloc(200) for shrink test failed");
+  memset(shrink, 'E', 200);
+  shrink = realloc(shrink, 50);
+  if (shrink == NULL)
+    fail("realloc shrink returned NULL");
+  /* Verify original data in remaining portion */
+  for (int i = 0; i < 50; i++) {
+    if (shrink[i] != 'E')
+      fail("realloc shrink corrupted data at byte %d", i);
+  }
+  msg("realloc shrink preserved data");
+  free(shrink);
+
+  /* Test realloc(ptr, 0) - should behave like free */
+  msg("testing realloc(ptr, 0)...");
+  char* realloc_zero = malloc(100);
+  if (realloc_zero == NULL)
+    fail("malloc for realloc(ptr, 0) test failed");
+  void* result = realloc(realloc_zero, 0);
+  /* Result may be NULL or valid pointer - either is acceptable */
+  msg("realloc(ptr, 0) returned %p", result);
+  /* If non-NULL was returned, free it */
+  if (result != NULL)
+    free(result);
+  msg("realloc(ptr, 0) handled correctly");
+
+  /* Test alignment - pointers should be aligned */
+  msg("testing alignment...");
+  for (int i = 0; i < 10; i++) {
+    void* p = malloc(1 + i); /* Various small sizes */
+    if (p == NULL)
+      fail("alignment test alloc %d failed", i);
+    /* Check 8-byte alignment (common minimum) */
+    if (((uintptr_t)p & 7) != 0)
+      fail("allocation not 8-byte aligned: %p", p);
+    free(p);
+  }
+  msg("all allocations properly aligned");
+
+  /* Test page-boundary allocation */
+  msg("testing page-size allocation (4096 bytes)...");
+  char* page_alloc = malloc(4096);
+  if (page_alloc == NULL)
+    fail("malloc(4096) returned NULL");
+  memset(page_alloc, 'F', 4096);
+  if (page_alloc[0] != 'F' || page_alloc[4095] != 'F')
+    fail("page-size allocation write failed");
+  msg("page-size allocation succeeded");
+  free(page_alloc);
+
+  /* Test memory reuse after free */
+  msg("testing memory reuse...");
+  void* first = malloc(64);
+  if (first == NULL)
+    fail("first alloc for reuse test failed");
+  free(first);
+  void* second = malloc(64);
+  if (second == NULL)
+    fail("second alloc for reuse test failed");
+  /* They might be the same address if free list works */
+  msg("reuse test: first=%p, second=%p", first, second);
+  free(second);
+  msg("memory reuse test completed");
 
   msg("end");
 }

@@ -24,6 +24,12 @@
 /* Minimum block size (must hold free_block pointer) */
 #define MIN_BLOCK_SIZE 16
 
+/* Alignment for all allocations (8 bytes for double, etc.) */
+#define MALLOC_ALIGNMENT 8
+
+/* Round up to alignment boundary */
+#define ALIGN_UP(x, align) (((x) + (align)-1) & ~((align)-1))
+
 /* Number of size classes: 16, 32, 64, 128, 256, 512, 1024, 2048 */
 #define NUM_SIZE_CLASSES 8
 
@@ -102,13 +108,16 @@ static struct arena* alloc_arena(int class_idx) {
   arena->magic = ARENA_MAGIC;
   arena->size_class = class_idx;
   arena->block_size = size_classes[class_idx];
-  arena->blocks_per_arena = (ARENA_SIZE - sizeof(struct arena)) / arena->block_size;
+
+  /* Ensure blocks start at aligned address */
+  size_t header_size = ALIGN_UP(sizeof(struct arena), MALLOC_ALIGNMENT);
+  arena->blocks_per_arena = (ARENA_SIZE - header_size) / arena->block_size;
   arena->free_count = arena->blocks_per_arena;
   arena->next = NULL;
 
   /* Initialize free list with all blocks */
   arena->free_list = NULL;
-  uint8_t* block_start = (uint8_t*)arena + sizeof(struct arena);
+  uint8_t* block_start = (uint8_t*)arena + header_size;
 
   for (size_t i = 0; i < arena->blocks_per_arena; i++) {
     struct free_block* block = (struct free_block*)(block_start + i * arena->block_size);

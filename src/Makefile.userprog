@@ -32,6 +32,9 @@ lib/user_SRC += lib/user/stdio_scan.c	# fscanf, sscanf
 lib/user_SRC += lib/user/stdio_pos.c	# fseek, ftell, rewind
 lib/user_SRC += lib/user/stdio_err.c	# feof, ferror, clearerr, perror
 
+# Memory allocation (uses mmap for anonymous memory)
+lib/user_SRC += lib/user/malloc.c	# malloc, free, calloc, realloc
+
 LIB_OBJ = $(patsubst %.c,%.o,$(patsubst %.S,%.o,$(lib_SRC) $(lib/user_SRC)))
 LIB_DEP = $(patsubst %.o,%.d,$(LIB_OBJ))
 LIB = lib/user/entry.o libc.a

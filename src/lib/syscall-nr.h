@@ -47,6 +47,13 @@ enum {
 
   /* Pipes. */
   SYS_PIPE, /* Create a pipe. */
+
+  /* Extended mmap with full signature. */
+  SYS_MMAP2, /* mmap2(addr, length, prot, flags, fd, offset) */
 };
+
+/* mmap flags for SYS_MMAP2. */
+#define MAP_PRIVATE 0x02   /* Changes are private (copy-on-write). */
+#define MAP_ANONYMOUS 0x20 /* Don't use a file (zero-filled pages). */
 
 #endif /* lib/syscall-nr.h */

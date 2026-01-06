@@ -64,6 +64,21 @@
     retval;                                                                                        \
   })
 
+/* Invokes syscall NUMBER, passing 6 arguments, and returns the
+   return value as an `int'. Used for mmap2. */
+#define syscall6(NUMBER, ARG0, ARG1, ARG2, ARG3, ARG4, ARG5)                                       \
+  ({                                                                                               \
+    int retval;                                                                                    \
+    asm volatile("pushl %[arg5]; pushl %[arg4]; pushl %[arg3]; "                                   \
+                 "pushl %[arg2]; pushl %[arg1]; pushl %[arg0]; "                                   \
+                 "pushl %[number]; int $0x30; addl $28, %%esp"                                     \
+                 : "=a"(retval)                                                                    \
+                 : [number] "i"(NUMBER), [arg0] "r"(ARG0), [arg1] "r"(ARG1), [arg2] "r"(ARG2),     \
+                   [arg3] "r"(ARG3), [arg4] "r"(ARG4), [arg5] "r"(ARG5)                            \
+                 : "memory");                                                                      \
+    retval;                                                                                        \
+  })
+
 int practice(int i) { return syscall1(SYS_PRACTICE, i); }
 
 void halt(void) {
@@ -105,6 +120,10 @@ void close(int fd) { syscall1(SYS_CLOSE, fd); }
 mapid_t mmap(int fd, void* addr) { return syscall2(SYS_MMAP, fd, addr); }
 
 void munmap(mapid_t mapid) { syscall1(SYS_MUNMAP, mapid); }
+
+void* mmap2(void* addr, size_t length, int prot, int flags, int fd, int offset) {
+  return (void*)syscall6(SYS_MMAP2, addr, length, prot, flags, fd, offset);
+}
 
 bool chdir(const char* dir) { return syscall1(SYS_CHDIR, dir); }
 

@@ -5,6 +5,7 @@
 #include <debug.h>
 #include <pthread.h>
 #include <stdlib.h>
+#include "../syscall-nr.h"
 
 /* Process identifier. */
 typedef int pid_t;
@@ -55,6 +56,12 @@ tid_t get_tid(void);
 /* Project 3 and optionally project 4. */
 mapid_t mmap(int fd, void* addr);
 void munmap(mapid_t);
+
+/* Extended mmap with full signature (for anonymous mappings, etc.) */
+void* mmap2(void* addr, size_t length, int prot, int flags, int fd, int offset);
+
+/* Convenience macro for anonymous mappings */
+#define mmap_anon(addr, len) mmap2((addr), (len), 0, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)
 
 /* Project 4 only. */
 bool chdir(const char* dir);

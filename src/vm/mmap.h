@@ -68,9 +68,13 @@ struct mmap_region {
   size_t length;     /* Requested length in bytes (may not be page-aligned). */
   size_t page_count; /* Number of pages: DIV_ROUND_UP(length, PGSIZE). */
 
-  /* File backing */
+  /* File backing (NULL for anonymous mappings) */
   struct file* file; /* Private file handle (from file_reopen). */
   off_t offset;      /* Starting offset within the file. */
+
+  /* Flags */
+  int flags;         /* MAP_ANONYMOUS, MAP_PRIVATE, etc. */
+  bool is_anonymous; /* True if no file backing (MAP_ANONYMOUS). */
 
   /* Metadata */
   block_sector_t inode_sector; /* Inode sector (for future page sharing). */
@@ -105,6 +109,19 @@ struct mmap_region {
  *   - address range overlaps existing mappings or reserved regions (stack)
  */
 void* mmap_create(void* addr, size_t length, int fd, off_t offset);
+
+/* Create an anonymous (non-file-backed) memory mapping.
+ *
+ * Maps zero-filled pages into the process's virtual address space.
+ * Pages are allocated lazily on first access (page fault).
+ *
+ * @param addr    Hint address (NULL to let kernel choose, or page-aligned).
+ * @param length  Bytes to map (rounded up to page boundary internally).
+ * @param flags   Mapping flags (MAP_PRIVATE | MAP_ANONYMOUS).
+ *
+ * @return The mapped address on success, MAP_FAILED on error.
+ */
+void* mmap_create_anon(void* addr, size_t length, int flags);
 
 /* Remove a memory mapping.
  *

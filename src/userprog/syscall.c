@@ -110,9 +110,9 @@ static int read_from_input(char* buffer, unsigned size) {
  * Common patterns for file descriptor validation and access.
  * ═══════════════════════════════════════════════════════════════════════════*/
 
-/* Validates that FD is a valid file descriptor index (not stdin/stdout).
+/* Validates that FD is a valid file descriptor index.
    Returns true if valid, false otherwise. */
-static bool is_valid_fd(int fd) { return fd >= 2 && fd < MAX_FILE_DESCRIPTOR; }
+static bool is_valid_fd(int fd) { return fd >= 0 && fd < MAX_FILE_DESCRIPTOR; }
 
 /* Gets the fd_entry for the given FD, or NULL if invalid.
    Does NOT check the entry type - caller must do that. */
@@ -260,17 +260,18 @@ static void syscall_handler(struct intr_frame* f) {
     case SYS_CLOSE: {
       int fd = args[1];
 
-      /* Allow closing stdin/stdout (no-op) but validate range */
-      if (fd < 0 || fd >= MAX_FILE_DESCRIPTOR) {
+      /* Validate fd range */
+      if (!is_valid_fd(fd)) {
         f->eax = -1;
         break;
       }
 
-      struct fd_entry* entry = get_fd_entry(fd);
-      if (entry == NULL)
-        break;
+      struct fd_entry* entry = &thread_current()->pcb->fd_table[fd];
 
-      if (entry->type == FD_FILE && entry->file != NULL) {
+      if (entry->type == FD_CONSOLE) {
+        /* Allow closing console fds - mark as unused */
+        entry->type = FD_NONE;
+      } else if (entry->type == FD_FILE && entry->file != NULL) {
         file_close(entry->file);
         entry->type = FD_NONE;
         entry->file = NULL;
@@ -297,34 +298,41 @@ static void syscall_handler(struct intr_frame* f) {
         break;
       }
 
-      if (fd == STDIN_FILENO) {
-        f->eax = read_from_input(buffer, size);
+      /* Validate fd and get entry from fd_table */
+      if (!is_valid_fd(fd)) {
+        f->eax = -1;
         break;
       }
-      if (fd == STDOUT_FILENO) {
-        f->eax = -1;
+      struct fd_entry* entry = &thread_current()->pcb->fd_table[fd];
+
+      if (entry->type == FD_CONSOLE) {
+        if (entry->cmode == CONSOLE_READ) {
+          f->eax = read_from_input(buffer, size);
+        } else {
+          f->eax = -1; /* Can't read from stdout/stderr */
+        }
         break;
       }
 
-      struct file* file = get_file_from_fd(fd);
-      if (file == NULL) {
-        f->eax = -1;
+      if (entry->type == FD_FILE && entry->file != NULL) {
+        /* Read into kernel buffer first, then copy to user buffer.
+           This ensures we don't hold filesystem locks if user buffer is bad. */
+        char* kbuf = malloc(size);
+        if (kbuf == NULL) {
+          f->eax = -1;
+          break;
+        }
+        int bytes_read = file_read(entry->file, kbuf, size);
+        if (bytes_read > 0) {
+          memcpy(buffer, kbuf, bytes_read); /* May fault on bad user ptr - no locks held */
+        }
+        free(kbuf);
+        f->eax = bytes_read;
         break;
       }
 
-      /* Read into kernel buffer first, then copy to user buffer.
-         This ensures we don't hold filesystem locks if user buffer is bad. */
-      char* kbuf = malloc(size);
-      if (kbuf == NULL) {
-        f->eax = -1;
-        break;
-      }
-      int bytes_read = file_read(file, kbuf, size);
-      if (bytes_read > 0) {
-        memcpy(buffer, kbuf, bytes_read); /* May fault on bad user ptr - no locks held */
-      }
-      free(kbuf);
-      f->eax = bytes_read;
+      /* FD_NONE, FD_DIR, or invalid entry */
+      f->eax = -1;
       break;
     }
     case SYS_WRITE: {
@@ -343,33 +351,40 @@ static void syscall_handler(struct intr_frame* f) {
         break;
       }
 
-      if (fd == STDIN_FILENO || fd < 0 || fd >= MAX_FILE_DESCRIPTOR) {
+      /* Validate fd and get entry from fd_table */
+      if (!is_valid_fd(fd)) {
         f->eax = -1;
         break;
       }
-      if (fd == STDOUT_FILENO) {
-        putbuf(buffer, size);
-        f->eax = size;
+      struct fd_entry* entry = &thread_current()->pcb->fd_table[fd];
+
+      if (entry->type == FD_CONSOLE) {
+        if (entry->cmode == CONSOLE_WRITE) {
+          putbuf(buffer, size);
+          f->eax = size;
+        } else {
+          f->eax = -1; /* Can't write to stdin */
+        }
         break;
       }
 
-      struct file* file = get_file_from_fd(fd);
-      if (file == NULL) {
-        f->eax = -1;
+      if (entry->type == FD_FILE && entry->file != NULL) {
+        /* Copy user buffer to kernel buffer first.
+           This ensures we don't hold filesystem locks if user buffer is bad. */
+        char* kbuf = malloc(size);
+        if (kbuf == NULL) {
+          f->eax = -1;
+          break;
+        }
+        memcpy(kbuf, buffer, size); /* May fault on bad user ptr - no locks held */
+        int bytes_written = file_write(entry->file, kbuf, size);
+        free(kbuf);
+        f->eax = bytes_written;
         break;
       }
 
-      /* Copy user buffer to kernel buffer first.
-         This ensures we don't hold filesystem locks if user buffer is bad. */
-      char* kbuf = malloc(size);
-      if (kbuf == NULL) {
-        f->eax = -1;
-        break;
-      }
-      memcpy(kbuf, buffer, size); /* May fault on bad user ptr - no locks held */
-      int bytes_written = file_write(file, kbuf, size);
-      free(kbuf);
-      f->eax = bytes_written;
+      /* FD_NONE, FD_DIR, or invalid entry */
+      f->eax = -1;
       break;
     }
     case SYS_SEEK: {
@@ -707,6 +722,34 @@ static void syscall_handler(struct intr_frame* f) {
       /* Unmap the region using its start address and length */
       int result = mmap_destroy(region->start_addr, region->length);
       f->eax = result;
+      break;
+    }
+
+    case SYS_MMAP2: {
+      /* Extended mmap: mmap2(addr, length, prot, flags, fd, offset) */
+      void* addr = (void*)args[1];
+      size_t length = (size_t)args[2];
+      int prot = (int)args[3];
+      int flags = (int)args[4];
+      int fd = (int)args[5];
+      off_t offset = (off_t)args[6];
+      (void)prot; /* Currently unused, for future PROT_READ/WRITE support */
+
+      /* Validate user address if provided */
+      if (addr != NULL && !is_user_vaddr(addr)) {
+        f->eax = (uint32_t)MAP_FAILED;
+        break;
+      }
+
+      void* result;
+      if (flags & MAP_ANONYMOUS) {
+        /* Anonymous mapping - no file backing */
+        result = mmap_create_anon(addr, length, flags);
+      } else {
+        /* File-backed mapping */
+        result = mmap_create(addr, length, fd, offset);
+      }
+      f->eax = (uint32_t)result;
       break;
     }
 

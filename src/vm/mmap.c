@@ -4,6 +4,7 @@
 #include <string.h>
 #include "filesys/file.h"
 #include "filesys/inode.h"
+#include "lib/syscall-nr.h"
 #include "threads/malloc.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
@@ -50,6 +51,11 @@ static uint32_t* get_pagedir(void) {
 static struct mmap_region* mmap_find_region_locked(void* addr);
 static bool mmap_range_available(void* addr, size_t length);
 static bool mmap_writeback_page(struct mmap_region* region, void* upage);
+static void* find_free_address(size_t length);
+
+/* Base address for mmap allocations when addr hint is NULL.
+   Start above typical code/data segments but below stack. */
+#define MMAP_BASE ((void*)0x40000000)
 
 /* Clean up all pages in a region: writeback dirty pages, free frames, remove SPT entries.
    Does NOT free the region struct or close the file - caller handles that. */
@@ -66,7 +72,8 @@ static void mmap_cleanup_pages(struct mmap_region* region) {
     }
 
     if (entry->status == PAGE_FRAME) {
-      if (pagedir_is_dirty(pd, upage)) {
+      /* Only writeback file-backed pages, not anonymous */
+      if (!region->is_anonymous && pagedir_is_dirty(pd, upage)) {
         mmap_writeback_page(region, upage);
       }
       frame_free(entry->kpage);
@@ -171,6 +178,8 @@ void* mmap_create(void* addr, size_t length, int fd, off_t offset) {
   region->page_count = page_count;
   region->file = map_file;
   region->offset = offset;
+  region->flags = 0;
+  region->is_anonymous = false;
   /* TODO: inode_sector stored for potential future use (e.g., sharing detection) */
   region->inode_sector = inode_get_inumber(file_get_inode(map_file));
   region->writable = true;
@@ -214,6 +223,110 @@ void* mmap_create(void* addr, size_t length, int fd, off_t offset) {
   return addr;
 }
 
+/* Find a free address range of the given length.
+   NOTE: Caller must hold mmap_lock. */
+static void* find_free_address(size_t length) {
+  /* Search from MMAP_BASE upward, stopping before the stack region */
+  size_t max_stack_size = MAX_STACK_PAGES * PGSIZE;
+  uint8_t* stack_start = (uint8_t*)PHYS_BASE - max_stack_size;
+  uint8_t* addr = (uint8_t*)MMAP_BASE;
+
+  /* Round up length to page boundary */
+  length = ROUND_UP(length, PGSIZE);
+
+  while (addr + length <= stack_start) {
+    if (mmap_range_available(addr, length)) {
+      return addr;
+    }
+    /* Move to next page */
+    addr += PGSIZE;
+  }
+
+  return NULL; /* No free range found */
+}
+
+void* mmap_create_anon(void* addr, size_t length, int flags) {
+  /* Validate length */
+  if (length == 0) {
+    return MAP_FAILED;
+  }
+
+  /* If addr is provided, it must be page-aligned */
+  if (addr != NULL && pg_ofs(addr) != 0) {
+    return MAP_FAILED;
+  }
+
+  /* Calculate page count */
+  size_t page_count = DIV_ROUND_UP(length, PGSIZE);
+
+  /* Acquire lock to protect mmap_list and address space */
+  struct lock* mmap_lock = get_mmap_lock();
+  lock_acquire(mmap_lock);
+
+  /* Find address if not specified */
+  if (addr == NULL) {
+    addr = find_free_address(page_count * PGSIZE);
+    if (addr == NULL) {
+      lock_release(mmap_lock);
+      return MAP_FAILED;
+    }
+  } else {
+    /* Check that provided address range is available */
+    if (!mmap_range_available(addr, page_count * PGSIZE)) {
+      lock_release(mmap_lock);
+      return MAP_FAILED;
+    }
+  }
+
+  /* Allocate mmap_region */
+  struct mmap_region* region = malloc(sizeof(struct mmap_region));
+  if (region == NULL) {
+    lock_release(mmap_lock);
+    return MAP_FAILED;
+  }
+
+  /* Fill in all fields */
+  region->start_addr = addr;
+  region->length = length;
+  region->page_count = page_count;
+  region->file = NULL;
+  region->offset = 0;
+  region->flags = flags;
+  region->is_anonymous = true;
+  region->inode_sector = 0;
+  region->writable = true;
+
+  /* Create SPT entries for each page (zero-filled on demand) */
+  struct spt* spt = get_spt();
+
+  for (size_t i = 0; i < page_count; i++) {
+    void* upage = (uint8_t*)addr + i * PGSIZE;
+
+    if (!spt_create_zero_page(spt, upage, true)) {
+      /* Cleanup on failure: remove already-created entries */
+      for (size_t j = 0; j < i; j++) {
+        void* cleanup_page = (uint8_t*)addr + j * PGSIZE;
+        spt_remove(spt, cleanup_page);
+      }
+      free(region);
+      lock_release(mmap_lock);
+      return MAP_FAILED;
+    }
+    /* Mark this as an mmap page for consistent handling */
+    struct spt_entry* entry = spt_find(spt, upage);
+    if (entry != NULL) {
+      entry->is_mmap = true;
+    }
+  }
+
+  /* Add region to mmap_list */
+  list_push_back(get_mmap_list(), &region->elem);
+
+  lock_release(mmap_lock);
+
+  return addr;
+}
+
 int mmap_destroy(void* addr, size_t length) {
   /* Acquire lock to protect mmap_list */
   struct lock* mmap_lock = get_mmap_lock();
@@ -232,9 +345,11 @@ int mmap_destroy(void* addr, size_t length) {
     return -1;
   }
 
-  /* Clean up pages, close file, remove from list, free region */
+  /* Clean up pages, close file (if any), remove from list, free region */
   mmap_cleanup_pages(region);
-  file_close(region->file);
+  if (!region->is_anonymous && region->file != NULL) {
+    file_close(region->file);
+  }
   list_remove(&region->elem);
   lock_release(mmap_lock);
   free(region);
@@ -253,7 +368,10 @@ void mmap_destroy_all(void) {
     struct mmap_region* region = list_entry(e, struct mmap_region, elem);
 
     mmap_cleanup_pages(region);
-    file_close(region->file);
+    /* Only close file for file-backed mappings */
+    if (!region->is_anonymous && region->file != NULL) {
+      file_close(region->file);
+    }
     free(region);
   }
 

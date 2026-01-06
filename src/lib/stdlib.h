@@ -5,6 +5,10 @@
 
 /* Standard functions. */
 int atoi(const char*);
+void* malloc(size_t size);
+void* calloc(size_t nmemb, size_t size);
+void* realloc(void* ptr, size_t size);
+void free(void* ptr);
 void qsort(void* array, size_t cnt, size_t size, int (*compare)(const void*, const void*));
 void* bsearch(const void* key, const void* array, size_t cnt, size_t size,
               int (*compare)(const void*, const void*));

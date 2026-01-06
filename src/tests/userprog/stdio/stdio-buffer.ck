@@ -10,4 +10,6 @@ check_expected ([<<'EOF']);
 (stdio-buffer) data visible after fflush
 (stdio-buffer) buffer tests passed
 (stdio-buffer) end
+stdio-buffer: exit(0)
 EOF
+pass;

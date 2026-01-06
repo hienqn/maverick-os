@@ -12,4 +12,6 @@ fputs output
 X
 (stdio-stdout) stdout tests passed
 (stdio-stdout) end
+stdio-stdout: exit(0)
 EOF
+pass;

@@ -17,4 +17,6 @@ check_expected ([<<'EOF']);
 (stdio-ungetc) fgetc returns pushed 'Z'
 (stdio-ungetc) ungetc tests passed
 (stdio-ungetc) end
+stdio-ungetc: exit(0)
 EOF
+pass;

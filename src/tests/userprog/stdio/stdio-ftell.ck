@@ -14,4 +14,6 @@ check_expected ([<<'EOF']);
 (stdio-ftell) ftell after 3 writes is 3
 (stdio-ftell) ftell tests passed
 (stdio-ftell) end
+stdio-ftell: exit(0)
 EOF
+pass;

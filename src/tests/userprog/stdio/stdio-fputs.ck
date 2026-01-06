@@ -13,4 +13,6 @@ check_expected ([<<'EOF']);
 (stdio-fputs) second line correct
 (stdio-fputs) fputs tests passed
 (stdio-fputs) end
+stdio-fputs: exit(0)
 EOF
+pass;

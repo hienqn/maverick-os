@@ -19,4 +19,6 @@ check_expected ([<<'EOF']);
 (stdio-sscanf) sscanf no match returns 0
 (stdio-sscanf) sscanf tests passed
 (stdio-sscanf) end
+stdio-sscanf: exit(0)
 EOF
+pass;

@@ -14,4 +14,6 @@ check_expected ([<<'EOF']);
 (stdio-fclose) data was flushed before close
 (stdio-fclose) fclose tests passed
 (stdio-fclose) end
+stdio-fclose: exit(0)
 EOF
+pass;

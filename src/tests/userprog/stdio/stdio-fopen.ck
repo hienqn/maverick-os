@@ -14,4 +14,6 @@ check_expected ([<<'EOF']);
 (stdio-fopen) fileno returns valid fd
 (stdio-fopen) fopen tests passed
 (stdio-fopen) end
+stdio-fopen: exit(0)
 EOF
+pass;

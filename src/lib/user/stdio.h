@@ -1,6 +1,10 @@
 #ifndef __LIB_USER_STDIO_H
 #define __LIB_USER_STDIO_H
 
+#include <debug.h>
+#include <stdarg.h>
+#include <stddef.h>
+
 /* Handle-based printf (existing) */
 int hprintf(int, const char*, ...) PRINTF_FORMAT(2, 3);
 int vhprintf(int, const char*, va_list) PRINTF_FORMAT(2, 0);

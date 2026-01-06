@@ -14,4 +14,6 @@ check_expected ([<<'EOF']);
 (stdio-fprintf) width/padding correct
 (stdio-fprintf) fprintf tests passed
 (stdio-fprintf) end
+stdio-fprintf: exit(0)
 EOF
+pass;

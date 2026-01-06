@@ -8,4 +8,6 @@ check_expected ([<<'EOF']);
 (stdio-stdin) stdin fd is 0
 (stdio-stdin) stdin tests passed
 (stdio-stdin) end
+stdio-stdin: exit(0)
 EOF
+pass;

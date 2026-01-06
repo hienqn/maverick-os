@@ -5,188 +5,541 @@
 #include <limits.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 
-/* Internal: Read an integer from stream.
-   base: 0 = auto-detect, 8/10/16 = specific base
-   Returns true if at least one digit was read. */
-static bool scan_int(FILE* stream, int base, bool is_unsigned, int width, bool suppress,
-                     va_list* ap) {
-  /* TODO:
-     1. Skip leading whitespace (call fgetc, use isspace)
-     2. Handle optional sign (+/-)
-     3. If base == 0, detect from prefix:
-        - "0x" or "0X" -> base 16
-        - "0" -> base 8
-        - otherwise -> base 10
-     4. Read digits up to width (or until non-digit):
-        - For base 16: 0-9, a-f, A-F
-        - For base 10: 0-9
-        - For base 8: 0-7
-        - Accumulate value: value = value * base + digit
-     5. Push back last non-digit character with ungetc
-     6. If suppress is false, store result via va_arg:
-        - Handle length modifiers (h, hh, l, ll)
-     7. Return true if any digits were read */
-
-  (void)stream;
-  (void)base;
-  (void)is_unsigned;
-  (void)width;
-  (void)suppress;
-  (void)ap;
-  return false;
+/* Helper: Convert hex digit to value (0-15), or -1 if not hex digit. */
+static int hex_digit(int c) {
+  if (c >= '0' && c <= '9')
+    return c - '0';
+  if (c >= 'a' && c <= 'f')
+    return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F')
+    return c - 'A' + 10;
+  return -1;
 }
 
-/* Internal: Read a string from stream. */
-static bool scan_string(FILE* stream, int width, bool suppress, va_list* ap) {
-  /* TODO:
-     1. Skip leading whitespace
-     2. Read non-whitespace characters up to width
-     3. If not suppressed, store in char* from va_arg
-     4. Null-terminate the string
-     5. Push back terminating whitespace
-     6. Return true if any chars were read */
-
-  (void)stream;
-  (void)width;
-  (void)suppress;
-  (void)ap;
-  return false;
-}
-
-/* Internal: Read characters from stream. */
-static bool scan_chars(FILE* stream, int width, bool suppress, va_list* ap) {
-  /* TODO:
-     1. If width == 0, default to 1
-     2. Read exactly 'width' characters (no whitespace skip!)
-     3. If not suppressed, store in char* from va_arg
-     4. Return true if all chars were read */
-
-  (void)stream;
-  (void)width;
-  (void)suppress;
-  (void)ap;
-  return false;
-}
-
-/* Internal: Read characters matching a scanset [abc] or [^abc]. */
-static bool scan_scanset(FILE* stream, const char** fmt, int width, bool suppress, va_list* ap) {
-  /* TODO:
-     1. Parse the scanset from format string:
-        - [abc] matches a, b, or c
-        - [^abc] matches anything except a, b, c
-        - [] starts with ] means ] is in set
-        - Ranges like [a-z] are optional to support
-     2. Read characters that match (or don't match if negated)
-     3. Store in char* if not suppressed
-     4. Null-terminate
-     5. Update *fmt to point past the closing ]
-     6. Return true if any chars were read */
-
-  (void)stream;
-  (void)fmt;
-  (void)width;
-  (void)suppress;
-  (void)ap;
-  return false;
-}
+/* Helper: Check if character is octal digit. */
+static bool is_octal(int c) { return c >= '0' && c <= '7'; }
 
 /* Core scanf implementation for FILE streams. */
 int vfscanf(FILE* stream, const char* format, va_list ap) {
-  /* TODO:
-     1. Initialize: matched = 0, chars_read = 0
-     2. Loop through format string:
+  int matched = 0;
+  int c;
 
-        a. If whitespace in format:
-           - Skip whitespace in input
-           - Advance format past whitespace
+  while (*format != '\0') {
+    /* Whitespace in format: skip whitespace in input */
+    if (isspace((unsigned char)*format)) {
+      while (isspace((unsigned char)*format))
+        format++;
+      /* Skip whitespace in input */
+      while ((c = fgetc(stream)) != EOF && isspace(c))
+        ;
+      if (c != EOF)
+        ungetc(c, stream);
+      continue;
+    }
 
-        b. If literal char (not '%'):
-           - Read char from stream
-           - If doesn't match, push back and break
-           - Advance format
+    /* Literal character (not %) */
+    if (*format != '%') {
+      c = fgetc(stream);
+      if (c == EOF || c != *format) {
+        if (c != EOF)
+          ungetc(c, stream);
+        break;
+      }
+      format++;
+      continue;
+    }
 
-        c. If '%':
-           - Advance past '%'
-           - If '%%', match literal '%' in input
-           - Parse optional '*' (suppress)
-           - Parse optional width (digits)
-           - Parse optional length (h, hh, l, ll)
-           - Parse conversion specifier:
+    /* Format specifier starting with % */
+    format++; /* Skip '%' */
 
-             'd': signed decimal
-             'i': integer with auto-base
-             'u': unsigned decimal
-             'o': octal
-             'x'/'X': hexadecimal
-             's': string
-             'c': character(s)
-             '[': scanset
-             'n': store chars consumed (don't increment matched)
-             '%': literal percent
+    /* Check for %% */
+    if (*format == '%') {
+      c = fgetc(stream);
+      if (c != '%') {
+        if (c != EOF)
+          ungetc(c, stream);
+        break;
+      }
+      format++;
+      continue;
+    }
 
-           - If conversion fails and wasn't 'n', break
-           - If not suppressed, increment matched
+    /* Parse optional suppression '*' */
+    bool suppress = false;
+    if (*format == '*') {
+      suppress = true;
+      format++;
+    }
 
-     3. Return matched, or EOF if error before any matches */
+    /* Parse optional width */
+    int width = 0;
+    while (isdigit((unsigned char)*format)) {
+      width = width * 10 + (*format - '0');
+      format++;
+    }
 
-  (void)stream;
-  (void)format;
-  (void)ap;
-  return -1; /* EOF */
+    /* Parse optional length modifier (ignored for simplicity) */
+    while (*format == 'h' || *format == 'l')
+      format++;
+
+    /* Parse conversion specifier */
+    char spec = *format++;
+    if (spec == '\0')
+      break;
+
+    switch (spec) {
+      case 'd':
+      case 'i':
+      case 'u': {
+        /* Skip leading whitespace */
+        while ((c = fgetc(stream)) != EOF && isspace(c))
+          ;
+        if (c == EOF)
+          goto done;
+
+        /* Parse sign */
+        bool negative = false;
+        if (c == '-') {
+          negative = true;
+          c = fgetc(stream);
+        } else if (c == '+') {
+          c = fgetc(stream);
+        }
+
+        if (c == EOF || !isdigit(c)) {
+          if (c != EOF)
+            ungetc(c, stream);
+          goto done;
+        }
+
+        /* Parse digits */
+        unsigned long value = 0;
+        int digits = 0;
+        while (c != EOF && isdigit(c)) {
+          value = value * 10 + (c - '0');
+          digits++;
+          if (width > 0 && digits >= width)
+            break;
+          c = fgetc(stream);
+        }
+        if (c != EOF && (width == 0 || digits < width))
+          ungetc(c, stream);
+
+        if (!suppress) {
+          int* p = va_arg(ap, int*);
+          *p = negative ? -(int)value : (int)value;
+          matched++;
+        }
+        break;
+      }
+
+      case 'x':
+      case 'X': {
+        /* Skip leading whitespace */
+        while ((c = fgetc(stream)) != EOF && isspace(c))
+          ;
+        if (c == EOF)
+          goto done;
+
+        /* Skip optional 0x prefix */
+        if (c == '0') {
+          int next = fgetc(stream);
+          if (next == 'x' || next == 'X') {
+            c = fgetc(stream);
+          } else {
+            if (next != EOF)
+              ungetc(next, stream);
+          }
+        }
+
+        if (c == EOF || hex_digit(c) < 0) {
+          if (c != EOF)
+            ungetc(c, stream);
+          goto done;
+        }
+
+        /* Parse hex digits */
+        unsigned long value = 0;
+        int digits = 0;
+        while (c != EOF && hex_digit(c) >= 0) {
+          value = value * 16 + hex_digit(c);
+          digits++;
+          if (width > 0 && digits >= width)
+            break;
+          c = fgetc(stream);
+        }
+        if (c != EOF && (width == 0 || digits < width))
+          ungetc(c, stream);
+
+        if (!suppress) {
+          unsigned* p = va_arg(ap, unsigned*);
+          *p = (unsigned)value;
+          matched++;
+        }
+        break;
+      }
+
+      case 'o': {
+        /* Skip leading whitespace */
+        while ((c = fgetc(stream)) != EOF && isspace(c))
+          ;
+        if (c == EOF)
+          goto done;
+
+        if (!is_octal(c)) {
+          ungetc(c, stream);
+          goto done;
+        }
+
+        /* Parse octal digits */
+        unsigned long value = 0;
+        int digits = 0;
+        while (c != EOF && is_octal(c)) {
+          value = value * 8 + (c - '0');
+          digits++;
+          if (width > 0 && digits >= width)
+            break;
+          c = fgetc(stream);
+        }
+        if (c != EOF && (width == 0 || digits < width))
+          ungetc(c, stream);
+
+        if (!suppress) {
+          unsigned* p = va_arg(ap, unsigned*);
+          *p = (unsigned)value;
+          matched++;
+        }
+        break;
+      }
+
+      case 's': {
+        /* Skip leading whitespace */
+        while ((c = fgetc(stream)) != EOF && isspace(c))
+          ;
+        if (c == EOF)
+          goto done;
+
+        char* dest = suppress ? NULL : va_arg(ap, char*);
+        int chars = 0;
+
+        while (c != EOF && !isspace(c)) {
+          if (!suppress)
+            *dest++ = (char)c;
+          chars++;
+          if (width > 0 && chars >= width)
+            break;
+          c = fgetc(stream);
+        }
+        if (c != EOF && (width == 0 || chars < width))
+          ungetc(c, stream);
+
+        if (chars == 0)
+          goto done;
+
+        if (!suppress) {
+          *dest = '\0';
+          matched++;
+        }
+        break;
+      }
+
+      case 'c': {
+        /* %c does NOT skip whitespace unless preceded by space in format */
+        int count = (width > 0) ? width : 1;
+        char* dest = suppress ? NULL : va_arg(ap, char*);
+
+        for (int i = 0; i < count; i++) {
+          c = fgetc(stream);
+          if (c == EOF) {
+            if (i == 0)
+              goto done;
+            break;
+          }
+          if (!suppress)
+            *dest++ = (char)c;
+        }
+        if (!suppress)
+          matched++;
+        break;
+      }
+
+      case 'n': {
+        /* %n doesn't consume input or count toward matches */
+        /* Not implemented - would need to track chars consumed */
+        if (!suppress) {
+          int* p = va_arg(ap, int*);
+          *p = 0; /* Placeholder */
+        }
+        break;
+      }
+
+      default:
+        /* Unknown specifier, stop parsing */
+        goto done;
+    }
+  }
+
+done:
+  return (matched == 0 && feof(stream)) ? EOF : matched;
 }
 
 /* Formatted input from stream (variadic). */
 int fscanf(FILE* stream, const char* format, ...) {
-  /* TODO:
-     1. va_start(ap, format)
-     2. Call vfscanf(stream, format, ap)
-     3. va_end(ap)
-     4. Return result */
-
-  (void)stream;
-  (void)format;
-  return -1;
+  va_list ap;
+  va_start(ap, format);
+  int result = vfscanf(stream, format, ap);
+  va_end(ap);
+  return result;
 }
 
 /* Formatted input from stdin. */
 int scanf(const char* format, ...) {
-  /* TODO: Same as fscanf but use stdin */
-
-  (void)format;
-  return -1;
+  va_list ap;
+  va_start(ap, format);
+  int result = vfscanf(stdin, format, ap);
+  va_end(ap);
+  return result;
 }
 
-/* Internal: String stream for sscanf. */
-struct string_stream {
-  const char* str; /* Current position in string */
-  const char* end; /* End of string (or NULL for NUL-terminated) */
+/* String stream for sscanf */
+struct string_file {
+  const char* ptr; /* Current position */
+  const char* end; /* End of string */
+  int ungetc_char; /* Pushed back char, or -1 */
 };
 
-/* Formatted input from string. */
+/* Get character from string stream. */
+static int sgetc(struct string_file* sf) {
+  if (sf->ungetc_char >= 0) {
+    int c = sf->ungetc_char;
+    sf->ungetc_char = -1;
+    return c;
+  }
+  if (sf->ptr >= sf->end)
+    return EOF;
+  return (unsigned char)*sf->ptr++;
+}
+
+/* Push back character to string stream. */
+static void sungetc(int c, struct string_file* sf) {
+  if (c != EOF)
+    sf->ungetc_char = c;
+}
+
+/* Core sscanf implementation. */
 int vsscanf(const char* str, const char* format, va_list ap) {
-  /* TODO:
-     Option 1: Create a fake FILE that reads from string
-     Option 2: Duplicate vfscanf logic with string source
+  struct string_file sf = {.ptr = str, .end = str + strlen(str), .ungetc_char = -1};
 
-     For simplicity, consider making a small wrapper that
-     provides fgetc-like behavior on a string. */
+  int matched = 0;
+  int c;
 
-  (void)str;
-  (void)format;
-  (void)ap;
-  return -1;
+  while (*format != '\0') {
+    /* Whitespace in format: skip whitespace in input */
+    if (isspace((unsigned char)*format)) {
+      while (isspace((unsigned char)*format))
+        format++;
+      while ((c = sgetc(&sf)) != EOF && isspace(c))
+        ;
+      if (c != EOF)
+        sungetc(c, &sf);
+      continue;
+    }
+
+    /* Literal character */
+    if (*format != '%') {
+      c = sgetc(&sf);
+      if (c == EOF || c != *format) {
+        if (c != EOF)
+          sungetc(c, &sf);
+        break;
+      }
+      format++;
+      continue;
+    }
+
+    /* Format specifier */
+    format++;
+    if (*format == '%') {
+      c = sgetc(&sf);
+      if (c != '%') {
+        if (c != EOF)
+          sungetc(c, &sf);
+        break;
+      }
+      format++;
+      continue;
+    }
+
+    bool suppress = false;
+    if (*format == '*') {
+      suppress = true;
+      format++;
+    }
+
+    int width = 0;
+    while (isdigit((unsigned char)*format)) {
+      width = width * 10 + (*format - '0');
+      format++;
+    }
+
+    while (*format == 'h' || *format == 'l')
+      format++;
+
+    char spec = *format++;
+    if (spec == '\0')
+      break;
+
+    switch (spec) {
+      case 'd':
+      case 'i':
+      case 'u': {
+        while ((c = sgetc(&sf)) != EOF && isspace(c))
+          ;
+        if (c == EOF)
+          goto sdone;
+
+        bool negative = false;
+        if (c == '-') {
+          negative = true;
+          c = sgetc(&sf);
+        } else if (c == '+') {
+          c = sgetc(&sf);
+        }
+
+        if (c == EOF || !isdigit(c)) {
+          if (c != EOF)
+            sungetc(c, &sf);
+          goto sdone;
+        }
+
+        unsigned long value = 0;
+        int digits = 0;
+        while (c != EOF && isdigit(c)) {
+          value = value * 10 + (c - '0');
+          digits++;
+          if (width > 0 && digits >= width)
+            break;
+          c = sgetc(&sf);
+        }
+        if (c != EOF && (width == 0 || digits < width))
+          sungetc(c, &sf);
+
+        if (!suppress) {
+          int* p = va_arg(ap, int*);
+          *p = negative ? -(int)value : (int)value;
+          matched++;
+        }
+        break;
+      }
+
+      case 'x':
+      case 'X': {
+        while ((c = sgetc(&sf)) != EOF && isspace(c))
+          ;
+        if (c == EOF)
+          goto sdone;
+
+        if (c == '0') {
+          int next = sgetc(&sf);
+          if (next == 'x' || next == 'X') {
+            c = sgetc(&sf);
+          } else {
+            if (next != EOF)
+              sungetc(next, &sf);
+          }
+        }
+
+        if (c == EOF || hex_digit(c) < 0) {
+          if (c != EOF)
+            sungetc(c, &sf);
+          goto sdone;
+        }
+
+        unsigned long value = 0;
+        int digits = 0;
+        while (c != EOF && hex_digit(c) >= 0) {
+          value = value * 16 + hex_digit(c);
+          digits++;
+          if (width > 0 && digits >= width)
+            break;
+          c = sgetc(&sf);
+        }
+        if (c != EOF && (width == 0 || digits < width))
+          sungetc(c, &sf);
+
+        if (!suppress) {
+          unsigned* p = va_arg(ap, unsigned*);
+          *p = (unsigned)value;
+          matched++;
+        }
+        break;
+      }
+
+      case 's': {
+        while ((c = sgetc(&sf)) != EOF && isspace(c))
+          ;
+        if (c == EOF)
+          goto sdone;
+
+        char* dest = suppress ? NULL : va_arg(ap, char*);
+        int chars = 0;
+
+        while (c != EOF && !isspace(c)) {
+          if (!suppress)
+            *dest++ = (char)c;
+          chars++;
+          if (width > 0 && chars >= width)
+            break;
+          c = sgetc(&sf);
+        }
+        if (c != EOF && (width == 0 || chars < width))
+          sungetc(c, &sf);
+
+        if (chars == 0)
+          goto sdone;
+
+        if (!suppress) {
+          *dest = '\0';
+          matched++;
+        }
+        break;
+      }
+
+      case 'c': {
+        int count = (width > 0) ? width : 1;
+        char* dest = suppress ? NULL : va_arg(ap, char*);
+
+        for (int i = 0; i < count; i++) {
+          c = sgetc(&sf);
+          if (c == EOF) {
+            if (i == 0)
+              goto sdone;
+            break;
+          }
+          if (!suppress)
+            *dest++ = (char)c;
+        }
+        if (!suppress)
+          matched++;
+        break;
+      }
+
+      default:
+        goto sdone;
+    }
+  }
+
+sdone:
+  return matched;
 }
 
 int sscanf(const char* str, const char* format, ...) {
-  /* TODO:
-     1. va_start(ap, format)
-     2. Call vsscanf(str, format, ap)
-     3. va_end(ap)
-     4. Return result */
-
-  (void)str;
-  (void)format;
-  return -1;
+  va_list ap;
+  va_start(ap, format);
+  int result = vsscanf(str, format, ap);
+  va_end(ap);
+  return result;
 }

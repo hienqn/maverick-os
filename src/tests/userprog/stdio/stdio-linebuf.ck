@@ -11,4 +11,6 @@ check_expected ([<<'EOF']);
 (stdio-linebuf) second line correct
 (stdio-linebuf) linebuf tests passed
 (stdio-linebuf) end
+stdio-linebuf: exit(0)
 EOF
+pass;

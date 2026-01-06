@@ -1,72 +1,83 @@
 /* stdio_pos.c - Stream positioning (fseek, ftell, rewind, fgetpos, fsetpos) */
 
 #include "stdio_impl.h"
+#include <stdio.h>
 #include <syscall.h>
+
+/* Forward declaration */
+long ftell(FILE* stream);
 
 /* Seek to a position in the stream.
    whence: SEEK_SET (0) = from start, SEEK_CUR (1) = from current, SEEK_END (2) = from end
    Returns 0 on success, -1 on error. */
 int fseek(FILE* stream, long offset, int whence) {
-  /* TODO:
-     1. If stream has _IOWRITE flag, call fflush(stream)
-        - This writes any buffered output before seeking
+  /* For SEEK_CUR, get current logical position BEFORE invalidating buffer */
+  long cur_pos = 0;
+  if (whence == SEEK_CUR)
+    cur_pos = ftell(stream);
 
-     2. Invalidate read buffer:
-        - Set stream->cnt = 0
-        - Set stream->ptr = stream->buf
-        - Clear stream->ungetc_buf = -1
+  /* Flush write buffer before seeking */
+  if (stream->flags & (_IOWRITE | _IORW))
+    fflush(stream);
 
-     3. Clear _IOEOF flag (seeking past EOF is allowed)
+  /* Invalidate read buffer */
+  stream->cnt = 0;
+  if (stream->buf != NULL)
+    stream->ptr = stream->buf;
+  stream->ungetc_buf = -1;
 
-     4. Calculate absolute position:
-        - SEEK_SET: pos = offset
-        - SEEK_CUR: pos = tell(fd) + offset - buffered_adjustment
-        - SEEK_END: pos = filesize(fd) + offset
+  /* Clear EOF flag */
+  stream->flags &= ~_IOEOF;
 
-        Note: PintOS seek() only supports absolute positioning,
-        so you need to calculate the absolute position first.
+  /* Calculate absolute position */
+  long pos;
+  switch (whence) {
+    case SEEK_SET:
+      pos = offset;
+      break;
+    case SEEK_CUR:
+      /* Use pre-computed logical position */
+      pos = cur_pos + offset;
+      break;
+    case SEEK_END:
+      pos = filesize(stream->fd) + offset;
+      break;
+    default:
+      return -1;
+  }
 
-     5. Call seek(stream->fd, pos)
+  if (pos < 0)
+    return -1;
 
-     6. Return 0 on success
-
-     Note: PintOS doesn't have a seek syscall that returns error,
-     so error handling may be limited. */
-
-  (void)stream;
-  (void)offset;
-  (void)whence;
-  return -1;
+  seek(stream->fd, pos);
+  return 0;
 }
 
 /* Return current position in stream.
    Returns position on success, -1 on error. */
 long ftell(FILE* stream) {
-  /* TODO:
-     1. Get raw file position: pos = tell(stream->fd)
+  /* Get raw kernel file position */
+  long pos = tell(stream->fd);
 
-     2. Adjust for buffered data:
-        - If reading (_IOREAD): subtract stream->cnt
-          (we've read ahead but not consumed)
-        - If writing (_IOWRITE): add (stream->ptr - stream->buf)
-          (we've written to buffer but not flushed)
+  /* Adjust for buffered read data (we read ahead) */
+  if (stream->flags & _IOREAD)
+    pos -= stream->cnt;
 
-     3. Adjust for ungetc:
-        - If stream->ungetc_buf >= 0, subtract 1
+  /* Adjust for buffered write data (not flushed yet) */
+  if ((stream->flags & _IOWRITE) && stream->buf != NULL)
+    pos += (stream->ptr - stream->buf);
 
-     4. Return adjusted position */
+  /* Adjust for ungetc (pushed back 1 char) */
+  if (stream->ungetc_buf >= 0)
+    pos--;
 
-  (void)stream;
-  return -1;
+  return pos;
 }
 
 /* Seek to beginning of stream and clear error indicators. */
 void rewind(FILE* stream) {
-  /* TODO:
-     1. Call fseek(stream, 0, SEEK_SET)
-     2. Call clearerr(stream) */
-
-  (void)stream;
+  fseek(stream, 0, SEEK_SET);
+  clearerr(stream);
 }
 
 /* fpos_t type - can just be a long for simple implementation */
@@ -74,21 +85,12 @@ typedef long fpos_t;
 
 /* Get current position (alternative API using fpos_t). */
 int fgetpos(FILE* stream, fpos_t* pos) {
-  /* TODO:
-     1. *pos = ftell(stream)
-     2. Return 0 on success, -1 if ftell failed */
-
-  (void)stream;
-  (void)pos;
-  return -1;
+  long p = ftell(stream);
+  if (p < 0)
+    return -1;
+  *pos = p;
+  return 0;
 }
 
 /* Set position (alternative API using fpos_t). */
-int fsetpos(FILE* stream, const fpos_t* pos) {
-  /* TODO:
-     1. Return fseek(stream, *pos, SEEK_SET) */
-
-  (void)stream;
-  (void)pos;
-  return -1;
-}
+int fsetpos(FILE* stream, const fpos_t* pos) { return fseek(stream, *pos, SEEK_SET); }

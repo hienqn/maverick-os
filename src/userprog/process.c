@@ -154,11 +154,21 @@ static void pcb_init(struct process* pcb, struct thread* main_thread) {
   pcb->parent_process = NULL;
   pcb->executable = NULL;
 
-  /* File descriptor table */
+  /* File descriptor table - initialize all slots to unused */
   for (int i = 0; i < MAX_FILE_DESCRIPTOR; i++) {
     pcb->fd_table[i].type = FD_NONE;
     pcb->fd_table[i].file = NULL;
   }
+
+  /* Initialize standard file descriptors for console I/O */
+  pcb->fd_table[STDIN_FILENO].type = FD_CONSOLE;
+  pcb->fd_table[STDIN_FILENO].cmode = CONSOLE_READ;
+
+  pcb->fd_table[STDOUT_FILENO].type = FD_CONSOLE;
+  pcb->fd_table[STDOUT_FILENO].cmode = CONSOLE_WRITE;
+
+  pcb->fd_table[STDERR_FILENO].type = FD_CONSOLE;
+  pcb->fd_table[STDERR_FILENO].cmode = CONSOLE_WRITE;
 
   /* Threading support */
   list_init(&pcb->threads);
@@ -518,13 +528,13 @@ static void fork_process(void* aux) {
     }
   }
 
-  /* Duplicate all file descriptor */
-  /* Use file_dup() to share file pointers between parent and child.
+  /* Duplicate all file descriptors (including stdin/stdout/stderr).
+     Use file_dup() to share file pointers between parent and child.
      This implements POSIX fork semantics where parent and child share
      the same file description (position, flags, etc.). */
   if (success) {
     struct fd_entry* parent_fd = load_info->parent_process->fd_table;
-    for (int i = 2; i < MAX_FILE_DESCRIPTOR; i++) {
+    for (int i = 0; i < MAX_FILE_DESCRIPTOR; i++) {
       if (parent_fd[i].type == FD_FILE && parent_fd[i].file != NULL) {
         /* Share the same file struct - increments reference count */
         t->pcb->fd_table[i].type = FD_FILE;
@@ -533,6 +543,10 @@ static void fork_process(void* aux) {
         /* Share the same dir struct - reopen to get new reference */
         t->pcb->fd_table[i].type = FD_DIR;
         t->pcb->fd_table[i].dir = dir_reopen(parent_fd[i].dir);
+      } else if (parent_fd[i].type == FD_CONSOLE) {
+        /* Console fds are inherited - just copy type and mode */
+        t->pcb->fd_table[i].type = FD_CONSOLE;
+        t->pcb->fd_table[i].cmode = parent_fd[i].cmode;
       }
     }
   }
@@ -811,13 +825,13 @@ void process_activate(void) {
   tss_update();
 }
 
-/* Finds and returns the first free file descriptor index (>= 2).
+/* Finds and returns the first free file descriptor index (>= 3).
    Returns -1 if all file descriptors are in use.
-   FDs 0 and 1 are reserved for stdin/stdout. */
+   FDs 0, 1, 2 are reserved for stdin/stdout/stderr. */
 int find_free_fd(void) {
   struct thread* t = thread_current();
   struct fd_entry* fd_table = t->pcb->fd_table;
-  for (int i = 2; i < MAX_FILE_DESCRIPTOR; i++) {
+  for (int i = 3; i < MAX_FILE_DESCRIPTOR; i++) {
     if (fd_table[i].type == FD_NONE) {
       return i;
     }

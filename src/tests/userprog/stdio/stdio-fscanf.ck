@@ -17,4 +17,6 @@ check_expected ([<<'EOF']);
 (stdio-fscanf) fscanf at EOF returns EOF
 (stdio-fscanf) fscanf tests passed
 (stdio-fscanf) end
+stdio-fscanf: exit(0)
 EOF
+pass;

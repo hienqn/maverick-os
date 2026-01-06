@@ -13,4 +13,6 @@ check_expected ([<<'EOF']);
 (stdio-fread) fread with size=4 returns 3 items
 (stdio-fread) fread tests passed
 (stdio-fread) end
+stdio-fread: exit(0)
 EOF
+pass;

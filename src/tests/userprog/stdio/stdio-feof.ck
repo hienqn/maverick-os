@@ -14,4 +14,6 @@ check_expected ([<<'EOF']);
 (stdio-feof) feof is false after clearerr
 (stdio-feof) feof tests passed
 (stdio-feof) end
+stdio-feof: exit(0)
 EOF
+pass;

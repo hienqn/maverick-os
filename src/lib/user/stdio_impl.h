@@ -10,6 +10,11 @@
 /* Buffer size for stdio streams */
 #define STDIO_BUFSIZ 512
 
+/* End-of-file return value */
+#ifndef EOF
+#define EOF (-1)
+#endif
+
 /* FILE structure flags */
 #define _IOREAD 0x0001  /* Stream is open for reading */
 #define _IOWRITE 0x0002 /* Stream is open for writing */
@@ -17,9 +22,19 @@
 #define _IOEOF 0x0010   /* End-of-file has been reached */
 #define _IOERR 0x0020   /* An I/O error has occurred */
 #define _IOMYBUF 0x0040 /* Buffer was allocated by library */
-#define _IOLBF 0x0080   /* Line buffered */
-#define _IONBF 0x0100   /* Unbuffered */
-#define _IOFBF 0x0000   /* Fully buffered (default, no flag set) */
+
+/* Internal buffer mode flags (stored in FILE.flags) */
+#define _IO_LINE_BUF 0x0080 /* Line buffered */
+#define _IO_UNBUF 0x0100    /* Unbuffered */
+
+/* For backwards compatibility in implementation code */
+#define _IOLBF _IO_LINE_BUF
+#define _IONBF _IO_UNBUF
+#define _IOFBF 0 /* Fully buffered (no flag set) */
+
+/* Public API mode values for setvbuf (from stdio.h):
+   _IOFBF = 0, _IOLBF = 1, _IONBF = 2
+   These are translated to internal flags in setvbuf(). */
 
 /* Internal FILE structure.
    Users see this as an opaque type via the FILE typedef. */

@@ -1,147 +1,241 @@
 /* stdio_buf.c - Buffer management and binary I/O (fread, fwrite, fflush) */
 
 #include "stdio_impl.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syscall.h>
 
+/* Forward declaration */
+int fflush(FILE* stream);
+
 /* Allocate a buffer for the stream if not already allocated. */
 static void ensure_buffer(FILE* fp) {
-  /* TODO:
-     1. If fp->buf is already non-NULL, return
-     2. If _IONBF flag is set (unbuffered):
-        - Set fp->buf = fp->smallbuf
-        - Set fp->bufsiz = 1
-     3. Otherwise (buffered):
-        - Allocate STDIO_BUFSIZ bytes with malloc()
-        - Set fp->buf to the allocated memory
-        - Set fp->bufsiz = STDIO_BUFSIZ
-        - Set fp->flags |= _IOMYBUF (we own the buffer)
-     4. Initialize fp->ptr = fp->buf, fp->cnt = 0 */
+  /* Already have a buffer? */
+  if (fp->buf != NULL)
+    return;
 
-  (void)fp;
+  if (fp->flags & _IONBF) {
+    /* Unbuffered: use the 1-byte smallbuf */
+    fp->buf = fp->smallbuf;
+    fp->bufsiz = 1;
+  } else {
+    /* Buffered: allocate STDIO_BUFSIZ bytes */
+    fp->buf = malloc(STDIO_BUFSIZ);
+    if (fp->buf == NULL) {
+      /* Fallback to unbuffered if malloc fails */
+      fp->buf = fp->smallbuf;
+      fp->bufsiz = 1;
+    } else {
+      fp->bufsiz = STDIO_BUFSIZ;
+      fp->flags |= _IOMYBUF; /* We own this buffer, must free it */
+    }
+  }
+
+  fp->ptr = fp->buf;
+  fp->cnt = 0;
 }
 
 /* Fill the input buffer from the file descriptor.
    Returns first character, or EOF on error/end-of-file. */
 int __fillbuf(FILE* fp) {
-  /* TODO:
-     1. If _IOEOF flag is set, return EOF
-     2. Call ensure_buffer(fp)
-     3. Call read(fp->fd, fp->buf, fp->bufsiz)
-     4. If read returns <= 0:
-        - Set _IOEOF flag if return == 0
-        - Set _IOERR flag if return < 0
-        - Return EOF
-     5. Set fp->ptr = fp->buf
-     6. Set fp->cnt = bytes_read
-     7. Decrement fp->cnt and return *fp->ptr++ */
+  /* Already at EOF? */
+  if (fp->flags & _IOEOF)
+    return EOF;
 
-  (void)fp;
-  return -1; /* EOF */
+  ensure_buffer(fp);
+
+  /* Read from file into buffer */
+  int n = read(fp->fd, fp->buf, fp->bufsiz);
+
+  if (n <= 0) {
+    if (n == 0)
+      fp->flags |= _IOEOF;
+    else
+      fp->flags |= _IOERR;
+    return EOF;
+  }
+
+  /* Reset buffer pointers */
+  fp->ptr = fp->buf;
+  fp->cnt = n;
+
+  /* Return first character */
+  fp->cnt--;
+  return (unsigned char)*fp->ptr++;
 }
 
 /* Flush output buffer and write character c (if c >= 0).
    Returns c on success, EOF on error. */
 int __flushbuf(int c, FILE* fp) {
-  /* TODO:
-     1. Call ensure_buffer(fp)
+  ensure_buffer(fp);
 
-     2. If _IONBF flag is set (unbuffered):
-        - If c >= 0, write single byte directly
-        - Return c or EOF on error
+  /* Unbuffered mode: write single byte directly */
+  if (fp->flags & _IONBF) {
+    if (c >= 0) {
+      unsigned char ch = (unsigned char)c;
+      if (write(fp->fd, &ch, 1) != 1) {
+        fp->flags |= _IOERR;
+        return EOF;
+      }
+    }
+    return c;
+  }
 
-     3. Calculate bytes to flush: n = fp->ptr - fp->buf
-     4. If n > 0:
-        - Call write(fp->fd, fp->buf, n)
-        - If write fails, set _IOERR and return EOF
+  /* Flush any existing data in buffer */
+  int n = fp->ptr - fp->buf;
+  if (n > 0) {
+    if (write(fp->fd, fp->buf, n) != n) {
+      fp->flags |= _IOERR;
+      return EOF;
+    }
+  }
 
-     5. Reset buffer: fp->ptr = fp->buf, fp->cnt = fp->bufsiz
+  /* Reset buffer */
+  fp->ptr = fp->buf;
+  fp->cnt = fp->bufsiz;
 
-     6. If c >= 0:
-        - Store c in buffer: *fp->ptr++ = c, fp->cnt--
-        - If _IOLBF flag is set and c == '\n':
-          - Recursively flush (call fflush)
+  /* Store new character in buffer */
+  if (c >= 0) {
+    *fp->ptr++ = (unsigned char)c;
+    fp->cnt--;
 
-     7. Return c */
+    /* Line buffered: flush on newline */
+    if ((fp->flags & _IOLBF) && c == '\n')
+      fflush(fp);
+  }
 
-  (void)c;
-  (void)fp;
-  return -1; /* EOF */
+  return c;
 }
 
 /* Flush output buffer to file. */
 int fflush(FILE* stream) {
-  /* TODO:
-     1. If stream is NULL, flush all open streams (optional)
-     2. If stream doesn't have _IOWRITE flag, return 0
-     3. If fp->ptr > fp->buf (there's data to flush):
-        - Write buffer contents
-        - Reset fp->ptr = fp->buf, fp->cnt = fp->bufsiz
-     4. Return 0 on success, EOF on error */
+  /* NULL means flush all streams - not implemented */
+  if (stream == NULL)
+    return 0;
 
-  (void)stream;
-  return -1;
+  /* Only flush writable streams */
+  if (!(stream->flags & (_IOWRITE | _IORW)))
+    return 0;
+
+  /* Nothing to flush if buffer not allocated */
+  if (stream->buf == NULL)
+    return 0;
+
+  /* Flush if there's data in buffer */
+  int n = stream->ptr - stream->buf;
+  if (n > 0) {
+    if (write(stream->fd, stream->buf, n) != n) {
+      stream->flags |= _IOERR;
+      return EOF;
+    }
+  }
+
+  /* Reset buffer */
+  stream->ptr = stream->buf;
+  stream->cnt = stream->bufsiz;
+
+  return 0;
 }
 
 /* Read binary data from stream. */
 size_t fread(void* ptr, size_t size, size_t nmemb, FILE* stream) {
-  /* TODO:
-     1. Calculate total bytes: total = size * nmemb
-     2. If total == 0, return 0
-     3. For each byte needed:
-        a. If stream->cnt > 0:
-           - Copy from buffer: *dest++ = *stream->ptr++
-           - Decrement stream->cnt
-        b. Else:
-           - Call __fillbuf(stream)
-           - If EOF, break out of loop
-     4. Return number of complete items read (bytes_read / size) */
+  size_t total = size * nmemb;
+  if (total == 0)
+    return 0;
 
-  (void)ptr;
-  (void)size;
-  (void)nmemb;
-  (void)stream;
-  return 0;
+  unsigned char* dest = (unsigned char*)ptr;
+  size_t bytes_read = 0;
+
+  while (bytes_read < total) {
+    if (stream->cnt > 0) {
+      /* Copy from buffer */
+      *dest++ = *stream->ptr++;
+      stream->cnt--;
+      bytes_read++;
+    } else {
+      /* Buffer empty, refill */
+      int c = __fillbuf(stream);
+      if (c == EOF)
+        break;
+      *dest++ = (unsigned char)c;
+      bytes_read++;
+    }
+  }
+
+  return bytes_read / size;
 }
 
 /* Write binary data to stream. */
 size_t fwrite(const void* ptr, size_t size, size_t nmemb, FILE* stream) {
-  /* TODO:
-     1. Calculate total bytes: total = size * nmemb
-     2. If total == 0, return 0
-     3. For each byte:
-        a. If stream->cnt > 0:
-           - Store in buffer: *stream->ptr++ = *src++
-           - Decrement stream->cnt
-           - If _IOLBF and byte == '\n', flush
-        b. Else:
-           - Call __flushbuf(byte, stream)
-           - If returns EOF, break
-     4. Return number of complete items written */
+  size_t total = size * nmemb;
+  if (total == 0)
+    return 0;
 
-  (void)ptr;
-  (void)size;
-  (void)nmemb;
-  (void)stream;
-  return 0;
+  const unsigned char* src = (const unsigned char*)ptr;
+  size_t bytes_written = 0;
+
+  while (bytes_written < total) {
+    unsigned char c = *src++;
+
+    if (stream->cnt > 0) {
+      /* Space in buffer, store there */
+      *stream->ptr++ = c;
+      stream->cnt--;
+      bytes_written++;
+
+      /* Line buffered: flush on newline */
+      if ((stream->flags & _IOLBF) && c == '\n')
+        fflush(stream);
+    } else {
+      /* Buffer full, flush and store */
+      if (__flushbuf(c, stream) == EOF)
+        break;
+      bytes_written++;
+    }
+  }
+
+  return bytes_written / size;
 }
 
-/* Set buffering mode for a stream. */
+/* Set buffering mode for a stream.
+   mode: 0=_IOFBF (fully buffered), 1=_IOLBF (line buffered), 2=_IONBF (unbuffered)
+   Note: mode values are the PUBLIC API values, not internal flags. */
 int setvbuf(FILE* stream, char* buf, int mode, size_t size) {
-  /* TODO:
-     1. If stream already has a buffer allocated, return error
-     2. Clear old buffering flags, set new mode:
-        - _IOFBF (0): fully buffered
-        - _IOLBF: line buffered
-        - _IONBF: unbuffered
-     3. If buf is provided and mode != _IONBF:
-        - Use provided buffer (don't set _IOMYBUF)
-     4. Return 0 on success, non-zero on error */
+  /* Can't change buffering after I/O has started */
+  if (stream->buf != NULL)
+    return -1;
 
-  (void)stream;
-  (void)buf;
-  (void)mode;
-  (void)size;
-  return -1;
+  /* Clear old buffering mode flags */
+  stream->flags &= ~(_IO_LINE_BUF | _IO_UNBUF | _IOMYBUF);
+
+  /* Public API constants: _IOFBF=0, _IOLBF=1, _IONBF=2 */
+  switch (mode) {
+    case 0: /* _IOFBF - Fully buffered */
+    case 1: /* _IOLBF - Line buffered */
+      if (mode == 1)
+        stream->flags |= _IO_LINE_BUF;
+
+      if (buf != NULL && size > 0) {
+        /* Use caller-provided buffer */
+        stream->buf = (unsigned char*)buf;
+        stream->bufsiz = size;
+      }
+      /* Otherwise, ensure_buffer will allocate later */
+      break;
+
+    case 2: /* _IONBF - Unbuffered */
+      stream->flags |= _IO_UNBUF;
+      stream->buf = stream->smallbuf;
+      stream->bufsiz = 1;
+      break;
+
+    default:
+      return -1;
+  }
+
+  stream->ptr = stream->buf;
+  stream->cnt = 0;
+
+  return 0;
 }

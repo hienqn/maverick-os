@@ -13,4 +13,6 @@ check_expected ([<<'EOF']);
 (stdio-fwrite) int data matches
 (stdio-fwrite) fwrite tests passed
 (stdio-fwrite) end
+stdio-fwrite: exit(0)
 EOF
+pass;

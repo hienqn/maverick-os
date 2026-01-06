@@ -13,4 +13,6 @@ check_expected ([<<'EOF']);
 (stdio-fgetc) getc returns 'A'
 (stdio-fgetc) fgetc tests passed
 (stdio-fgetc) end
+stdio-fgetc: exit(0)
 EOF
+pass;

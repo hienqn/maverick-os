@@ -17,4 +17,6 @@ check_expected ([<<'EOF']);
 (stdio-fseek) rewind goes to beginning
 (stdio-fseek) fseek tests passed
 (stdio-fseek) end
+stdio-fseek: exit(0)
 EOF
+pass;

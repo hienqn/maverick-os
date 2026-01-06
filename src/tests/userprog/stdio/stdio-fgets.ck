@@ -17,4 +17,6 @@ check_expected ([<<'EOF']);
 (stdio-fgets) small buffer gets 'Lin'
 (stdio-fgets) fgets tests passed
 (stdio-fgets) end
+stdio-fgets: exit(0)
 EOF
+pass;

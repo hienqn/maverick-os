@@ -15,4 +15,6 @@ check_expected ([<<'EOF']);
 (stdio-fputc) putc returns written char
 (stdio-fputc) fputc tests passed
 (stdio-fputc) end
+stdio-fputc: exit(0)
 EOF
+pass;

@@ -140,14 +140,22 @@ typedef void (*stub_fun)(pthread_fun, void*); /* Stub wrapper function. */
 
 /* File descriptor entry types. */
 enum fd_type {
-  FD_NONE, /* Unused slot (available for allocation). */
-  FD_FILE, /* Regular file. */
-  FD_DIR   /* Directory. */
+  FD_NONE,   /* Unused slot (available for allocation). */
+  FD_FILE,   /* Regular file. */
+  FD_DIR,    /* Directory. */
+  FD_CONSOLE /* Console device (stdin/stdout/stderr). */
+};
+
+/* Console I/O mode (only used when type == FD_CONSOLE). */
+enum console_mode {
+  CONSOLE_READ, /* stdin - read from keyboard. */
+  CONSOLE_WRITE /* stdout/stderr - write to display. */
 };
 
 /* File descriptor entry - union of file and directory. */
 struct fd_entry {
-  enum fd_type type; /* What kind of entry this is. */
+  enum fd_type type;       /* What kind of entry this is. */
+  enum console_mode cmode; /* Console mode (only for FD_CONSOLE). */
   union {
     struct file* file; /* If type == FD_FILE. */
     struct dir* dir;   /* If type == FD_DIR. */

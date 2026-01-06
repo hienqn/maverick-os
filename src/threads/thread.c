@@ -172,6 +172,37 @@ static int load_avg; /* System load average (17.14 fixed-point format). */
 static unsigned thread_ticks; /* Ticks since current thread started running. */
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ * CFS/EEVDF SCHEDULER CONSTANTS
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Constants and data structures for Completely Fair Scheduler (CFS) and
+ * Earliest Eligible Virtual Deadline First (EEVDF) scheduling.
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
+/* CFS/EEVDF weight table indexed by nice+20 (nice=-20 to +20).
+   Weights follow sched_prio_to_weight[] from Linux kernel.
+   Higher weight = more CPU share. Nice 0 = weight 1024. */
+static const int fair_weight[41] = {
+    88761, 71755, 56483, 46273, 36291, /* nice -20..-16 */
+    29154, 23254, 18705, 14949, 11916, /* nice -15..-11 */
+    9548,  7620,  6100,  4904,  3906,  /* nice -10..-6  */
+    3121,  2501,  1991,  1586,  1277,  /* nice  -5..-1  */
+    1024,  820,   655,   526,   423,   /* nice   0..4   */
+    335,   272,   215,   172,   137,   /* nice   5..9   */
+    110,   87,    70,    56,    45,    /* nice  10..14  */
+    36,    29,    23,    18,    15,    /* nice  15..19  */
+    12                                 /* nice  20      */
+};
+
+/* Virtual runtime scale factor (1 tick = this many vruntime units for nice 0). */
+#define VRUNTIME_SCALE 1024
+
+/* Default time slice in vruntime units for deadline calculation. */
+#define EEVDF_SLICE_VRUNTIME (TIME_SLICE * VRUNTIME_SCALE)
+
+/* Minimum vruntime among all runnable threads (used for EEVDF eligibility). */
+static int64_t eevdf_min_vruntime;
+
+/* ═══════════════════════════════════════════════════════════════════════════
  * FORWARD DECLARATIONS
  * ═══════════════════════════════════════════════════════════════════════════*/
 
@@ -189,6 +220,9 @@ void thread_switch_tail(struct thread* prev);
 /* Thread entry points. */
 static void kernel_thread(thread_func*, void* aux);
 static void idle(void* aux UNUSED);
+
+/* CFS/EEVDF vruntime accounting. */
+static void fair_update_vruntime(struct thread* t, unsigned ticks_used);
 static struct thread* running_thread(void);
 
 /* Scheduler implementations (one per policy). */
@@ -270,6 +304,9 @@ void thread_init(void) {
 
   /* Initialize MLFQS global state */
   load_avg = 0; /* Fixed-point 0 */
+
+  /* Initialize CFS/EEVDF global state */
+  eevdf_min_vruntime = 0;
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread();
@@ -387,6 +424,11 @@ void thread_block(void) {
   ASSERT(!intr_context());
   ASSERT(intr_get_level() == INTR_OFF);
 
+  /* Update CFS/EEVDF vruntime with actual ticks used before blocking.
+     This is crucial for fairness: I/O-bound threads that block early
+     should only be charged for the time they actually used. */
+  fair_update_vruntime(thread_current(), thread_ticks);
+
   thread_current()->status = THREAD_BLOCKED;
   schedule();
 }
@@ -499,6 +541,37 @@ void thread_exit(void) {
   NOT_REACHED();
 }
 
+/* Update vruntime accounting after a thread has run.
+   Called from thread_yield() and thread_block() when using CFS or EEVDF.
+
+   ticks_used: actual number of timer ticks the thread consumed this slice. */
+static void fair_update_vruntime(struct thread* t, unsigned ticks_used) {
+  if (active_sched_policy != SCHED_FAIR)
+    return;
+  if (active_fair_sched_type != FAIR_SCHED_CFS && active_fair_sched_type != FAIR_SCHED_EEVDF)
+    return;
+  if (t == idle_thread)
+    return;
+  if (ticks_used == 0)
+    return;
+
+  /* Calculate weight from nice value */
+  int nice_idx = t->nice_fair + 20;
+  if (nice_idx < 0)
+    nice_idx = 0;
+  if (nice_idx > 40)
+    nice_idx = 40;
+  int weight = fair_weight[nice_idx];
+
+  /* Update vruntime: actual_time * (NICE0_WEIGHT / weight)
+     Higher weight = slower vruntime growth = more CPU time */
+  int64_t delta = ((int64_t)ticks_used * VRUNTIME_SCALE * 1024) / weight;
+  t->vruntime += delta;
+
+  /* Update deadline for EEVDF (CFS doesn't use it but harmless to set) */
+  t->deadline = t->vruntime + EEVDF_SLICE_VRUNTIME;
+}
+
 /* Yields the CPU.  The current thread is not put to sleep and
    may be scheduled again immediately at the scheduler's whim. */
 void thread_yield(void) {
@@ -508,6 +581,10 @@ void thread_yield(void) {
   ASSERT(!intr_context());
 
   old_level = intr_disable();
+
+  /* Update CFS/EEVDF vruntime with actual ticks used before re-enqueueing */
+  fair_update_vruntime(cur, thread_ticks);
+
   if (cur != idle_thread)
     thread_enqueue(cur);
   cur->status = THREAD_READY;
@@ -792,8 +869,9 @@ static void init_thread(struct thread* t, const char* name, int priority) {
   t->tickets = 100; // Default ticket count for lottery
   t->stride = 0;    // Will be computed from tickets
   t->pass = 0;      // Initial pass value
-  t->vruntime = 0;  // Initial virtual runtime
-  t->deadline = 0;  // Initial virtual deadline
+  /* CFS/EEVDF: Start at current min_vruntime to be immediately eligible */
+  t->vruntime = eevdf_min_vruntime;
+  t->deadline = eevdf_min_vruntime + EEVDF_SLICE_VRUNTIME;
   t->nice_fair = 0; // Default nice value (neutral weight)
 
   /* MLFQS scheduler fields initialization */
@@ -871,26 +949,87 @@ static struct thread* thread_schedule_lottery(void) {
 static struct thread* thread_schedule_cfs(void) {
   if (list_empty(&fair_ready_list))
     return idle_thread;
-  /* TODO: Implement CFS
-     - Find thread with minimum vruntime
-     - Update vruntime after running */
-  PANIC("Unimplemented fair scheduler: CFS");
+
+  /* Find thread with minimum vruntime */
+  struct list_elem* e;
+  struct thread* winner = NULL;
+  struct list_elem* winner_elem = NULL;
+  int64_t min_vruntime = INT64_MAX;
+
+  for (e = list_begin(&fair_ready_list); e != list_end(&fair_ready_list); e = list_next(e)) {
+    struct thread* t = list_entry(e, struct thread, elem);
+    if (t->vruntime < min_vruntime) {
+      min_vruntime = t->vruntime;
+      winner = t;
+      winner_elem = e;
+    }
+  }
+
+  ASSERT(winner != NULL);
+  list_remove(winner_elem);
+  return winner;
 }
 
 /* Earliest Eligible Virtual Deadline First (EEVDF):
    - Extension of CFS with deadline awareness
    - Each thread has vruntime and virtual deadline
-   - Only consider "eligible" threads (vruntime <= current time)
+   - Only consider "eligible" threads (vruntime <= min_vruntime + threshold)
    - Among eligible, pick earliest virtual deadline
    - Better latency guarantees than pure CFS */
 static struct thread* thread_schedule_eevdf(void) {
   if (list_empty(&fair_ready_list))
     return idle_thread;
-  /* TODO: Implement EEVDF
-     - Filter eligible threads (vruntime <= min_vruntime)
-     - Among eligible, find earliest virtual deadline
-     - Update vruntime and deadline after running */
-  PANIC("Unimplemented fair scheduler: EEVDF");
+
+  /* Pass 1: Find minimum vruntime to establish eligibility threshold */
+  struct list_elem* e;
+  int64_t local_min_vruntime = INT64_MAX;
+  for (e = list_begin(&fair_ready_list); e != list_end(&fair_ready_list); e = list_next(e)) {
+    struct thread* t = list_entry(e, struct thread, elem);
+    if (t->vruntime < local_min_vruntime)
+      local_min_vruntime = t->vruntime;
+  }
+
+  /* Update global min_vruntime (monotonically increasing) */
+  if (local_min_vruntime > eevdf_min_vruntime)
+    eevdf_min_vruntime = local_min_vruntime;
+
+  /* Pass 2: Among eligible threads, find earliest deadline */
+  struct thread* winner = NULL;
+  struct list_elem* winner_elem = NULL;
+  int64_t earliest_deadline = INT64_MAX;
+
+  /* Eligibility threshold: allow small slack for numerical stability */
+  int64_t eligible_threshold = eevdf_min_vruntime + VRUNTIME_SCALE;
+
+  for (e = list_begin(&fair_ready_list); e != list_end(&fair_ready_list); e = list_next(e)) {
+    struct thread* t = list_entry(e, struct thread, elem);
+
+    /* Check eligibility: thread hasn't consumed more than its fair share */
+    if (t->vruntime <= eligible_threshold) {
+      /* Among eligible, pick earliest deadline */
+      if (t->deadline < earliest_deadline) {
+        earliest_deadline = t->deadline;
+        winner = t;
+        winner_elem = e;
+      }
+    }
+  }
+
+  /* Fallback: if no thread is eligible (shouldn't happen), pick min vruntime */
+  if (winner == NULL) {
+    for (e = list_begin(&fair_ready_list); e != list_end(&fair_ready_list); e = list_next(e)) {
+      struct thread* t = list_entry(e, struct thread, elem);
+      if (t->vruntime == local_min_vruntime) {
+        winner = t;
+        winner_elem = e;
+        break;
+      }
+    }
+  }
+
+  ASSERT(winner != NULL);
+  list_remove(winner_elem);
+  return winner;
 }
 
 /* Jump table for fair scheduler implementations */

@@ -13,6 +13,7 @@ smfs-starve-0 smfs-starve-1 smfs-starve-2 smfs-starve-4 \
 smfs-starve-8 smfs-starve-16 smfs-starve-64 smfs-starve-256 \
 smfs-prio-change \
 smfs-hierarchy-16 smfs-hierarchy-32 smfs-hierarchy-64 \
+fair-vruntime \
 )
 
 # Remove MLFQS tests for SU21
@@ -51,6 +52,7 @@ tests/threads_SRC += tests/threads/mlfqs-block.c
 tests/threads_SRC += tests/threads/smfs-starve.c
 tests/threads_SRC += tests/threads/smfs-prio-change.c
 tests/threads_SRC += tests/threads/smfs-hierarchy.c
+tests/threads_SRC += tests/threads/fair-vruntime.c
 
 MLFQS_OUTPUTS = 				\
 tests/threads/mlfqs-load-1.output		\
@@ -87,7 +89,7 @@ $(foreach TEST,$(SCHED_MLFQS_TESTS), \
 # Usage: add tests to the appropriate list below
 FAIR_STRIDE_TESTS  =
 FAIR_LOTTERY_TESTS =
-FAIR_CFS_TESTS     =
+FAIR_CFS_TESTS     = tests/threads/fair-vruntime
 FAIR_EEVDF_TESTS   =
 
 $(foreach TEST,$(FAIR_STRIDE_TESTS), \

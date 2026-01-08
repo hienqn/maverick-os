@@ -911,7 +911,7 @@ int net_test_e1000(void) {
   }
 
   /* Test 8: Statistics tracking */
-  if (dev->tx_packets > 0 || dev->rx_packets >= 0) {
+  if (dev->tx_packets > 0) {
     TEST_PASS("E1000 statistics tracking");
     local_passed++;
   } else {

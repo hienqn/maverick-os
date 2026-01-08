@@ -51,6 +51,7 @@
 #ifdef USERPROG
 #include "userprog/process.h"
 #include "userprog/exception.h"
+#include "userprog/filedesc.h"
 #include "userprog/gdt.h"
 #include "userprog/syscall.h"
 #include "userprog/tss.h"
@@ -206,6 +207,8 @@ int main(void) {
    * net_run_all_tests(); */
 
 #ifdef USERPROG
+  /* Initialize the global open file description table */
+  ofd_init();
   /* Give main thread a minimal PCB so it can launch the first process */
   userprog_init();
 #endif

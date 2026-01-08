@@ -2,31 +2,51 @@
 
 ## Overview
 
-Add a VFS abstraction layer to Pintos that standardizes the file interface and allows pluggable filesystem implementations.
+Add a VFS abstraction layer to Pintos that:
+1. Standardizes the file interface and allows pluggable filesystem implementations
+2. **Provides a unified device I/O subsystem** where devices are accessed as files (`/dev/*`)
+
+This implements the Unix "everything is a file" philosophy.
 
 ## Current Architecture
 
 ```
 syscall.c --> filesys.c --> directory.c --> inode.c --> cache.c --> block.c
                         \-> file.c ---------/
+          \
+           \-> FD_CONSOLE special case (input_getc/putbuf)  <-- Problem!
 ```
 
-**Problem:** Strong coupling - `file.c` and `directory.c` directly call `inode_*` functions with Pintos-specific assumptions.
+**Problems:**
+1. Strong coupling - `file.c` and `directory.c` directly call `inode_*` functions
+2. Console is a special case in syscalls, not a proper device
 
 ## Target Architecture
 
 ```
-syscall.c --> filesys.c --> vfs.c -----------------> cache.c --> block.c
-                              |
-                    +---------+---------+
-                    v                   v
-              pintos_fs.c          (future fs types)
-              (wraps inode.c)
+                         syscall.c
+                             |
+                             v
+    +--------------------  vfs.c  --------------------+
+    |                        |                        |
+    v                        v                        v
+pintos_fs.c              devfs.c                (future fs)
+(disk files)          (/dev filesystem)
+                             |
+              +--------------+--------------+
+              v              v              v
+         chrdev.c       console_dev    serial_dev
+      (char device       (tty)         (ttyS0)
+        registry)
 ```
+
+All I/O (files, directories, devices) goes through the unified VFS layer.
 
 ---
 
-## New Files
+# Part 1: Core VFS Infrastructure
+
+## New Files (VFS Core)
 
 | File | Purpose |
 |------|---------|
@@ -35,34 +55,27 @@ syscall.c --> filesys.c --> vfs.c -----------------> cache.c --> block.c
 | `src/filesys/pintos_fs.h` | Pintos FS type declarations |
 | `src/filesys/pintos_fs.c` | Pintos FS adapter (wraps existing inode.c) |
 
-## Files to Modify
+## Files to Modify (VFS Core)
 
 | File | Changes |
 |------|---------|
-| `src/filesys/filesys.c` | Add VFS init, mount root, remove legacy wrappers |
-| `src/filesys/filesys.h` | Export VFS types, remove legacy struct references |
+| `src/filesys/filesys.c` | Add VFS init, mount root |
+| `src/filesys/filesys.h` | Export VFS types |
 | `src/filesys/Makefile` | Add new source files |
-| `src/userprog/syscall.c` | **Full migration**: Use `vfs_*` API directly |
-| `src/userprog/process.h` | Update CWD to `vfs_inode*`, fd_entry to use `vfs_file*`/`vfs_dir*` |
-| `src/userprog/process.c` | Update fork/exec for VFS file descriptor handling |
-
-## Files Unchanged
-
-- `src/filesys/cache.c` - Already abstract
-- `src/filesys/inode.c` - Kept as-is, wrapped by pintos_fs.c
-- `src/filesys/file.c` - Deprecated, functionality moves to VFS
-- `src/filesys/directory.c` - Deprecated, functionality moves to pintos_fs.c
+| `src/userprog/syscall.c` | Use `vfs_*` API, remove FD_CONSOLE |
+| `src/userprog/process.h` | Update fd_entry to use vfs_file/vfs_dir |
+| `src/userprog/process.c` | Init fd 0/1/2 via device files |
 
 ---
 
 ## Core Data Structures
 
-### vfs.h
+### vfs.h - Base Structures
 
 ```c
 /* Filesystem type (one per fs implementation) */
 struct vfs_fs_type {
-    const char *name;                    /* "pintos", "fat32", etc. */
+    const char *name;                    /* "pintos", "devfs", etc. */
     struct vfs_superblock *(*mount)(struct block *device, void *data);
     void (*unmount)(struct vfs_superblock *sb);
     struct list_elem elem;
@@ -81,29 +94,36 @@ struct vfs_superblock {
     struct lock open_inodes_lock;
 };
 
-/* Generic inode */
+/* Generic inode - WITH DEVICE SUPPORT */
 struct vfs_inode {
     struct vfs_superblock *sb;
-    uint32_t ino;                        /* Sector number for Pintos */
+    uint32_t ino;                        /* Inode number */
     off_t length;
-    bool is_dir;
-    bool removed;
     int open_cnt;
     int deny_write_cnt;
+    bool removed;
     struct lock lock;
     const struct vfs_inode_ops *i_ops;
     const struct vfs_file_ops *f_ops;
-    void *private_data;                  /* FS-specific (inode_disk for Pintos) */
+    void *private_data;                  /* FS-specific data */
     struct list_elem elem;
+
+    /* Device support */
+    uint16_t i_mode;                     /* S_IFREG, S_IFDIR, S_IFCHR, S_IFBLK */
+    dev_t i_rdev;                        /* Device number (for device files) */
 };
 
-/* Generic file handle */
+/* Generic file handle - WITH DEVICE SUPPORT */
 struct vfs_file {
     struct vfs_inode *inode;
     off_t pos;
     bool deny_write;
     int ref_count;
     struct lock lock;
+
+    /* Device support */
+    struct cdev *cdev;                   /* Character device (if S_IFCHR) */
+    void *cdev_ctx;                      /* Driver context from open() */
 };
 
 /* Generic directory handle */
@@ -111,6 +131,18 @@ struct vfs_dir {
     struct vfs_inode *inode;
     off_t pos;
 };
+
+/* File type constants */
+#define S_IFMT   0xF000  /* File type mask */
+#define S_IFREG  0x8000  /* Regular file */
+#define S_IFDIR  0x4000  /* Directory */
+#define S_IFCHR  0x2000  /* Character device */
+#define S_IFBLK  0x6000  /* Block device */
+
+#define S_ISREG(m)  (((m) & S_IFMT) == S_IFREG)
+#define S_ISDIR(m)  (((m) & S_IFMT) == S_IFDIR)
+#define S_ISCHR(m)  (((m) & S_IFMT) == S_IFCHR)
+#define S_ISBLK(m)  (((m) & S_IFMT) == S_IFBLK)
 ```
 
 ### Operation Tables
@@ -133,8 +165,6 @@ struct vfs_inode_ops {
     int (*rmdir)(struct vfs_inode *dir, const char *name);
     bool (*readdir)(struct vfs_inode *dir, off_t *pos, char *name, size_t size);
     off_t (*get_length)(struct vfs_inode *inode);
-    bool (*is_directory)(struct vfs_inode *inode);
-    bool (*is_removed)(struct vfs_inode *inode);
 };
 
 struct vfs_file_ops {
@@ -147,20 +177,117 @@ struct vfs_file_ops {
 
 ---
 
-## Implementation Phases
+# Part 2: Unified Device I/O Subsystem
 
-### Phase 1: VFS Infrastructure (~200 lines)
+## New Files (Device Layer)
+
+| File | Purpose |
+|------|---------|
+| `src/devices/chrdev.h` | Character device structures and API |
+| `src/devices/chrdev.c` | Character device registration/lookup |
+| `src/devices/console_dev.c` | Console as character device |
+| `src/devices/mem_dev.c` | /dev/null, /dev/zero |
+| `src/devices/serial_dev.c` | Serial port as character device |
+| `src/filesys/devfs.h` | devfs declarations |
+| `src/filesys/devfs.c` | In-memory device filesystem |
+
+## Device Number Type
+
+```c
+/* src/devices/chrdev.h */
+
+typedef uint16_t dev_t;
+
+#define MAJOR(dev)    ((unsigned)((dev) >> 8))
+#define MINOR(dev)    ((unsigned)((dev) & 0xff))
+#define MKDEV(ma,mi)  ((dev_t)(((ma) << 8) | (mi)))
+
+/* Reserved major numbers (Linux-compatible) */
+#define MEM_MAJOR     1   /* /dev/null (3), /dev/zero (5) */
+#define TTY_MAJOR     4   /* /dev/console, /dev/tty* */
+#define SERIAL_MAJOR  4   /* /dev/ttyS0 (minor 64+) */
+```
+
+## Character Device Operations
+
+```c
+/* src/devices/chrdev.h */
+
+struct cdev_file_ops {
+    /* Open device - allocate per-open context */
+    int (*open)(struct cdev *cdev, unsigned minor, void **ctx);
+
+    /* Close device - free per-open context */
+    void (*close)(struct cdev *cdev, void *ctx);
+
+    /* Read from device */
+    off_t (*read)(struct cdev *cdev, void *ctx, void *buf, off_t size);
+
+    /* Write to device */
+    off_t (*write)(struct cdev *cdev, void *ctx, const void *buf, off_t size);
+
+    /* Device-specific control */
+    int (*ioctl)(struct cdev *cdev, void *ctx, unsigned cmd, unsigned long arg);
+};
+
+struct cdev {
+    unsigned major;              /* Major device number */
+    unsigned minor_base;         /* First minor number */
+    unsigned minor_count;        /* Number of minors */
+    const char *name;            /* Device name */
+    const struct cdev_file_ops *ops;
+    void *private_data;
+    struct list_elem elem;
+};
+
+/* API */
+void chrdev_init(void);
+int chrdev_register(struct cdev *cdev);
+void chrdev_unregister(struct cdev *cdev);
+struct cdev *chrdev_find(unsigned major);
+```
+
+## devfs Structure
+
+```c
+/* src/filesys/devfs.h */
+
+struct devfs_entry {
+    char name[NAME_MAX + 1];     /* Entry name */
+    uint16_t mode;               /* S_IFCHR or S_IFBLK */
+    dev_t rdev;                  /* Device number */
+    struct devfs_entry *parent;
+    struct list children;        /* If directory */
+    struct list_elem elem;
+};
+
+struct devfs_sb_info {
+    struct devfs_entry *root;
+    struct lock entries_lock;
+    uint32_t next_ino;
+};
+
+/* API */
+void devfs_init(void);
+int devfs_mknod(const char *name, uint16_t mode, dev_t dev);
+```
+
+---
+
+# Part 3: Implementation Phases
+
+## Phase 1: VFS Infrastructure (~200 lines)
 
 **Files:** `vfs.h`, `vfs.c`
 
-1. Define all structs in `vfs.h`
+1. Define all structs in `vfs.h` (including device fields)
 2. Implement in `vfs.c`:
    - `vfs_init()` - Initialize global state
    - `vfs_register_fs_type()` / `vfs_find_fs_type()`
    - `vfs_mount()` / `vfs_unmount()`
    - `vfs_inode_open()` / `vfs_inode_close()` / `vfs_inode_reopen()`
 
-### Phase 2: Path Resolution (~150 lines)
+## Phase 2: Path Resolution (~150 lines)
 
 **Files:** `vfs.c`
 
@@ -168,8 +295,9 @@ struct vfs_file_ops {
 2. Implement `vfs_parse_path()` - Tokenize and traverse
 3. Handle "." and ".." during traversal
 4. Support both absolute and relative paths
+5. **Mount point crossing** - resolve `/dev/...` to devfs
 
-### Phase 3: Pintos FS Adapter (~400 lines)
+## Phase 3: Pintos FS Adapter (~400 lines)
 
 **Files:** `pintos_fs.h`, `pintos_fs.c`
 
@@ -184,100 +312,296 @@ struct vfs_file_ops {
 4. Implement `pintos_file_ops`:
    - `read` / `write` - Wrap existing byte_to_sector logic
    - `deny_write` / `allow_write`
-5. Implement `pintos_mount()` / `pintos_unmount()`
-6. Register with `vfs_register_fs_type()`
+5. Register with `vfs_register_fs_type()`
 
-### Phase 4: High-Level VFS API (~150 lines)
+## Phase 4: Character Device Layer (~200 lines)
+
+**Files:** `chrdev.h`, `chrdev.c`
+
+```c
+/* chrdev.c */
+static struct list chrdev_list;
+static struct lock chrdev_lock;
+
+void chrdev_init(void) {
+    list_init(&chrdev_list);
+    lock_init(&chrdev_lock);
+}
+
+int chrdev_register(struct cdev *cdev) {
+    lock_acquire(&chrdev_lock);
+    /* Check for major conflict, add to list */
+    list_push_back(&chrdev_list, &cdev->elem);
+    lock_release(&chrdev_lock);
+    return 0;
+}
+
+struct cdev *chrdev_find(unsigned major) {
+    lock_acquire(&chrdev_lock);
+    /* Search list for matching major */
+    lock_release(&chrdev_lock);
+    return result;
+}
+```
+
+## Phase 5: Console Device Driver (~150 lines)
+
+**Files:** `console_dev.c`
+
+Wraps existing `input_getc()` and `putbuf()`:
+
+```c
+static off_t console_read(struct cdev *cdev, void *ctx, void *buf, off_t size) {
+    struct console_ctx *cctx = ctx;
+    if (cctx->mode != CONSOLE_READ)
+        return -1;
+
+    char *cbuf = buf;
+    for (off_t i = 0; i < size; i++)
+        cbuf[i] = input_getc();
+    return size;
+}
+
+static off_t console_write(struct cdev *cdev, void *ctx, const void *buf, off_t size) {
+    struct console_ctx *cctx = ctx;
+    if (cctx->mode != CONSOLE_WRITE)
+        return -1;
+
+    putbuf(buf, size);
+    return size;
+}
+
+static struct cdev console_cdev = {
+    .major = TTY_MAJOR,
+    .minor_base = 0,
+    .minor_count = 3,  /* 0=stdin, 1=stdout, 2=stderr */
+    .name = "console",
+    .ops = &console_ops,
+};
+```
+
+## Phase 6: Memory Devices (~80 lines)
+
+**Files:** `mem_dev.c`
+
+```c
+/* /dev/null - discard writes, EOF on read */
+static off_t null_read(...) { return 0; }
+static off_t null_write(...) { return size; }
+
+/* /dev/zero - return zeros on read */
+static off_t zero_read(...) { memset(buf, 0, size); return size; }
+
+static struct cdev mem_cdev = {
+    .major = MEM_MAJOR,
+    .minor_base = 0,
+    .minor_count = 16,
+    .name = "mem",
+    .ops = &mem_ops,
+};
+```
+
+## Phase 7: devfs Filesystem (~300 lines)
+
+**Files:** `devfs.h`, `devfs.c`
+
+In-memory filesystem mounted at `/dev/`:
+
+```c
+void devfs_init(void) {
+    vfs_register_fs_type(&devfs_fs_type);
+    vfs_mount("devfs", "/dev", NULL, NULL);
+
+    /* Create standard device nodes */
+    devfs_mknod("null",    S_IFCHR, MKDEV(MEM_MAJOR, 3));
+    devfs_mknod("zero",    S_IFCHR, MKDEV(MEM_MAJOR, 5));
+    devfs_mknod("console", S_IFCHR, MKDEV(TTY_MAJOR, 0));
+    devfs_mknod("stdin",   S_IFCHR, MKDEV(TTY_MAJOR, 0));
+    devfs_mknod("stdout",  S_IFCHR, MKDEV(TTY_MAJOR, 1));
+    devfs_mknod("stderr",  S_IFCHR, MKDEV(TTY_MAJOR, 2));
+    devfs_mknod("ttyS0",   S_IFCHR, MKDEV(SERIAL_MAJOR, 64));
+}
+```
+
+## Phase 8: VFS Device Integration (~100 lines)
 
 **Files:** `vfs.c`
 
-1. Implement file operations:
-   - `vfs_create()` / `vfs_open()` / `vfs_remove()`
-   - `vfs_file_read()` / `vfs_file_write()`
-   - `vfs_file_seek()` / `vfs_file_tell()` / `vfs_file_length()`
-   - `vfs_file_close()`
-2. Implement directory operations:
-   - `vfs_mkdir()` / `vfs_rmdir()`
-   - `vfs_dir_open()` / `vfs_dir_close()` / `vfs_readdir()`
-   - `vfs_chdir()`
+Add device dispatch to VFS operations:
 
-### Phase 5: Integration (~100 lines)
+```c
+/* vfs_open() - handle device files */
+struct vfs_file *vfs_open(const char *path) {
+    struct vfs_inode *inode = vfs_resolve_path(path);
+    struct vfs_file *file = malloc(sizeof(struct vfs_file));
+    file->inode = inode;
+    file->cdev = NULL;
+    file->cdev_ctx = NULL;
 
-**Files:** `filesys.c`, `filesys.h`, `Makefile`
+    /* Device file? */
+    if (S_ISCHR(inode->i_mode)) {
+        struct cdev *cdev = chrdev_find(MAJOR(inode->i_rdev));
+        if (cdev && cdev->ops->open) {
+            cdev->ops->open(cdev, MINOR(inode->i_rdev), &file->cdev_ctx);
+        }
+        file->cdev = cdev;
+    }
+    return file;
+}
 
-1. Modify `filesys_init()`:
-   ```c
-   vfs_init();
-   pintos_fs_init();
-   // ... existing format/free_map code ...
-   vfs_mount("pintos", "/", fs_device, NULL);
-   ```
-2. Update `filesys.h` to export VFS types
-3. Update Makefile to include new sources
+/* vfs_file_read() - dispatch to device */
+off_t vfs_file_read(struct vfs_file *file, void *buf, off_t size) {
+    if (file->cdev != NULL)
+        return file->cdev->ops->read(file->cdev, file->cdev_ctx, buf, size);
+    return file->inode->f_ops->read(file->inode, buf, size, file->pos);
+}
 
-### Phase 6: Full Syscall Migration (~200 lines)
+/* vfs_file_write() - dispatch to device */
+off_t vfs_file_write(struct vfs_file *file, const void *buf, off_t size) {
+    if (file->cdev != NULL)
+        return file->cdev->ops->write(file->cdev, file->cdev_ctx, buf, size);
+    return file->inode->f_ops->write(file->inode, buf, size, file->pos);
+}
+```
+
+## Phase 9: Syscall Migration (~150 lines)
 
 **Files:** `syscall.c`, `process.h`, `process.c`
 
-1. Update `fd_entry` struct:
-   ```c
-   struct fd_entry {
-       enum fd_type type;
-       union {
-           struct vfs_file *file;   /* Was: struct file* */
-           struct vfs_dir *dir;     /* Was: struct dir* */
-       };
-   };
-   ```
-2. Update CWD handling:
-   ```c
-   struct vfs_inode *cwd_inode;  /* Was: struct dir *cwd */
-   ```
-3. Migrate all syscall handlers to use VFS API:
-   - `SYS_OPEN` -> `vfs_open()`
-   - `SYS_CREATE` -> `vfs_create()`
-   - `SYS_READ` -> `vfs_file_read()`
-   - `SYS_WRITE` -> `vfs_file_write()`
-   - `SYS_MKDIR` -> `vfs_mkdir()`
-   - `SYS_CHDIR` -> `vfs_chdir()`
-   - etc.
-4. Update fork/exec to copy VFS file references
-5. Remove includes of deprecated `file.h`, `directory.h`
+Remove `FD_CONSOLE` special case:
 
-### Phase 7: Mount Table Implementation (~100 lines)
+```c
+/* Before */
+enum fd_type { FD_NONE, FD_FILE, FD_DIR, FD_CONSOLE };
+
+/* After - FD_CONSOLE removed! */
+enum fd_type { FD_NONE, FD_FILE, FD_DIR };
+
+struct fd_entry {
+    enum fd_type type;
+    union {
+        struct vfs_file *vfs_file;
+        struct vfs_dir *vfs_dir;
+    };
+};
+```
+
+Initialize stdin/stdout/stderr via device files:
+
+```c
+/* process.c - setup_fd_table() */
+static bool setup_fd_table(struct process *pcb) {
+    pcb->fd_table[STDIN_FILENO].type = FD_FILE;
+    pcb->fd_table[STDIN_FILENO].vfs_file = vfs_open("/dev/stdin");
+
+    pcb->fd_table[STDOUT_FILENO].type = FD_FILE;
+    pcb->fd_table[STDOUT_FILENO].vfs_file = vfs_open("/dev/stdout");
+
+    pcb->fd_table[STDERR_FILENO].type = FD_FILE;
+    pcb->fd_table[STDERR_FILENO].vfs_file = vfs_open("/dev/stderr");
+
+    return true;
+}
+```
+
+## Phase 10: Mount Table (~100 lines)
 
 **Files:** `vfs.c`, `vfs.h`
 
-1. Implement mount point resolution in `vfs_parse_path()`:
-   ```c
-   struct vfs_mount *vfs_find_mount(const char *path);
-   ```
-2. Support mounting at arbitrary paths (e.g., `/mnt/usb`)
-3. Longest-prefix matching for path -> mount resolution
-4. Add `vfs_mount()` / `vfs_unmount()` with proper cleanup
+1. Implement mount point resolution in `vfs_parse_path()`
+2. Longest-prefix matching for path -> mount resolution
+3. Support `/dev/...` crossing to devfs mount
 
 ---
 
-## Key Design Decisions
+# Part 4: Concurrency Strategy
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Open inode list | Per-superblock | Allows multiple mounted filesystems |
-| Operation dispatch | Function pointers | Standard VFS pattern, minimal overhead |
-| Backward compatibility | **Full migration** | Update syscall.c to use VFS directly, cleaner long-term |
-| Path resolution | In VFS layer | Generic across all fs types |
-| Mount table | **Full support** | Multiple mount points (/, /mnt/*, etc.) |
-| Scope | **Complete implementation** | Full VFS + Pintos adapter (~1000+ lines) |
+## Lock Hierarchy (6 levels)
+
+```
+Level 1: vfs_global_lock
+    +-- Protects: registered_fs_types list, mount_table list
+    +-- Acquired: fs type registration, mount/unmount
+
+Level 2: chrdev_lock
+    +-- Protects: chrdev_list (registered character devices)
+    +-- Acquired: chrdev_register(), chrdev_find()
+
+Level 3: superblock->open_inodes_lock (per-mounted-fs)
+    +-- Protects: superblock's open_inodes list
+    +-- Acquired: vfs_inode_open(), vfs_inode_close()
+
+Level 4: vfs_inode->lock (per-inode)
+    +-- Protects: open_cnt, deny_write_cnt, removed, length
+    +-- Acquired: inode metadata operations
+
+Level 5: vfs_file->lock (per-file-handle)
+    +-- Protects: ref_count
+    +-- Acquired: file_dup(), file_close()
+
+Level 6: cache locks (existing)
+    +-- Already implemented in cache.c
+```
+
+## Lock Ordering Rules
+
+```
+ALWAYS acquire in this order (never reverse):
+
+vfs_global_lock
+    -> chrdev_lock
+        -> superblock->open_inodes_lock
+            -> vfs_inode->lock
+                -> vfs_file->lock
+                    -> cache internal locks
+```
 
 ---
 
-## Testing Strategy
+# Part 5: Initialization Order
 
-1. **Unit tests:** New tests for VFS operations
-2. **Regression tests:** All existing `filesys/base/*` and `filesys/extended/*` tests must pass
-3. **WAL integration:** Verify WAL still works through VFS layer
+```c
+/* threads/init.c */
+void main(void) {
+    // ... early init ...
+
+    /* Phase 4: Character device subsystem */
+    chrdev_init();
+
+    /* Phases 5-6: Register device drivers */
+    mem_dev_init();       /* /dev/null, /dev/zero */
+    console_dev_init();   /* /dev/console, stdin, stdout, stderr */
+    serial_dev_init();    /* /dev/ttyS0 */
+
+    /* Phases 1-3: VFS and pintos_fs */
+    filesys_init(format);
+
+    /* Phase 7: Mount devfs */
+    devfs_init();
+
+    // ... rest of init ...
+}
+```
 
 ---
+
+# Part 6: Summary
+
+## All New Files
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `src/filesys/vfs.h` | ~120 | VFS structures and API |
+| `src/filesys/vfs.c` | ~400 | VFS implementation |
+| `src/filesys/pintos_fs.h` | ~30 | Pintos FS declarations |
+| `src/filesys/pintos_fs.c` | ~400 | Pintos FS adapter |
+| `src/filesys/devfs.h` | ~50 | devfs declarations |
+| `src/filesys/devfs.c` | ~250 | devfs implementation |
+| `src/devices/chrdev.h` | ~60 | Character device API |
+| `src/devices/chrdev.c` | ~140 | Character device registry |
+| `src/devices/console_dev.c` | ~100 | Console character device |
+| `src/devices/mem_dev.c` | ~80 | /dev/null, /dev/zero |
+| `src/devices/serial_dev.c` | ~80 | /dev/ttyS0 |
 
 ## Estimated Effort
 
@@ -286,115 +610,66 @@ struct vfs_file_ops {
 | Phase 1: VFS Infrastructure | ~200 | Medium |
 | Phase 2: Path Resolution | ~150 | Medium |
 | Phase 3: Pintos Adapter | ~400 | High |
-| Phase 4: High-Level API | ~150 | Medium |
-| Phase 5: Integration | ~100 | Low |
-| Phase 6: Syscall Migration | ~200 | Medium |
-| Phase 7: Mount Table | ~100 | Medium |
-| **Total** | **~1300** | |
+| Phase 4: Character Device Layer | ~200 | Medium |
+| Phase 5: Console Device | ~150 | Low |
+| Phase 6: Memory Devices | ~80 | Low |
+| Phase 7: devfs | ~300 | High |
+| Phase 8: VFS Device Integration | ~100 | Medium |
+| Phase 9: Syscall Migration | ~150 | Medium |
+| Phase 10: Mount Table | ~100 | Medium |
+| **Total** | **~1830** | |
 
 ---
 
-## Concurrency Strategy
+# Part 7: Testing Strategy
 
-### Current Locking (in inode.c)
+## Unit Tests
 
-```
-Level 1: open_inodes_lock (global)
-    +-- Protects: list traversal, insertion, removal
+1. `chrdev_register()` / `chrdev_find()` - device registration
+2. Console read/write via `/dev/console`
+3. `/dev/null` - returns EOF on read, accepts all writes
+4. `/dev/zero` - returns zeros on read
 
-Level 2: inode->lock (per-inode)
-    +-- Protects: open_cnt, deny_write_cnt, removed, data (inode_disk)
+## Integration Tests
 
-Lock ordering: open_inodes_lock -> inode->lock (never reverse)
-```
+1. All existing `tests/userprog/*` must pass
+2. All existing `tests/filesys/*` must pass
+3. `open("/dev/null")` and write to it
+4. `open("/dev/zero")` and read zeros
 
-### VFS Lock Hierarchy (5 levels)
-
-```
-Level 1: vfs_global_lock
-    +-- Protects: registered_fs_types list, mount_table list
-    +-- Acquired: fs type registration, mount/unmount operations
-    +-- Granularity: Coarse, rarely held
-
-Level 2: superblock->open_inodes_lock (per-mounted-fs)
-    +-- Protects: superblock's open_inodes list
-    +-- Acquired: vfs_inode_open(), vfs_inode_close()
-    +-- Mirrors current open_inodes_lock but per-fs
-
-Level 3: vfs_inode->lock (per-inode)
-    +-- Protects: open_cnt, deny_write_cnt, removed, length, private_data
-    +-- Acquired: inode metadata operations, file extension
-    +-- Mirrors current inode->lock
-
-Level 4: vfs_file->lock (per-file-handle)
-    +-- Protects: ref_count only
-    +-- Acquired: file_dup(), file_close()
-    +-- Lightweight, rarely contended
-
-Level 5: cache locks (existing)
-    +-- Already implemented in cache.c
-    +-- No changes needed
-```
-
-### Lock Ordering Rules
-
-```
-ALWAYS acquire in this order (never reverse):
-
-vfs_global_lock
-    -> superblock->open_inodes_lock
-        -> vfs_inode->lock
-            -> vfs_file->lock
-                -> cache internal locks
-```
-
-### Concurrency Scenarios
-
-| Operation | Locks Acquired | Order |
-|-----------|---------------|-------|
-| `vfs_mount()` | vfs_global_lock | 1 |
-| `vfs_inode_open()` | sb->open_inodes_lock -> inode->lock | 2->3 |
-| `vfs_inode_close()` | sb->open_inodes_lock -> inode->lock | 2->3 |
-| `vfs_file_read()` | (none - reads inode->length atomically) | - |
-| `vfs_file_write()` | inode->lock (for extension check) | 3 |
-| `vfs_file_dup()` | file->lock | 4 |
-| `vfs_parse_path()` | Multiple inode->locks (released before next) | 3 (serial) |
-
-### Path Resolution Concurrency
-
-**Challenge:** Traversing `/a/b/c` requires looking up multiple directories. Another thread could remove `/a/b` mid-traversal.
-
-**Strategy: Reference counting with early validation**
+## Manual Testing
 
 ```c
-bool vfs_parse_path(const char *path, ...) {
-    struct vfs_inode *cur = vfs_get_start_dir(path);  // +1 ref
+/* User program test */
+int fd = open("/dev/null");
+write(fd, "hello", 5);  /* Should succeed, discard data */
+close(fd);
 
-    for each component:
-        // Hold reference to cur while looking up next
-        struct vfs_inode *next = cur->i_ops->lookup(cur, name);  // +1 ref
-
-        if (next == NULL || next->removed) {
-            vfs_inode_close(cur);   // -1 ref
-            vfs_inode_close(next);  // -1 ref if not NULL
-            return false;
-        }
-
-        vfs_inode_close(cur);  // -1 ref (safe, next holds ref)
-        cur = next;
-
-    *result = cur;  // Transfer ownership to caller
-    return true;
-}
+fd = open("/dev/zero");
+char buf[10];
+read(fd, buf, 10);  /* Should return 10 zeros */
+close(fd);
 ```
-
-**Key invariant:** Never release a directory's reference until the next directory is opened and validated.
 
 ---
 
-## Critical Paths
+# Part 8: Key Design Decisions
 
-1. `pintos_fs.c` must correctly wrap `byte_to_sector()` and `inode_extend()` logic
-2. `vfs_parse_path()` must handle edge cases: "/", ".", "..", trailing slashes
-3. Reference counting in `vfs_inode_open/close` must match existing semantics
-4. WAL integration via cache layer should work transparently
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Device number type | `uint16_t` | Simple, sufficient for educational OS |
+| devfs storage | In-memory | No persistence needed for /dev |
+| Console minor scheme | 0=stdin, 1=stdout, 2=stderr | Matches Unix tradition |
+| VFS + device integration | Unified vfs_file | Single abstraction for files and devices |
+| cdev ops signature | Separate from vfs_file_ops | Devices don't need seek/tell |
+| FD_CONSOLE removal | Yes | Clean unified model |
+
+---
+
+# Part 9: Critical Paths
+
+1. `vfs_parse_path()` must correctly cross mount points (/ to /dev)
+2. `chrdev_find()` must be fast (called on every device open)
+3. Console minor number dispatch (0 vs 1/2) for read/write permissions
+4. Reference counting across VFS inode/file and device contexts
+5. WAL integration via cache layer should work transparently

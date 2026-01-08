@@ -80,6 +80,56 @@ export PATH="$PATH:/home/workspace/group0/src/utils"
 # Pintos development aliases
 alias rebuild-index='cd /home/workspace/group0/src/threads && bear -- make && cp compile_commands.json /home/workspace/group0/ && cd - && echo "✓ Code navigation index rebuilt!"'
 
+# Pintos test shortcut: pt <project> [test-name|list]
+# Examples:
+#   pt threads              - Run all thread tests
+#   pt userprog             - Run all userprog tests
+#   pt threads list         - List all available thread tests
+#   pt threads alarm-single - Run single test
+#   pt vm page-linear       - Run single VM test
+pt() {
+    local project=$1
+    local test=$2
+    local src_dir="/home/workspace/group0/src"
+
+    if [[ -z "$project" ]]; then
+        echo "Usage: pt <project> [test-name|list]"
+        echo "Projects: threads, userprog, vm, filesys"
+        echo ""
+        echo "Examples:"
+        echo "  pt threads              # Run all thread tests"
+        echo "  pt threads list         # List available tests"
+        echo "  pt userprog args-single # Run single test"
+        return 1
+    fi
+
+    if [[ ! -d "$src_dir/$project" ]]; then
+        echo "Error: Unknown project '$project'"
+        echo "Available: threads, userprog, vm, filesys"
+        return 1
+    fi
+
+    if [[ "$test" == "list" ]]; then
+        echo "Available $project tests:"
+        echo "─────────────────────────"
+        find "$src_dir/tests/$project" -name "*.c" -type f 2>/dev/null | \
+            xargs -I{} basename {} .c | sort | column
+        return 0
+    fi
+
+    cd "$src_dir/$project"
+
+    if [[ -z "$test" ]]; then
+        echo "Running all $project tests..."
+        make check
+    else
+        echo "Running test: $test"
+        make "tests/$project/$test.result"
+    fi
+
+    cd - > /dev/null
+}
+
 
 # bun completions
 [ -s "/run/host_virtiofs/Users/hienn/hienn/cs162-workspace/.workspace/.bun/_bun" ] && source "/run/host_virtiofs/Users/hienn/hienn/cs162-workspace/.workspace/.bun/_bun"

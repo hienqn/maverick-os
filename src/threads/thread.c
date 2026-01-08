@@ -568,8 +568,11 @@ static void fair_update_vruntime(struct thread* t, unsigned ticks_used) {
   int64_t delta = ((int64_t)ticks_used * VRUNTIME_SCALE * 1024) / weight;
   t->vruntime += delta;
 
-  /* Update deadline for EEVDF (CFS doesn't use it but harmless to set) */
-  t->deadline = t->vruntime + EEVDF_SLICE_VRUNTIME;
+  /* Update deadline for EEVDF: deadline offset is also weighted.
+     Higher weight = shorter deadline offset = higher priority.
+     deadline = vruntime + (TIME_SLICE * NICE0_WEIGHT / weight) */
+  int64_t slice_vruntime = ((int64_t)TIME_SLICE * VRUNTIME_SCALE * 1024) / weight;
+  t->deadline = t->vruntime + slice_vruntime;
 }
 
 /* Yields the CPU.  The current thread is not put to sleep and
@@ -869,10 +872,13 @@ static void init_thread(struct thread* t, const char* name, int priority) {
   t->tickets = 100; // Default ticket count for lottery
   t->stride = 0;    // Will be computed from tickets
   t->pass = 0;      // Initial pass value
-  /* CFS/EEVDF: Start at current min_vruntime to be immediately eligible */
-  t->vruntime = eevdf_min_vruntime;
-  t->deadline = eevdf_min_vruntime + EEVDF_SLICE_VRUNTIME;
+  /* CFS/EEVDF: Start at current min_vruntime to be immediately eligible.
+     Deadline offset is weighted: nice=0 has weight=1024, so offset = 4*1024*1024/1024 = 4096 */
   t->nice_fair = 0; // Default nice value (neutral weight)
+  t->vruntime = eevdf_min_vruntime;
+  int64_t init_slice =
+      ((int64_t)TIME_SLICE * VRUNTIME_SCALE * 1024) / fair_weight[20]; // nice=0 -> index 20
+  t->deadline = eevdf_min_vruntime + init_slice;
 
   /* MLFQS scheduler fields initialization */
   t->nice = 0;       // Default nice value (neutral)

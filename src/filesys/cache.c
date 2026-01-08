@@ -1,7 +1,18 @@
 #include "filesys/cache.h"
 #include "filesys/cache_prefetch.h"
 #include "filesys/filesys.h"
+#include "devices/raid.h"
 #include "devices/timer.h"
+
+/*
+ * TODO: To enable RAID support, replace block_read/block_write calls with:
+ *   if (raid_is_initialized())
+ *     raid_read(sector, buffer);  or  raid_write(sector, buffer);
+ *   else
+ *     block_read(fs_device, sector, buffer);  or  block_write(...)
+ *
+ * Lines to modify: 239, 321, 396, 467, 488, 520
+ */
 #include "threads/malloc.h"
 #include "threads/thread.h"
 #include <stdio.h>

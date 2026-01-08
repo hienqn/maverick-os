@@ -39,6 +39,7 @@ devices_SRC += devices/shutdown.c	# Reboot and power off.
 devices_SRC += devices/speaker.c	# PC speaker.
 devices_SRC += devices/pci.c		# PCI configuration space access.
 devices_SRC += devices/e1000.c		# E1000 network device.
+devices_SRC += devices/raid.c		# Software RAID layer.
 
 # Library code shared between kernel and user programs.
 lib_SRC  = lib/debug.c			# Debug helpers.

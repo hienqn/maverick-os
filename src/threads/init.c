@@ -216,6 +216,11 @@ int main(void) {
 #ifdef FILESYS
   /* Initialize file system. */
   ide_init();
+  /* TODO: Call raid_init() here to enable RAID support
+   * #include "devices/raid.h" at top of file, then:
+   * raid_init(RAID_LEVEL_0, 1);  // for striping
+   * raid_init(RAID_LEVEL_1, 0);  // for mirroring
+   */
   locate_block_devices();
   filesys_init(format_filesys);
 #endif

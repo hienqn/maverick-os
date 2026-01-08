@@ -82,6 +82,7 @@
 #define USERPROG_PROCESS_H
 
 #include "threads/thread.h"
+#include "userprog/filedesc.h"
 #include "vm/page.h"
 #include <stdint.h>
 
@@ -133,34 +134,16 @@ typedef void (*stub_fun)(pthread_fun, void*); /* Stub wrapper function. */
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * Each process has a file descriptor table indexed 0 to MAX_FILE_DESCRIPTOR-1.
- * FDs 0 and 1 are reserved for STDIN/STDOUT (handled specially in syscalls).
- * Each entry can hold either a regular file or a directory.
+ * FDs 0, 1, 2 are reserved for STDIN/STDOUT/STDERR.
+ *
+ * File descriptors point to Open File Descriptions (OFDs) in a global table.
+ * Multiple FDs can share the same OFD (via dup/dup2/fork), meaning they share
+ * the file position and flags. See userprog/filedesc.h for OFD details.
+ *
+ * Types (enum fd_type, enum console_mode) and struct fd_entry are defined
+ * in userprog/filedesc.h.
  *
  * ═══════════════════════════════════════════════════════════════════════════*/
-
-/* File descriptor entry types. */
-enum fd_type {
-  FD_NONE,   /* Unused slot (available for allocation). */
-  FD_FILE,   /* Regular file. */
-  FD_DIR,    /* Directory. */
-  FD_CONSOLE /* Console device (stdin/stdout/stderr). */
-};
-
-/* Console I/O mode (only used when type == FD_CONSOLE). */
-enum console_mode {
-  CONSOLE_READ, /* stdin - read from keyboard. */
-  CONSOLE_WRITE /* stdout/stderr - write to display. */
-};
-
-/* File descriptor entry - union of file and directory. */
-struct fd_entry {
-  enum fd_type type;       /* What kind of entry this is. */
-  enum console_mode cmode; /* Console mode (only for FD_CONSOLE). */
-  union {
-    struct file* file; /* If type == FD_FILE. */
-    struct dir* dir;   /* If type == FD_DIR. */
-  };
-};
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * PROCESS CONTROL BLOCK (PCB)

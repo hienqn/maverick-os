@@ -156,19 +156,14 @@ static void pcb_init(struct process* pcb, struct thread* main_thread) {
 
   /* File descriptor table - initialize all slots to unused */
   for (int i = 0; i < MAX_FILE_DESCRIPTOR; i++) {
-    pcb->fd_table[i].type = FD_NONE;
-    pcb->fd_table[i].file = NULL;
+    pcb->fd_table[i].ofd = NULL;
   }
 
-  /* Initialize standard file descriptors for console I/O */
-  pcb->fd_table[STDIN_FILENO].type = FD_CONSOLE;
-  pcb->fd_table[STDIN_FILENO].cmode = CONSOLE_READ;
-
-  pcb->fd_table[STDOUT_FILENO].type = FD_CONSOLE;
-  pcb->fd_table[STDOUT_FILENO].cmode = CONSOLE_WRITE;
-
-  pcb->fd_table[STDERR_FILENO].type = FD_CONSOLE;
-  pcb->fd_table[STDERR_FILENO].cmode = CONSOLE_WRITE;
+  /* Initialize standard file descriptors for console I/O.
+     These share the global console OFDs from the GOFD table. */
+  pcb->fd_table[STDIN_FILENO].ofd = ofd_dup(ofd_get_console(STDIN_FILENO));
+  pcb->fd_table[STDOUT_FILENO].ofd = ofd_dup(ofd_get_console(STDOUT_FILENO));
+  pcb->fd_table[STDERR_FILENO].ofd = ofd_dup(ofd_get_console(STDERR_FILENO));
 
   /* Threading support */
   list_init(&pcb->threads);
@@ -528,36 +523,26 @@ static void fork_process(void* aux) {
     }
   }
 
-  /* Duplicate all file descriptors (including stdin/stdout/stderr).
-     Use file_dup() to share file pointers between parent and child.
+  /* Duplicate file descriptors from parent to child.
+     With GOFD, we simply share the same OFDs - increment ref_count.
      This implements POSIX fork semantics where parent and child share
      the same file description (position, flags, etc.). */
   if (success) {
     struct fd_entry* parent_fd = load_info->parent_process->fd_table;
     for (int i = 0; i < MAX_FILE_DESCRIPTOR; i++) {
-      if (parent_fd[i].type == FD_FILE && parent_fd[i].file != NULL) {
-        /* Share the same file struct - increments reference count */
-        t->pcb->fd_table[i].type = FD_FILE;
-        t->pcb->fd_table[i].file = file_dup(parent_fd[i].file);
-      } else if (parent_fd[i].type == FD_DIR && parent_fd[i].dir != NULL) {
-        /* Share the same dir struct - reopen to get new reference */
-        t->pcb->fd_table[i].type = FD_DIR;
-        t->pcb->fd_table[i].dir = dir_reopen(parent_fd[i].dir);
-      } else if (parent_fd[i].type == FD_CONSOLE) {
-        /* Console fds are inherited - just copy type and mode */
-        t->pcb->fd_table[i].type = FD_CONSOLE;
-        t->pcb->fd_table[i].cmode = parent_fd[i].cmode;
+      if (parent_fd[i].ofd != NULL) {
+        /* Share the same OFD - increments reference count */
+        t->pcb->fd_table[i].ofd = ofd_dup(parent_fd[i].ofd);
       }
     }
   }
-  /* Failed to duplicate file descriptor, close all the files already opened */
+  /* Failed to duplicate file descriptor, close all the OFDs already opened */
   /* Only cleanup if PCB was successfully allocated (t->pcb is not NULL) */
   if (!success && pcb_success) {
-    for (int i = 2; i < MAX_FILE_DESCRIPTOR; i++) {
-      if (t->pcb->fd_table[i].type == FD_FILE && t->pcb->fd_table[i].file != NULL) {
-        file_close(t->pcb->fd_table[i].file);
-      } else if (t->pcb->fd_table[i].type == FD_DIR && t->pcb->fd_table[i].dir != NULL) {
-        dir_close(t->pcb->fd_table[i].dir);
+    for (int i = 0; i < MAX_FILE_DESCRIPTOR; i++) {
+      if (t->pcb->fd_table[i].ofd != NULL) {
+        ofd_close(t->pcb->fd_table[i].ofd);
+        t->pcb->fd_table[i].ofd = NULL;
       }
     }
   }
@@ -746,16 +731,11 @@ void process_exit(void) {
      can try to activate the pagedir, but it is now freed memory */
   struct process* pcb_to_free = cur->pcb;
 
-  /* Close all open file descriptors */
-  for (int i = 2; i < MAX_FILE_DESCRIPTOR; i++) {
-    if (pcb_to_free->fd_table[i].type == FD_FILE && pcb_to_free->fd_table[i].file != NULL) {
-      file_close(pcb_to_free->fd_table[i].file);
-      pcb_to_free->fd_table[i].type = FD_NONE;
-      pcb_to_free->fd_table[i].file = NULL;
-    } else if (pcb_to_free->fd_table[i].type == FD_DIR && pcb_to_free->fd_table[i].dir != NULL) {
-      dir_close(pcb_to_free->fd_table[i].dir);
-      pcb_to_free->fd_table[i].type = FD_NONE;
-      pcb_to_free->fd_table[i].dir = NULL;
+  /* Close all open file descriptors (including console FDs which have OFDs) */
+  for (int i = 0; i < MAX_FILE_DESCRIPTOR; i++) {
+    if (pcb_to_free->fd_table[i].ofd != NULL) {
+      ofd_close(pcb_to_free->fd_table[i].ofd);
+      pcb_to_free->fd_table[i].ofd = NULL;
     }
   }
 
@@ -832,7 +812,7 @@ int find_free_fd(void) {
   struct thread* t = thread_current();
   struct fd_entry* fd_table = t->pcb->fd_table;
   for (int i = 3; i < MAX_FILE_DESCRIPTOR; i++) {
-    if (fd_table[i].type == FD_NONE) {
+    if (fd_table[i].ofd == NULL) {
       return i;
     }
   }

@@ -9,6 +9,7 @@
 #include "threads/synch.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "userprog/filedesc.h"
 #include "userprog/pagedir.h"
 #include "userprog/process.h"
 #include "vm/frame.h"
@@ -96,11 +97,11 @@ static struct file* get_file_from_fd(int fd) {
   }
 
   struct fd_entry* entry = &t->pcb->fd_table[fd];
-  if (entry->type != FD_FILE || entry->file == NULL) {
+  if (entry->ofd == NULL || entry->ofd->type != FD_FILE || entry->ofd->file == NULL) {
     return NULL;
   }
 
-  return entry->file;
+  return entry->ofd->file;
 }
 
 /* ============================================================================

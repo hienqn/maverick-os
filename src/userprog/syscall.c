@@ -108,6 +108,7 @@ static int read_from_input(char* buffer, unsigned size) {
  * FILE DESCRIPTOR HELPERS
  * ─────────────────────────────────────────────────────────────────────────────
  * Common patterns for file descriptor validation and access.
+ * Now uses the Global Open File Description Table (GOFD).
  * ═══════════════════════════════════════════════════════════════════════════*/
 
 /* Validates that FD is a valid file descriptor index.
@@ -115,27 +116,35 @@ static int read_from_input(char* buffer, unsigned size) {
 static bool is_valid_fd(int fd) { return fd >= 0 && fd < MAX_FILE_DESCRIPTOR; }
 
 /* Gets the fd_entry for the given FD, or NULL if invalid.
-   Does NOT check the entry type - caller must do that. */
+   Does NOT check if the slot is in use - caller must check ofd != NULL. */
 static struct fd_entry* get_fd_entry(int fd) {
   if (!is_valid_fd(fd))
     return NULL;
   return &thread_current()->pcb->fd_table[fd];
 }
 
-/* Gets a file from fd_table, or NULL if fd is invalid or not a file. */
-static struct file* get_file_from_fd(int fd) {
+/* Gets the OFD from fd_table, or NULL if fd is invalid or slot unused. */
+static struct open_file_desc* get_ofd(int fd) {
   struct fd_entry* entry = get_fd_entry(fd);
-  if (entry == NULL || entry->type != FD_FILE || entry->file == NULL)
+  if (entry == NULL)
     return NULL;
-  return entry->file;
+  return entry->ofd;
 }
 
-/* Gets a directory from fd_table, or NULL if fd is invalid or not a dir. */
-static struct dir* get_dir_from_fd(int fd) {
-  struct fd_entry* entry = get_fd_entry(fd);
-  if (entry == NULL || entry->type != FD_DIR || entry->dir == NULL)
+/* Gets a file from fd_table (via OFD), or NULL if fd is invalid or not a file. */
+static struct file* get_file_from_fd(int fd) {
+  struct open_file_desc* ofd = get_ofd(fd);
+  if (ofd == NULL || ofd->type != FD_FILE || ofd->file == NULL)
     return NULL;
-  return entry->dir;
+  return ofd->file;
+}
+
+/* Gets a directory from fd_table (via OFD), or NULL if fd is invalid or not a dir. */
+static struct dir* get_dir_from_fd(int fd) {
+  struct open_file_desc* ofd = get_ofd(fd);
+  if (ofd == NULL || ofd->type != FD_DIR || ofd->dir == NULL)
+    return NULL;
+  return ofd->dir;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -237,9 +246,10 @@ static void syscall_handler(struct intr_frame* f) {
         break;
       }
 
-      /* Check if it's a directory or regular file */
+      /* Check if it's a directory or regular file, create appropriate OFD */
       struct inode* inode = file_get_inode(open_file);
       struct fd_entry* entry = get_fd_entry(free_fd);
+      struct open_file_desc* ofd;
 
       if (inode_is_dir(inode)) {
         struct dir* open_dir = dir_open(inode_reopen(inode));
@@ -248,12 +258,21 @@ static void syscall_handler(struct intr_frame* f) {
           f->eax = -1;
           break;
         }
-        entry->type = FD_DIR;
-        entry->dir = open_dir;
+        ofd = ofd_create_dir(open_dir);
+        if (ofd == NULL) {
+          dir_close(open_dir);
+          f->eax = -1;
+          break;
+        }
       } else {
-        entry->type = FD_FILE;
-        entry->file = open_file;
+        ofd = ofd_create_file(open_file);
+        if (ofd == NULL) {
+          file_close(open_file);
+          f->eax = -1;
+          break;
+        }
       }
+      entry->ofd = ofd;
       f->eax = free_fd;
       break;
     }
@@ -268,17 +287,10 @@ static void syscall_handler(struct intr_frame* f) {
 
       struct fd_entry* entry = &thread_current()->pcb->fd_table[fd];
 
-      if (entry->type == FD_CONSOLE) {
-        /* Allow closing console fds - mark as unused */
-        entry->type = FD_NONE;
-      } else if (entry->type == FD_FILE && entry->file != NULL) {
-        file_close(entry->file);
-        entry->type = FD_NONE;
-        entry->file = NULL;
-      } else if (entry->type == FD_DIR && entry->dir != NULL) {
-        dir_close(entry->dir);
-        entry->type = FD_NONE;
-        entry->dir = NULL;
+      /* Close the OFD (handles console, file, and directory types) */
+      if (entry->ofd != NULL) {
+        ofd_close(entry->ofd);
+        entry->ofd = NULL;
       }
       break;
     }
@@ -298,15 +310,15 @@ static void syscall_handler(struct intr_frame* f) {
         break;
       }
 
-      /* Validate fd and get entry from fd_table */
-      if (!is_valid_fd(fd)) {
+      /* Validate fd and get OFD */
+      struct open_file_desc* ofd = get_ofd(fd);
+      if (ofd == NULL) {
         f->eax = -1;
         break;
       }
-      struct fd_entry* entry = &thread_current()->pcb->fd_table[fd];
 
-      if (entry->type == FD_CONSOLE) {
-        if (entry->cmode == CONSOLE_READ) {
+      if (ofd->type == FD_CONSOLE) {
+        if (ofd->cmode == CONSOLE_READ) {
           f->eax = read_from_input(buffer, size);
         } else {
           f->eax = -1; /* Can't read from stdout/stderr */
@@ -314,7 +326,7 @@ static void syscall_handler(struct intr_frame* f) {
         break;
       }
 
-      if (entry->type == FD_FILE && entry->file != NULL) {
+      if (ofd->type == FD_FILE && ofd->file != NULL) {
         /* Read into kernel buffer first, then copy to user buffer.
            This ensures we don't hold filesystem locks if user buffer is bad. */
         char* kbuf = malloc(size);
@@ -322,7 +334,7 @@ static void syscall_handler(struct intr_frame* f) {
           f->eax = -1;
           break;
         }
-        int bytes_read = file_read(entry->file, kbuf, size);
+        int bytes_read = file_read(ofd->file, kbuf, size);
         if (bytes_read > 0) {
           memcpy(buffer, kbuf, bytes_read); /* May fault on bad user ptr - no locks held */
         }
@@ -351,15 +363,15 @@ static void syscall_handler(struct intr_frame* f) {
         break;
       }
 
-      /* Validate fd and get entry from fd_table */
-      if (!is_valid_fd(fd)) {
+      /* Validate fd and get OFD */
+      struct open_file_desc* ofd = get_ofd(fd);
+      if (ofd == NULL) {
         f->eax = -1;
         break;
       }
-      struct fd_entry* entry = &thread_current()->pcb->fd_table[fd];
 
-      if (entry->type == FD_CONSOLE) {
-        if (entry->cmode == CONSOLE_WRITE) {
+      if (ofd->type == FD_CONSOLE) {
+        if (ofd->cmode == CONSOLE_WRITE) {
           putbuf(buffer, size);
           f->eax = size;
         } else {
@@ -368,7 +380,7 @@ static void syscall_handler(struct intr_frame* f) {
         break;
       }
 
-      if (entry->type == FD_FILE && entry->file != NULL) {
+      if (ofd->type == FD_FILE && ofd->file != NULL) {
         /* Copy user buffer to kernel buffer first.
            This ensures we don't hold filesystem locks if user buffer is bad. */
         char* kbuf = malloc(size);
@@ -377,7 +389,7 @@ static void syscall_handler(struct intr_frame* f) {
           break;
         }
         memcpy(kbuf, buffer, size); /* May fault on bad user ptr - no locks held */
-        int bytes_written = file_write(entry->file, kbuf, size);
+        int bytes_written = file_write(ofd->file, kbuf, size);
         free(kbuf);
         f->eax = bytes_written;
         break;
@@ -413,17 +425,17 @@ static void syscall_handler(struct intr_frame* f) {
     case SYS_INUMBER: {
       int fd = args[1];
 
-      struct fd_entry* entry = get_fd_entry(fd);
-      if (entry == NULL) {
+      struct open_file_desc* ofd = get_ofd(fd);
+      if (ofd == NULL) {
         f->eax = -1;
         break;
       }
 
       struct inode* inode = NULL;
-      if (entry->type == FD_FILE && entry->file != NULL)
-        inode = file_get_inode(entry->file);
-      else if (entry->type == FD_DIR && entry->dir != NULL)
-        inode = dir_get_inode(entry->dir);
+      if (ofd->type == FD_FILE && ofd->file != NULL)
+        inode = file_get_inode(ofd->file);
+      else if (ofd->type == FD_DIR && ofd->dir != NULL)
+        inode = dir_get_inode(ofd->dir);
 
       f->eax = (inode != NULL) ? (int)inode_get_inumber(inode) : -1;
       break;
@@ -472,8 +484,8 @@ static void syscall_handler(struct intr_frame* f) {
     case SYS_ISDIR: {
       int fd = args[1];
 
-      struct fd_entry* entry = get_fd_entry(fd);
-      f->eax = (entry != NULL && entry->type == FD_DIR);
+      struct open_file_desc* ofd = get_ofd(fd);
+      f->eax = (ofd != NULL && ofd->type == FD_DIR);
       break;
     }
 

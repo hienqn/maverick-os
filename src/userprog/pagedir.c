@@ -31,8 +31,15 @@ void pagedir_destroy(uint32_t* pd) {
   for (pde = pd; pde < pd + pd_no(PHYS_BASE); pde++)
     if (*pde & PTE_P) {
       uint32_t* pt = pde_get_pt(*pde);
-      /* User pages are freed by spt_destroy() via frame_free().
-         We only need to free the page tables here. */
+#ifndef VM
+      /* Without VM, we must free user pages here.
+         With VM, spt_destroy() frees them via frame_free(). */
+      for (uint32_t* pte = pt; pte < pt + PGSIZE / sizeof(uint32_t); pte++) {
+        if (*pte & PTE_P) {
+          palloc_free_page(pte_get_page(*pte));
+        }
+      }
+#endif
       palloc_free_page(pt);
     }
   palloc_free_page(pd);

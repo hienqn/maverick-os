@@ -119,9 +119,11 @@
 #include "threads/synch.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#ifdef VM
 #include "vm/page.h"
 #include "vm/frame.h"
 #include "vm/mmap.h"
+#endif
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * FORWARD DECLARATIONS
@@ -208,12 +210,14 @@ static void pcb_init(struct process* pcb, struct thread* main_thread) {
   pcb->stack_slots[0] = true;                               /* Slot 0 reserved for main thread */
   main_thread->user_stack = ((uint8_t*)PHYS_BASE) - PGSIZE; /* Main thread's stack */
 
+#ifdef VM
   /* Initialize supplemental page table for VM */
   spt_init(&pcb->spt);
 
   /* Initialize memory-mapped files list */
   list_init(&pcb->mmap_list);
   lock_init(&pcb->mmap_lock);
+#endif
 }
 /* ═══════════════════════════════════════════════════════════════════════════
  * USERPROG INITIALIZATION
@@ -512,14 +516,19 @@ static void fork_process(void* aux) {
     if (t->pcb->pagedir == NULL) {
       success = pagedir_success = false;
     } else {
-      /* Only call pagedir_dup if pagedir_create succeeded */
-      uint32_t* child_pagedir = t->pcb->pagedir;
-
+#ifdef VM
       /* Clone supplemental page table from parent to child.
          This is required for lazy-loaded pages (PAGE_FILE, PAGE_ZERO) that
          are not yet in the hardware page table but exist in the SPT. */
+      uint32_t* child_pagedir = t->pcb->pagedir;
       uint32_t* parent_pagedir = load_info->parent_process->main_thread->pcb->pagedir;
       spt_clone(&t->pcb->spt, &load_info->parent_process->spt, child_pagedir, parent_pagedir);
+#else
+      /* Without VM: directly duplicate all pages from parent to child. */
+      if (!pagedir_dup(t->pcb->pagedir, load_info->parent_process->main_thread->pcb->pagedir)) {
+        success = false;
+      }
+#endif
     }
   }
 
@@ -531,6 +540,11 @@ static void fork_process(void* aux) {
     struct fd_entry* parent_fd = load_info->parent_process->fd_table;
     for (int i = 0; i < MAX_FILE_DESCRIPTOR; i++) {
       if (parent_fd[i].ofd != NULL) {
+        /* Close existing OFD before overwriting (fixes ref count leak).
+           pcb_init() already set up console OFDs for slots 0,1,2. */
+        if (t->pcb->fd_table[i].ofd != NULL) {
+          ofd_close(t->pcb->fd_table[i].ofd);
+        }
         /* Share the same OFD - increments reference count */
         t->pcb->fd_table[i].ofd = ofd_dup(parent_fd[i].ofd);
       }
@@ -703,11 +717,13 @@ void process_exit(void) {
   }
   lock_release(&cur->pcb->exit_lock);
 
+#ifdef VM
   /* Clean up memory-mapped files (must be before spt_destroy). */
   mmap_destroy_all();
 
   /* Destroy the supplemental page table (frees all frames and swap slots). */
   spt_destroy(&cur->pcb->spt);
+#endif
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -1065,6 +1081,7 @@ static bool load_segment(struct file* file, off_t ofs, uint8_t* upage, uint32_t 
   ASSERT(pg_ofs(upage) == 0);
   ASSERT(ofs % PGSIZE == 0);
 
+#ifdef VM
   struct thread* t = thread_current();
 
   /* Lazy loading: create SPT entries instead of loading pages immediately.
@@ -1092,6 +1109,38 @@ static bool load_segment(struct file* file, off_t ofs, uint8_t* upage, uint32_t 
     ofs += page_read_bytes;
     upage += PGSIZE;
   }
+#else
+  /* Without VM: load pages immediately from file. */
+  file_seek(file, ofs);
+  while (read_bytes > 0 || zero_bytes > 0) {
+    /* Calculate how to fill this page. */
+    size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
+    size_t page_zero_bytes = PGSIZE - page_read_bytes;
+
+    /* Get a page of memory. */
+    uint8_t* kpage = palloc_get_page(PAL_USER);
+    if (kpage == NULL)
+      return false;
+
+    /* Load this page. */
+    if (file_read(file, kpage, page_read_bytes) != (int)page_read_bytes) {
+      palloc_free_page(kpage);
+      return false;
+    }
+    memset(kpage + page_read_bytes, 0, page_zero_bytes);
+
+    /* Add the page to the process's address space. */
+    if (!install_page(upage, kpage, writable)) {
+      palloc_free_page(kpage);
+      return false;
+    }
+
+    /* Advance. */
+    read_bytes -= page_read_bytes;
+    zero_bytes -= page_zero_bytes;
+    upage += PGSIZE;
+  }
+#endif
 
   return true;
 }
@@ -1102,6 +1151,7 @@ static bool setup_stack(void** esp, int argc, char** argv) {
   uint8_t* upage = ((uint8_t*)PHYS_BASE) - PGSIZE;
   uint8_t* saved[128];
 
+#ifdef VM
   struct thread* t = thread_current();
 
   /* Create SPT entry for the initial stack page. */
@@ -1118,6 +1168,17 @@ static bool setup_stack(void** esp, int argc, char** argv) {
 
   /* Unpin the frame so it can be evicted later. */
   frame_unpin(spte->kpage);
+#else
+  /* Without VM: allocate stack page directly. */
+  uint8_t* kpage = palloc_get_page(PAL_USER | PAL_ZERO);
+  if (kpage == NULL)
+    return false;
+
+  if (!install_page(upage, kpage, true)) {
+    palloc_free_page(kpage);
+    return false;
+  }
+#endif
 
   /* Now set up the stack with arguments. */
   uint8_t* stack_ptr = (uint8_t*)PHYS_BASE;

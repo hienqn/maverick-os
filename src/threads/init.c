@@ -225,9 +225,11 @@ int main(void) {
   filesys_init(format_filesys);
 #endif
 
+#ifdef VM
   /* Initialize virtual memory subsystem.
      Must be after locate_block_devices() so swap partition is available. */
   vm_init();
+#endif
 
   printf("Boot complete.\n");
 

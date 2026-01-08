@@ -21,6 +21,7 @@ threads_SRC += threads/intr-stubs.S	# Interrupt stubs.
 threads_SRC += threads/synch.c		# Synchronization.
 threads_SRC += threads/palloc.c		# Page allocator.
 threads_SRC += threads/malloc.c		# Subpage allocator.
+threads_SRC += threads/ioremap.c	# MMIO mapping.
 
 # Device driver code.
 devices_SRC  = devices/pit.c		# Programmable interrupt timer chip.
@@ -87,6 +88,23 @@ filesys_SRC += filesys/fsutil.c		# Utilities.
 filesys_SRC += tests/filesys/kernel/tests.c
 filesys_SRC += tests/filesys/kernel/cache-tests.c
 filesys_SRC += tests/filesys/kernel/wal-tests.c
+
+# Network stack code.
+net_SRC  = net/net.c			# Network subsystem init.
+net_SRC += net/util/checksum.c		# Internet checksums.
+net_SRC += net/buf/pbuf.c		# Packet buffers.
+net_SRC += net/driver/netdev.c		# Network device abstraction.
+net_SRC += net/driver/loopback.c	# Loopback device.
+net_SRC += net/driver/e1000.c		# E1000 NIC driver.
+net_SRC += net/link/ethernet.c		# Ethernet frames.
+net_SRC += net/link/arp.c		# ARP protocol.
+net_SRC += net/inet/ip.c		# IPv4 protocol.
+net_SRC += net/inet/icmp.c		# ICMP protocol.
+net_SRC += net/inet/route.c		# IP routing.
+net_SRC += net/transport/udp.c		# UDP protocol (scaffold).
+net_SRC += net/transport/tcp.c		# TCP protocol (scaffold).
+net_SRC += net/socket/socket.c		# Socket API (scaffold).
+net_SRC += net/tests/net_tests.c	# Network stack tests.
 
 SOURCES = $(foreach dir,$(KERNEL_SUBDIRS),$($(dir)_SRC))
 OBJECTS = $(patsubst %.c,%.o,$(patsubst %.S,%.o,$(SOURCES)))

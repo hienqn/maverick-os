@@ -39,6 +39,7 @@
 #include "devices/vga.h"
 #include "devices/rtc.h"
 #include "devices/e1000.h"
+#include "net/net.h"
 #include "threads/interrupt.h"
 #include "threads/io.h"
 #include "threads/loader.h"
@@ -46,6 +47,7 @@
 #include "threads/palloc.h"
 #include "threads/pte.h"
 #include "threads/thread.h"
+#include "threads/ioremap.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #include "userprog/exception.h"
@@ -184,8 +186,24 @@ int main(void) {
   serial_init_queue();
   timer_calibrate();
 
-  /* Initialize network device. */
-  e1000_init();
+  /* Initialize MMIO mapper (needed for PCI device drivers). */
+  ioremap_init();
+
+  /* Initialize network stack. */
+  net_init();
+
+  /* Configure network with QEMU user networking defaults.
+   * IP: 10.0.2.15, Netmask: 255.255.255.0, Gateway: 10.0.2.2 */
+  net_configure("10.0.2.15", "255.255.255.0", "10.0.2.2");
+
+  /* Start network input thread. */
+  net_start();
+
+  /* Uncomment to test ping to gateway:
+   * net_ping_test("10.0.2.2"); */
+
+  /* Run comprehensive network tests (uncomment when debugging network stack):
+   * net_run_all_tests(); */
 
 #ifdef USERPROG
   /* Give main thread a minimal PCB so it can launch the first process */

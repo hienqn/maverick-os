@@ -153,7 +153,8 @@ void* frame_alloc(void* upage, bool writable UNUSED) {
   fe->upage = upage;
   fe->owner = thread_current();
   fe->ref_count = 1;
-  fe->pinned = true; /* Pin until caller is done setting up. */
+  fe->pinned = true;         /* Pin until caller is done setting up. */
+  fe->evict_callback = NULL; /* Use default eviction logic. */
 
   /* Add to frame list. */
   lock_acquire(&frame_lock);
@@ -192,7 +193,8 @@ bool frame_register(void* kpage, void* upage, struct thread* owner) {
   fe->upage = upage;
   fe->owner = owner;
   fe->ref_count = 1;
-  fe->pinned = true; /* Start pinned like frame_alloc. */
+  fe->pinned = true;         /* Start pinned like frame_alloc. */
+  fe->evict_callback = NULL; /* Use default eviction logic. */
 
   /* Add to frame list. */
   lock_acquire(&frame_lock);
@@ -307,6 +309,16 @@ void frame_unpin(void* kpage) {
   lock_release(&frame_lock);
 }
 
+/* Set eviction callback for a frame.
+   Allows custom eviction handling instead of default logic. */
+void frame_set_evict_callback(void* kpage, frame_evict_callback_fn callback) {
+  lock_acquire(&frame_lock);
+  struct frame_entry* fe = frame_find_entry(kpage);
+  if (fe != NULL)
+    fe->evict_callback = callback;
+  lock_release(&frame_lock);
+}
+
 /* ============================================================================
  * FRAME LOOKUP
  * ============================================================================ */
@@ -413,6 +425,40 @@ void* frame_evict(void) {
     void* kpage = fe->kpage;
     void* upage = fe->upage;
     struct thread* owner = fe->owner;
+    frame_evict_callback_fn callback = fe->evict_callback;
+
+    /* If a custom eviction callback is registered, use it instead of
+       the default logic. This allows for dependency inversion - the
+       owner can handle their own eviction without frame.c needing to
+       know about SPT, pagedir, etc. */
+    if (callback != NULL) {
+      /* Release lock before callback to avoid deadlock. */
+      lock_release(&frame_lock);
+
+      bool success = callback(owner, upage, kpage);
+      if (!success) {
+        /* Callback failed (e.g., swap full). Re-acquire lock and try next. */
+        lock_acquire(&frame_lock);
+        e = clock_advance(e);
+        if (e == start) {
+          lock_release(&frame_lock);
+          return NULL;
+        }
+        continue;
+      }
+
+      /* Callback succeeded - remove entry and return frame. */
+      lock_acquire(&frame_lock);
+      clock_hand = clock_advance(e);
+      if (clock_hand == e)
+        clock_hand = NULL;
+      list_remove(e);
+      lock_release(&frame_lock);
+      free(fe);
+      return kpage;
+    }
+
+    /* Default eviction logic (no callback registered). */
 
     /* Flush TLB before checking dirty bit.
        The CPU may cache the dirty bit in the TLB and not write it to

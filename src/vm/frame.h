@@ -55,6 +55,38 @@
 struct thread;
 
 /* ============================================================================
+ * EVICTION CALLBACK (Dependency Inversion)
+ * ============================================================================
+ *
+ * The frame table needs to notify owners when their frame is being evicted.
+ * Rather than hardcoding dependencies on process/pagedir/spt, we use a
+ * callback pattern that allows owners to handle eviction cleanup themselves.
+ *
+ * CALLBACK RESPONSIBILITIES:
+ * --------------------------
+ * When called, the eviction callback should:
+ *   1. Check if the page is dirty and needs to be written back
+ *   2. Write dirty data to swap or file as appropriate
+ *   3. Update the owner's supplemental page table entry
+ *   4. Clear the page table entry (pagedir_clear_page)
+ *
+ * PARAMETERS:
+ *   owner_ctx - Opaque pointer to owner context (e.g., struct thread*)
+ *   upage     - User virtual address being evicted
+ *   kpage     - Kernel virtual address of the frame
+ *
+ * RETURNS:
+ *   true  - Eviction succeeded, frame can be reclaimed
+ *   false - Eviction failed (e.g., swap full), try another frame
+ *
+ * DEFAULT BEHAVIOR:
+ * -----------------
+ * If no callback is registered, the frame table uses its built-in eviction
+ * logic for backward compatibility. The callback is optional.
+ */
+typedef bool (*frame_evict_callback_fn)(void* owner_ctx, void* upage, void* kpage);
+
+/* ============================================================================
  * FRAME TABLE ENTRY
  * ============================================================================
  *
@@ -133,6 +165,13 @@ struct frame_entry {
      Must be cleared when operation completes. */
   bool pinned;
 
+  /* ===== Eviction Callback (Optional) ===== */
+
+  /* Custom eviction handler for this frame.
+     If NULL, uses default built-in eviction logic.
+     If set, called during eviction to let owner handle cleanup. */
+  frame_evict_callback_fn evict_callback;
+
   /* ===== List Management ===== */
 
   /* List element for the global frame list.
@@ -199,6 +238,11 @@ void frame_pin(void* kpage);
 
 /* Unpin a frame to allow eviction. */
 void frame_unpin(void* kpage);
+
+/* Set eviction callback for a frame.
+   The callback is invoked when the frame is selected for eviction.
+   Pass NULL to use the default built-in eviction logic. */
+void frame_set_evict_callback(void* kpage, frame_evict_callback_fn callback);
 
 /* ============================================================================
  * FRAME LOOKUP

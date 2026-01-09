@@ -56,6 +56,7 @@
 #include <stddef.h>
 #include "filesys/off_t.h"
 #include "lib/kernel/hash.h"
+#include "threads/synch.h"
 
 /* Forward declarations. */
 struct file;
@@ -165,6 +166,10 @@ struct spt {
   /* Hash table of spt_entry structures, keyed by user virtual address.
      Provides O(1) average-case lookup time. */
   struct hash pages;
+
+  /* Lock protecting concurrent access to this SPT.
+     Used during frame eviction when modifying entries from another thread. */
+  struct lock spt_lock;
 };
 
 /* ============================================================================

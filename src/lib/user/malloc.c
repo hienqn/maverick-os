@@ -250,11 +250,12 @@ void free(void* ptr) {
 
 /* Allocate zeroed memory */
 void* calloc(size_t nmemb, size_t size) {
-  /* Check for overflow */
-  size_t total = nmemb * size;
-  if (nmemb != 0 && total / nmemb != size)
+  /* Check for overflow using division to avoid the overflow itself.
+     This is safer than checking (nmemb * size) / nmemb != size. */
+  if (nmemb != 0 && size > SIZE_MAX / nmemb)
     return NULL;
 
+  size_t total = nmemb * size;
   void* ptr = malloc(total);
   if (ptr != NULL)
     memset(ptr, 0, total);

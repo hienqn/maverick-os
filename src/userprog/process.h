@@ -112,8 +112,8 @@ struct dir;
 
 /* User-level lock/semaphore handle types.
    Small types to minimize space in user programs. */
-typedef char lock_t; /* Supports up to 256 locks per process. */
-typedef char sema_t; /* Supports up to 256 semaphores per process. */
+typedef int lock_t; /* Lock handle type. */
+typedef int sema_t; /* Semaphore handle type. */
 
 #define MAX_LOCKS 256
 #define MAX_SEMAS 256
@@ -255,6 +255,7 @@ struct process_status {
   int exit_code;             /* Exit code (-1 if killed, else from exit()). */
   struct semaphore wait_sem; /* Parent waits on this; child ups on exit. */
   struct list_elem elem;     /* Element in parent's children_status list. */
+  struct lock ref_lock;      /* Lock protecting ref_count. */
   int ref_count;             /* Reference count (freed when 0). */
   bool is_waited_on;         /* Prevents double-wait. */
 };

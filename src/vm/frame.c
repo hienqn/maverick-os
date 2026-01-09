@@ -97,6 +97,18 @@ static struct frame_entry* frame_find_entry(void* kpage) {
   return NULL;
 }
 
+/* Check if a list element is still in frame_list.
+   Must be called with frame_lock held.
+   Used to validate iterators after releasing and reacquiring the lock. */
+static bool frame_elem_valid(struct list_elem* elem) {
+  struct list_elem* e;
+  for (e = list_begin(&frame_list); e != list_end(&frame_list); e = list_next(e)) {
+    if (e == elem)
+      return true;
+  }
+  return false;
+}
+
 /* ============================================================================
  * INITIALIZATION
  * ============================================================================ */
@@ -436,9 +448,23 @@ void* frame_evict(void) {
       lock_release(&frame_lock);
 
       bool success = callback(owner, upage, kpage);
+      lock_acquire(&frame_lock);
+
+      /* Validate iterator is still valid after lock was released.
+         Another thread may have modified the frame list. */
+      if (!frame_elem_valid(e)) {
+        /* Iterator invalidated, restart from clock_hand. */
+        if (clock_hand == NULL || list_empty(&frame_list)) {
+          lock_release(&frame_lock);
+          return NULL;
+        }
+        e = clock_hand;
+        start = e;
+        continue;
+      }
+
       if (!success) {
-        /* Callback failed (e.g., swap full). Re-acquire lock and try next. */
-        lock_acquire(&frame_lock);
+        /* Callback failed (e.g., swap full). Try next frame. */
         e = clock_advance(e);
         if (e == start) {
           lock_release(&frame_lock);
@@ -448,7 +474,6 @@ void* frame_evict(void) {
       }
 
       /* Callback succeeded - remove entry and return frame. */
-      lock_acquire(&frame_lock);
       clock_hand = clock_advance(e);
       if (clock_hand == e)
         clock_hand = NULL;
@@ -472,10 +497,14 @@ void* frame_evict(void) {
     pagedir_activate(pd);
     pagedir_activate(orig_pd);
 
-    /* Get SPT entry to determine how to handle eviction. */
+    /* Get SPT entry to determine how to handle eviction.
+       Acquire SPT lock to prevent concurrent modifications. */
     struct spt_entry* spte = NULL;
+    struct spt* spt = NULL;
     if (owner->pcb != NULL) {
-      spte = spt_find(&owner->pcb->spt, upage);
+      spt = &owner->pcb->spt;
+      lock_acquire(&spt->spt_lock);
+      spte = spt_find(spt, upage);
     }
 
     /* Check if dirty - need to write back data.
@@ -492,15 +521,38 @@ void* frame_evict(void) {
          Only mmap pages should be written back to file.
          Executable segment pages (is_mmap=false) go to swap. */
       if (spte != NULL && spte->file != NULL && spte->writable && spte->is_mmap) {
-        /* Mmap page: write back to file, can reload later. */
-        file_write_at(spte->file, kpage, spte->read_bytes, spte->file_offset);
-        spte->status = PAGE_FILE;
-        spte->kpage = NULL;
+        /* Mmap page: try to write back to file. */
+        off_t written = file_write_at(spte->file, kpage, spte->read_bytes, spte->file_offset);
+        if (written == (off_t)spte->read_bytes) {
+          /* Write succeeded, can reload from file later. */
+          spte->status = PAGE_FILE;
+          spte->kpage = NULL;
+        } else {
+          /* Write failed, fall back to swap. */
+          size_t swap_slot = swap_out(kpage);
+          if (swap_slot == SWAP_SLOT_INVALID) {
+            /* Both file write and swap failed. Skip this frame. */
+            if (spt != NULL)
+              lock_release(&spt->spt_lock);
+            e = clock_advance(e);
+            if (e == start) {
+              lock_release(&frame_lock);
+              return NULL;
+            }
+            continue;
+          }
+          spte->status = PAGE_SWAP;
+          spte->swap_slot = swap_slot;
+          spte->kpage = NULL;
+          spte->pinned_dirty = true;
+        }
       } else {
         /* Other dirty pages: write to swap. */
         size_t swap_slot = swap_out(kpage);
         if (swap_slot == SWAP_SLOT_INVALID) {
           /* Swap is full, try next frame. */
+          if (spt != NULL)
+            lock_release(&spt->spt_lock);
           e = clock_advance(e);
           if (e == start) {
             lock_release(&frame_lock);
@@ -532,6 +584,10 @@ void* frame_evict(void) {
         spte->kpage = NULL;
       }
     }
+
+    /* Release SPT lock after modifications. */
+    if (spt != NULL)
+      lock_release(&spt->spt_lock);
 
     /* Clear the page table entry. */
     pagedir_clear_page(pd, upage);

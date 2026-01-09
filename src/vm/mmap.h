@@ -135,6 +135,17 @@ void* mmap_create_anon(void* addr, size_t length, int flags);
  */
 int mmap_destroy(void* addr, size_t length);
 
+/* Atomically find and destroy a mapping containing addr.
+ *
+ * This is a race-safe alternative to calling mmap_find_region followed
+ * by mmap_destroy, which could fail if another thread unmaps between calls.
+ *
+ * @param addr  Any address within the mapping to destroy.
+ *
+ * @return 0 on success, -1 if no mapping contains addr.
+ */
+int mmap_find_and_destroy(void* addr);
+
 /* Remove all memory mappings for the current process.
  *
  * Writes back all dirty pages and frees all mapping resources.

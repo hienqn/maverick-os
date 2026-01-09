@@ -145,6 +145,7 @@ static void spt_destroy_func(struct hash_elem* e, void* aux UNUSED) {
 void spt_init(void* spt) {
   struct spt* s = (struct spt*)spt;
   hash_init(&s->pages, spt_hash_func, spt_less_func, NULL);
+  lock_init(&s->spt_lock);
 }
 
 /* Destroy a supplemental page table and free all entries.
@@ -541,12 +542,19 @@ static struct spt_entry* spt_clone_entry(struct spt_entry* parent_entry, uint32_
         return NULL;
       }
 
-      /* Read parent's swap data into temporary frame. */
+      /* Read parent's swap data into temporary frame.
+         NOTE: swap_in frees the parent's slot, so we must handle failures. */
       swap_in(parent_entry->swap_slot, temp_kpage);
 
       /* The parent's swap slot is now free, so we need to swap parent back out. */
       size_t parent_new_slot = swap_out(temp_kpage);
       if (parent_new_slot == SWAP_SLOT_INVALID) {
+        /* Failed to get new slot for parent. Try to restore parent's data. */
+        size_t restore_slot = swap_out(temp_kpage);
+        if (restore_slot != SWAP_SLOT_INVALID) {
+          ((struct spt_entry*)parent_entry)->swap_slot = restore_slot;
+        }
+        /* If restore also fails, parent data is lost - nothing we can do. */
         frame_free(temp_kpage);
         free(child_entry);
         return NULL;
@@ -559,6 +567,7 @@ static struct spt_entry* spt_clone_entry(struct spt_entry* parent_entry, uint32_
       frame_free(temp_kpage);
 
       if (child_slot == SWAP_SLOT_INVALID) {
+        /* Child swap failed. Parent is OK (has parent_new_slot). */
         free(child_entry);
         return NULL;
       }

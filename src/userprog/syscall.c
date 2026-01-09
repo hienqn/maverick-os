@@ -615,7 +615,7 @@ static void syscall_handler(struct intr_frame* f) {
       }
 
       /* Read user memory before acquiring any locks */
-      int id = (int)(unsigned char)*user_lock;
+      int id = *user_lock;
 
       struct process* pcb = thread_current()->pcb;
       lock_acquire(&pcb->exit_lock);
@@ -639,7 +639,7 @@ static void syscall_handler(struct intr_frame* f) {
       }
 
       /* Read user memory before acquiring any locks */
-      int id = (int)(unsigned char)*user_lock;
+      int id = *user_lock;
       struct process* pcb = thread_current()->pcb;
 
       lock_acquire(&pcb->exit_lock);
@@ -699,7 +699,7 @@ static void syscall_handler(struct intr_frame* f) {
       }
 
       /* Read user memory before acquiring any locks */
-      int id = (int)(unsigned char)*user_sema;
+      int id = *user_sema;
 
       struct process* pcb = thread_current()->pcb;
       lock_acquire(&pcb->exit_lock);
@@ -723,7 +723,7 @@ static void syscall_handler(struct intr_frame* f) {
       }
 
       /* Read user memory before acquiring any locks */
-      int id = (int)(unsigned char)*user_sema;
+      int id = *user_sema;
 
       struct process* pcb = thread_current()->pcb;
       lock_acquire(&pcb->exit_lock);
@@ -777,15 +777,8 @@ static void syscall_handler(struct intr_frame* f) {
         break;
       }
 
-      /* Find the region containing this address */
-      struct mmap_region* region = mmap_find_region(addr);
-      if (region == NULL) {
-        f->eax = -1;
-        break;
-      }
-
-      /* Unmap the region using its start address and length */
-      int result = mmap_destroy(region->start_addr, region->length);
+      /* Atomically find and destroy the region containing this address */
+      int result = mmap_find_and_destroy(addr);
       f->eax = result;
       break;
     }

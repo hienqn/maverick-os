@@ -305,6 +305,7 @@ pid_t process_execute(const char* cmd_line) {
   load_info.child_status = child_status;
   load_info.child_status->exit_code = -1;
   load_info.child_status->is_waited_on = false;
+  lock_init(&load_info.child_status->ref_lock);
   load_info.child_status->ref_count = 0;
   load_info.child_status->tid = -1;
   sema_init(&load_info.child_status->wait_sem, 0);
@@ -457,6 +458,7 @@ pid_t process_fork(struct intr_frame* parent_interrupt_frame) {
   load_info.child_status = child_status;
   load_info.child_status->exit_code = -1;
   load_info.child_status->is_waited_on = false;
+  lock_init(&load_info.child_status->ref_lock);
   load_info.child_status->ref_count = 0;
   load_info.child_status->tid = -1;
   load_info.parent_if = parent_interrupt_frame;
@@ -681,9 +683,12 @@ int process_wait(pid_t child_pid) {
 
   int exit_code = child_status->exit_code;
 
+  lock_acquire(&child_status->ref_lock);
   child_status->ref_count--;
+  bool should_free = (child_status->ref_count == 0);
+  lock_release(&child_status->ref_lock);
 
-  if (child_status->ref_count == 0) {
+  if (should_free) {
     list_remove(&child_status->elem);
     free(child_status);
   }
@@ -792,8 +797,12 @@ void process_exit(void) {
   if (pcb_to_free->my_status != NULL) {
     sema_up(&pcb_to_free->my_status->wait_sem);
 
+    lock_acquire(&pcb_to_free->my_status->ref_lock);
     pcb_to_free->my_status->ref_count--;
-    if (pcb_to_free->my_status->ref_count == 0) {
+    bool should_free = (pcb_to_free->my_status->ref_count == 0);
+    lock_release(&pcb_to_free->my_status->ref_lock);
+
+    if (should_free) {
       list_remove(&pcb_to_free->my_status->elem);
       free(pcb_to_free->my_status);
     }
@@ -1041,12 +1050,13 @@ static bool validate_segment(const struct Elf32_Phdr* phdr, struct file* file) {
      user address space range. */
   if (!is_user_vaddr((void*)phdr->p_vaddr))
     return false;
-  if (!is_user_vaddr((void*)(phdr->p_vaddr + phdr->p_memsz)))
+
+  /* Check for integer overflow BEFORE using the sum.
+     This prevents malicious ELF files from bypassing is_user_vaddr. */
+  if (phdr->p_memsz > UINT32_MAX - phdr->p_vaddr)
     return false;
 
-  /* The region cannot "wrap around" across the kernel virtual
-     address space. */
-  if (phdr->p_vaddr + phdr->p_memsz < phdr->p_vaddr)
+  if (!is_user_vaddr((void*)(phdr->p_vaddr + phdr->p_memsz)))
     return false;
 
   /* Disallow mapping page 0.

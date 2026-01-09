@@ -91,6 +91,9 @@ struct block* fs_device;
 /* Maximum symlink depth to prevent infinite loops (ELOOP). */
 #define MAX_SYMLINK_DEPTH 20
 
+/* Maximum symlink target length to prevent memory exhaustion. */
+#define MAX_SYMLINK_TARGET_LEN 4096
+
 static void do_format(void);
 
 /* Forward declaration for recursive path parsing. */
@@ -258,6 +261,13 @@ static bool parse_path_recursive(const char* path, struct dir** parent_dir, char
     if (inode_is_symlink(inode)) {
       /* Read symlink target */
       off_t target_len = inode_length(inode);
+      /* Validate symlink target length to prevent memory exhaustion. */
+      if (target_len <= 0 || target_len > MAX_SYMLINK_TARGET_LEN) {
+        inode_close(inode);
+        dir_close(cur_dir);
+        free(path_copy);
+        return false;
+      }
       char* target = malloc(target_len + 1);
       if (target == NULL) {
         inode_close(inode);
@@ -658,6 +668,12 @@ struct file* filesys_open(const char* name) {
 
     /* Read the symlink target */
     off_t target_len = inode_length(inode);
+    /* Validate symlink target length to prevent memory exhaustion. */
+    if (target_len <= 0 || target_len > MAX_SYMLINK_TARGET_LEN) {
+      inode_close(inode);
+      dir_close(parent_dir);
+      return NULL;
+    }
     char* target = malloc(target_len + 1);
     if (target == NULL) {
       inode_close(inode);
@@ -925,6 +941,11 @@ bool filesys_chdir(const char* dir_path) {
 
     /* Read the symlink target */
     off_t target_len = inode_length(inode);
+    /* Validate symlink target length to prevent memory exhaustion. */
+    if (target_len <= 0 || target_len > MAX_SYMLINK_TARGET_LEN) {
+      inode_close(inode);
+      return false;
+    }
     char* target = malloc(target_len + 1);
     if (target == NULL) {
       inode_close(inode);

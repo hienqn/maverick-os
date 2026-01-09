@@ -358,6 +358,30 @@ int mmap_destroy(void* addr, size_t length) {
   return 0;
 }
 
+int mmap_find_and_destroy(void* addr) {
+  /* Atomically find and destroy a mapping containing addr.
+     This avoids the TOCTOU race in find-then-destroy patterns. */
+  struct lock* mmap_lock = get_mmap_lock();
+  lock_acquire(mmap_lock);
+
+  struct mmap_region* region = mmap_find_region_locked(addr);
+  if (region == NULL) {
+    lock_release(mmap_lock);
+    return -1;
+  }
+
+  /* Clean up pages, close file (if any), remove from list, free region */
+  mmap_cleanup_pages(region);
+  if (!region->is_anonymous && region->file != NULL) {
+    file_close(region->file);
+  }
+  list_remove(&region->elem);
+  lock_release(mmap_lock);
+  free(region);
+
+  return 0;
+}
+
 void mmap_destroy_all(void) {
   struct lock* mmap_lock = get_mmap_lock();
   lock_acquire(mmap_lock);

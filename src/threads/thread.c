@@ -868,10 +868,13 @@ static void init_thread(struct thread* t, const char* name, int priority) {
   t->magic = THREAD_MAGIC;
   t->wake_up_tick = 0;
 
-  /* Fair scheduler fields initialization */
-  t->tickets = 100; // Default ticket count for lottery
-  t->stride = 0;    // Will be computed from tickets
-  t->pass = 0;      // Initial pass value
+  /* Fair scheduler fields initialization.
+     Lottery scheduling: tickets determine probability of being chosen.
+     Default 100 tickets gives equal share when all threads have default.
+     More tickets = higher chance of running (e.g., 200 = 2x probability). */
+  t->tickets = 100;
+  t->stride = 0; // Will be computed from tickets
+  t->pass = 0;   // Initial pass value
   /* CFS/EEVDF: Start at current min_vruntime to be immediately eligible.
      Deadline offset is weighted: nice=0 has weight=1024, so offset = 4*1024*1024/1024 = 4096 */
   t->nice_fair = 0; // Default nice value (neutral weight)

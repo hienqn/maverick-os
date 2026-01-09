@@ -64,13 +64,6 @@ void test_smfs_starve(size_t competing_threads) {
 }
 
 static void starving_thread_func(void* aux UNUSED) {
-  //volatile uint32_t work = 1;
-  //for (int i = 0; i < 16; i++) {
-  //  work += i;
-  //  if (work - 1) {
-  //    work *= i + 1;
-  //  }
-  //}
   msg("Low-priority thread got to run!");
   sema_up(&sleep_sema);
 }

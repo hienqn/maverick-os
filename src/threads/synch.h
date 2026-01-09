@@ -203,19 +203,19 @@ void cond_broadcast(struct condition*, struct lock*); /* Wake all waiters. */
  * Writer entry:  while (AR + AW > 0) wait;  AW++;
  * Writer exit:   AW--; prefer signaling writers, else broadcast readers;
  *
- * Example:
+ * Example (using type-safe API):
  *   struct rw_lock cache_lock;
  *   rw_lock_init(&cache_lock);
  *
  *   // Reader:
- *   rw_lock_acquire(&cache_lock, true);  // true = reader
+ *   rw_lock_acquire_read(&cache_lock);
  *   read_from_cache();
- *   rw_lock_release(&cache_lock, true);
+ *   rw_lock_release_read(&cache_lock);
  *
  *   // Writer:
- *   rw_lock_acquire(&cache_lock, false); // false = writer
+ *   rw_lock_acquire_write(&cache_lock);
  *   update_cache();
- *   rw_lock_release(&cache_lock, false);
+ *   rw_lock_release_write(&cache_lock);
  *
  * ═══════════════════════════════════════════════════════════════════════════*/
 
@@ -231,8 +231,25 @@ struct rw_lock {
 };
 
 void rw_lock_init(struct rw_lock*);
+
+/* Legacy API (bool parameter) - kept for backward compatibility. */
 void rw_lock_acquire(struct rw_lock*, bool reader);
 void rw_lock_release(struct rw_lock*, bool reader);
+
+/* Type-safe API (recommended) - clearer intent, no boolean parameter.
+   Example:
+     rw_lock_acquire_read(&lock);   // Multiple readers allowed
+     read_data();
+     rw_lock_release_read(&lock);
+
+     rw_lock_acquire_write(&lock);  // Exclusive access
+     write_data();
+     rw_lock_release_write(&lock);
+*/
+void rw_lock_acquire_read(struct rw_lock*);
+void rw_lock_acquire_write(struct rw_lock*);
+void rw_lock_release_read(struct rw_lock*);
+void rw_lock_release_write(struct rw_lock*);
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * OPTIMIZATION BARRIER

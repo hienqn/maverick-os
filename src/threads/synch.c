@@ -435,6 +435,17 @@ void rw_lock_release(struct rw_lock* rw_lock, bool reader) {
   lock_release(&rw_lock->lock);
 }
 
+/* Type-safe API wrappers - recommended functions to use.
+   These provide clearer intent at call sites compared to the bool parameter. */
+
+void rw_lock_acquire_read(struct rw_lock* rw_lock) { rw_lock_acquire(rw_lock, true); }
+
+void rw_lock_acquire_write(struct rw_lock* rw_lock) { rw_lock_acquire(rw_lock, false); }
+
+void rw_lock_release_read(struct rw_lock* rw_lock) { rw_lock_release(rw_lock, true); }
+
+void rw_lock_release_write(struct rw_lock* rw_lock) { rw_lock_release(rw_lock, false); }
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * CONDITION VARIABLE IMPLEMENTATION
  * ─────────────────────────────────────────────────────────────────────────────

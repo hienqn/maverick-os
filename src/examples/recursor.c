@@ -1,3 +1,13 @@
+/* recursor.c
+
+   Test program that recursively spawns child processes.
+   Used to test process creation (exec) and parent-child relationships (wait).
+
+   Usage: recursor <string> <depth> <waitp>
+     string: identifier printed by each process
+     depth:  how many levels of recursion (0 = stop)
+     waitp:  if non-zero, parent waits for child to finish */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <syscall.h>

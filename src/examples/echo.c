@@ -1,3 +1,8 @@
+/* echo.c
+
+   Prints its command-line arguments to the console, separated by spaces.
+   Tests argument passing from shell to user programs. */
+
 #include <stdio.h>
 #include <syscall.h>
 

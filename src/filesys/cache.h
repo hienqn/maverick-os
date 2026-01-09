@@ -5,7 +5,46 @@
 #include "threads/synch.h"
 #include <stdbool.h>
 
-/* Maximum number of cache entries. */
+/*
+ * BUFFER CACHE
+ * ============
+ * A write-back cache for disk sectors, reducing disk I/O by keeping
+ * frequently accessed sectors in memory. The cache holds up to 64 sectors
+ * (32 KB total) and uses write-back policy (dirty data flushed lazily).
+ *
+ * EVICTION POLICY (Clock Algorithm / Second-Chance):
+ * --------------------------------------------------
+ * When the cache is full and a new sector is needed:
+ *   1. A clock hand sweeps through cache entries
+ *   2. If entry's 'accessed' bit is set, clear it (give second chance)
+ *   3. If entry's 'accessed' bit is clear, evict it
+ *   4. Dirty entries are written to disk before eviction
+ *
+ * This approximates LRU with O(1) overhead per access.
+ *
+ * ENTRY STATE MACHINE:
+ * --------------------
+ *   INVALID  -->  LOADING  -->  VALID  -->  (eviction) --> INVALID
+ *      |                           ^
+ *      +---------------------------+  (hit)
+ *
+ * THREAD SAFETY:
+ * --------------
+ * Uses two-lock protocol (hand-over-hand locking):
+ *   - Global lock: short-duration lock for cache search and slot selection
+ *   - Per-entry lock: held during I/O operations and data access
+ *   - LOADING state: reserves slot without blocking other cache operations
+ *
+ * Multiple threads can read/write different cache entries concurrently.
+ * Threads waiting for a LOADING entry block on a condition variable.
+ *
+ * BACKGROUND OPERATIONS:
+ * ----------------------
+ *   - Periodic flusher: writes dirty entries every 30 seconds
+ *   - Prefetch thread: speculatively loads next sequential sector
+ */
+
+/* Maximum number of cache entries (32 KB total cache size). */
 #define CACHE_SIZE 64
 
 /* Cache entry states. */

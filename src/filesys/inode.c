@@ -10,10 +10,17 @@
 #include "threads/malloc.h"
 #include "threads/synch.h"
 
-/* Number of direct block pointers. */
+/* Number of direct block pointers.
+   12 direct blocks is a traditional choice (BSD Unix, ext2/3/4) that balances:
+   - Small files (<6KB): All blocks directly accessible, no indirection overhead
+   - Medium files: Indirect block adds 128 more pointers (64KB more)
+   - Large files: Doubly-indirect provides ~8MB+ of addressable space
+   With 512-byte sectors: 12 direct = 6KB direct access. */
 #define DIRECT_BLOCK_COUNT 12
 
-/* Identifies an inode. */
+/* Magic number to identify valid inodes.
+   0x494e4f44 = "INOD" in ASCII (I=0x49, N=0x4e, O=0x4f, D=0x44).
+   Used to detect corruption or uninitialized inode structures. */
 #define INODE_MAGIC 0x494e4f44
 
 /* Number of block pointers that fit in one sector. */

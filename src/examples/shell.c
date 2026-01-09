@@ -1,3 +1,15 @@
+/* shell.c
+
+   A simple command-line shell for Pintos.
+   Reads commands from the console and executes them as child processes.
+
+   Built-in commands:
+     exit - terminate the shell
+     cd   - change current directory (if filesystem project implemented)
+
+   All other input is treated as a program name to execute.
+   Type the program name (with arguments) and press Enter to run it. */
+
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>

@@ -41,6 +41,9 @@ enum {
   SYS_ISDIR,   /* Tests if a fd represents a directory. */
   SYS_INUMBER, /* Returns the inode number for a fd. */
 
+  /* Hard links. */
+  SYS_LINK, /* Create a hard link. */
+
   /* Symbolic links. */
   SYS_SYMLINK,  /* Create a symbolic link. */
   SYS_READLINK, /* Read the target of a symbolic link. */

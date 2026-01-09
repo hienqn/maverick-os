@@ -20,6 +20,13 @@ bool filesys_remove(const char* name);
 bool filesys_chdir(const char* dir_path);
 bool filesys_mkdir(const char* dir_path);
 
+/* Hard link support. */
+bool filesys_link(const char* oldpath, const char* newpath);
+
+/* Symbolic link support. */
+bool filesys_symlink(const char* target, const char* linkpath);
+int filesys_readlink(const char* path, char* buf, size_t bufsize);
+
 /* Path parsing utilities.
    parse_path() resolves a path to its parent directory and final component.
    Returns true on success, false on failure.

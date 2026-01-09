@@ -265,8 +265,11 @@ bool dir_remove(struct dir* dir, const char* name) {
   if (inode_write_at(dir->inode, &e, sizeof e, ofs) != sizeof e)
     goto done;
 
-  /* Remove inode. */
-  inode_remove(inode);
+  /* Decrement link count. Only mark for removal when no links remain. */
+  inode_dec_nlink(inode);
+  if (inode_get_nlink(inode) == 0) {
+    inode_remove(inode);
+  }
   success = true;
 
 done:

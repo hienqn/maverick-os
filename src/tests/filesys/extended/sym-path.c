@@ -17,7 +17,7 @@ void test_main(void) {
   CHECK(mkdir("a"), "mkdir \"a\"");
   CHECK(mkdir("a/b"), "mkdir \"a/b\"");
   CHECK(mkdir("a/b/c"), "mkdir \"a/b/c\"");
-  CHECK(create("a/b/c/file", 512), "create \"a/b/c/file\"");
+  CHECK(create("a/b/c/file", 0), "create \"a/b/c/file\"");
   CHECK((fd = open("a/b/c/file")) > 1, "open \"a/b/c/file\"");
   CHECK(write(fd, data, data_len) == (int)data_len, "write \"a/b/c/file\"");
   close(fd);
@@ -36,7 +36,7 @@ void test_main(void) {
   msg("close \"shortcut/c/file\"");
 
   /* Create a symlink inside a directory to another location. */
-  CHECK(symlink("../c/file", "a/b/link-to-file"), "symlink \"../c/file\" -> \"a/b/link-to-file\"");
+  CHECK(symlink("c/file", "a/b/link-to-file"), "symlink \"c/file\" -> \"a/b/link-to-file\"");
   CHECK((fd = open("a/b/link-to-file")) > 1, "open \"a/b/link-to-file\"");
   bytes_read = read(fd, buf, sizeof buf);
   CHECK(bytes_read == (int)data_len, "read \"a/b/link-to-file\"");

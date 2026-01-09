@@ -178,6 +178,8 @@ tid_t get_tid(void) { return syscall0(SYS_GET_TID); }
 
 pid_t fork(void) { return syscall0(SYS_FORK); }
 
+bool link(const char* oldpath, const char* newpath) { return syscall2(SYS_LINK, oldpath, newpath); }
+
 bool symlink(const char* target, const char* linkpath) {
   return syscall2(SYS_SYMLINK, target, linkpath);
 }

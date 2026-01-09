@@ -14,7 +14,7 @@ void test_main(void) {
   int bytes_read;
 
   /* Create an empty regular file. */
-  CHECK(create("target-file", 512), "create \"target-file\"");
+  CHECK(create("target-file", 0), "create \"target-file\"");
 
   /* Create a symbolic link to the file. */
   CHECK(symlink("target-file", "symlink"), "symlink \"target-file\" -> \"symlink\"");

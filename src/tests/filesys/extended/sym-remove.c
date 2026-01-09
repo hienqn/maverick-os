@@ -14,7 +14,7 @@ void test_main(void) {
   int bytes_read;
 
   /* Create and write to a regular file. */
-  CHECK(create("target-file", 512), "create \"target-file\"");
+  CHECK(create("target-file", 0), "create \"target-file\"");
   CHECK((fd = open("target-file")) > 1, "open \"target-file\"");
   CHECK(write(fd, data, data_len) == (int)data_len, "write \"target-file\"");
   close(fd);

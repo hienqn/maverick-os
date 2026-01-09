@@ -16,7 +16,7 @@ check_expected (IGNORE_EXIT_CODES => 1, [<<'EOF']);
 (sym-path) read "shortcut/c/file"
 (sym-path) verify contents via symlink path
 (sym-path) close "shortcut/c/file"
-(sym-path) symlink "../c/file" -> "a/b/link-to-file"
+(sym-path) symlink "c/file" -> "a/b/link-to-file"
 (sym-path) open "a/b/link-to-file"
 (sym-path) read "a/b/link-to-file"
 (sym-path) close "a/b/link-to-file"

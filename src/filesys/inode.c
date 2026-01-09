@@ -26,15 +26,16 @@
 
 /* On-disk inode.
    Must be exactly BLOCK_SECTOR_SIZE bytes long.
-   Layout: 12*4 + 4 + 4 + 4 + 4 + 112*4 = 48 + 16 + 448 = 512 bytes */
+   Layout: 12*4 + 4 + 4 + 4 + 4 + 4 + 4 + 110*4 = 48 + 24 + 440 = 512 bytes */
 struct inode_disk {
   block_sector_t direct[DIRECT_BLOCK_COUNT]; /* Direct block pointers: 48 bytes */
   block_sector_t indirect;                   /* Indirect block pointer: 4 bytes */
   block_sector_t doubly_indirect;            /* Doubly-indirect pointer: 4 bytes */
   off_t length;                              /* File size in bytes: 4 bytes */
-  uint32_t is_dir;                           /* Whether this inode is a directory */
+  uint32_t type;                             /* Inode type: INODE_TYPE_FILE/DIR/SYMLINK */
+  uint32_t nlink;                            /* Hard link count */
   unsigned magic;                            /* Magic number: 4 bytes */
-  uint32_t unused[111];                      /* Padding to 512 bytes: 448 bytes */
+  uint32_t unused[110];                      /* Padding to 512 bytes: 440 bytes */
 };
 
 /* Returns the number of sectors to allocate for an inode SIZE
@@ -180,9 +181,9 @@ static void inode_deallocate(struct inode_disk* disk_inode) {
 static const char zeros[BLOCK_SECTOR_SIZE];
 
 /* Internal helper: Creates an inode with LENGTH bytes of data at SECTOR.
-   If IS_DIR is true, marks the inode as a directory.
+   INODE_TYPE specifies the type (INODE_TYPE_FILE, INODE_TYPE_DIR, or INODE_TYPE_SYMLINK).
    Returns true if successful, false if memory or disk allocation fails. */
-static bool inode_create_internal(block_sector_t sector, off_t length, bool is_dir) {
+static bool inode_create_internal(block_sector_t sector, off_t length, uint32_t inode_type) {
   struct inode_disk* disk_inode = NULL;
   bool success = false;
 
@@ -195,7 +196,8 @@ static bool inode_create_internal(block_sector_t sector, off_t length, bool is_d
 
   disk_inode->length = length;
   disk_inode->magic = INODE_MAGIC;
-  disk_inode->is_dir = is_dir ? 1 : 0;
+  disk_inode->type = inode_type;
+  disk_inode->nlink = 1; /* New inodes start with link count of 1 */
 
   size_t sectors = bytes_to_sectors(length);
   size_t allocated = 0;
@@ -268,19 +270,19 @@ done:
    writes the new inode to sector SECTOR on the file system device.
    Returns true if successful, false if memory or disk allocation fails. */
 bool inode_create(block_sector_t sector, off_t length) {
-  return inode_create_internal(sector, length, false);
+  return inode_create_internal(sector, length, INODE_TYPE_FILE);
 }
 
 /* Returns true if INODE represents a directory. */
 bool inode_is_dir(struct inode* inode) {
   ASSERT(inode != NULL);
-  return inode->data.is_dir != 0;
+  return inode->data.type == INODE_TYPE_DIR;
 }
 
 /* Creates a directory inode at sector SECTOR with initial length LENGTH.
    Returns true if successful, false if memory or disk allocation fails. */
 bool inode_create_dir(block_sector_t sector, off_t length) {
-  return inode_create_internal(sector, length, true);
+  return inode_create_internal(sector, length, INODE_TYPE_DIR);
 }
 
 /* Reads an inode from SECTOR
@@ -363,8 +365,9 @@ void inode_close(struct inode* inode) {
     lock_release(&inode->lock);
     lock_release(&open_inodes_lock);
 
-    /* Deallocate blocks if removed (no locks needed, inode is now private). */
-    if (inode->removed) {
+    /* Deallocate blocks if removed AND no hard links remain.
+       (no locks needed, inode is now private). */
+    if (inode->removed && inode->data.nlink == 0) {
       free_map_release(inode->sector, 1);
       inode_deallocate(&inode->data);
     }
@@ -648,3 +651,69 @@ void inode_allow_write(struct inode* inode) {
 
 /* Returns the length, in bytes, of INODE's data. */
 off_t inode_length(const struct inode* inode) { return inode->data.length; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * SYMBOLIC LINK AND HARD LINK SUPPORT
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
+/* Returns true if INODE represents a symbolic link. */
+bool inode_is_symlink(struct inode* inode) {
+  ASSERT(inode != NULL);
+  return inode->data.type == INODE_TYPE_SYMLINK;
+}
+
+/* Returns true if INODE represents a regular file (not dir, not symlink). */
+bool inode_is_file(struct inode* inode) {
+  ASSERT(inode != NULL);
+  return inode->data.type == INODE_TYPE_FILE;
+}
+
+/* Returns the hard link count for INODE. */
+uint32_t inode_get_nlink(struct inode* inode) {
+  ASSERT(inode != NULL);
+  return inode->data.nlink;
+}
+
+/* Increments the hard link count for INODE and persists to disk. */
+void inode_inc_nlink(struct inode* inode) {
+  ASSERT(inode != NULL);
+  lock_acquire(&inode->lock);
+  inode->data.nlink++;
+  cache_write(inode->sector, &inode->data, 0, sizeof(struct inode_disk));
+  lock_release(&inode->lock);
+}
+
+/* Decrements the hard link count for INODE and persists to disk.*/
+void inode_dec_nlink(struct inode* inode) {
+  ASSERT(inode != NULL);
+  lock_acquire(&inode->lock);
+  ASSERT(inode->data.nlink > 0);
+  inode->data.nlink--;
+  cache_write(inode->sector, &inode->data, 0, sizeof(struct inode_disk));
+  lock_release(&inode->lock);
+}
+
+/* Creates a symbolic link inode at SECTOR pointing to TARGET.
+   The target path is stored as the inode's data content. */
+bool inode_create_symlink(block_sector_t sector, const char* target) {
+  ASSERT(target != NULL);
+
+  size_t target_len = strlen(target);
+
+  /* Create the symlink inode with space for the target path. */
+  if (!inode_create_internal(sector, target_len, INODE_TYPE_SYMLINK))
+    return false;
+
+  if (target_len == 0)
+    return true;
+
+  /* Open the inode and write the target path to it. */
+  struct inode* inode = inode_open(sector);
+  if (inode == NULL)
+    return false;
+
+  off_t written = inode_write_at(inode, target, target_len, 0);
+  inode_close(inode);
+
+  return written == (off_t)target_len;
+}

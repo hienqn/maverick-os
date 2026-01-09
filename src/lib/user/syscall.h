@@ -70,6 +70,9 @@ bool readdir(int fd, char name[READDIR_MAX_LEN + 1]);
 bool isdir(int fd);
 int inumber(int fd);
 
+/* Hard links. */
+bool link(const char* oldpath, const char* newpath);
+
 /* Symbolic links. */
 bool symlink(const char* target, const char* linkpath);
 int readlink(const char* path, char* buf, size_t bufsize);

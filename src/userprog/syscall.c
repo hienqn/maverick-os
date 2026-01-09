@@ -490,6 +490,59 @@ static void syscall_handler(struct intr_frame* f) {
     }
 
       /* ═══════════════════════════════════════════════════════════════════════
+   * HARD LINK AND SYMBOLIC LINK SYSCALLS
+   * ═══════════════════════════════════════════════════════════════════════*/
+
+    case SYS_LINK: {
+      char* oldpath = (char*)args[1];
+      char* newpath = (char*)args[2];
+
+      /* Validate pointers */
+      if (oldpath == NULL || newpath == NULL) {
+        exit_process(f, -1);
+        break;
+      }
+
+      f->eax = filesys_link(oldpath, newpath);
+      break;
+    }
+
+    case SYS_SYMLINK: {
+      char* target = (char*)args[1];
+      char* linkpath = (char*)args[2];
+
+      /* Validate pointers */
+      if (target == NULL || linkpath == NULL) {
+        exit_process(f, -1);
+        break;
+      }
+
+      f->eax = filesys_symlink(target, linkpath);
+      break;
+    }
+
+    case SYS_READLINK: {
+      char* path = (char*)args[1];
+      char* buf = (char*)args[2];
+      size_t bufsize = (size_t)args[3];
+
+      /* Validate pointers */
+      if (path == NULL || buf == NULL) {
+        exit_process(f, -1);
+        break;
+      }
+
+      /* Validate buffer is in user space */
+      if (!is_user_vaddr(buf) || (bufsize > 0 && !is_user_vaddr(buf + bufsize - 1))) {
+        exit_process(f, -1);
+        break;
+      }
+
+      f->eax = filesys_readlink(path, buf, bufsize);
+      break;
+    }
+
+      /* ═══════════════════════════════════════════════════════════════════════
    * THREADING SYSCALLS
    * ═══════════════════════════════════════════════════════════════════════*/
 

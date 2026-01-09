@@ -7,6 +7,16 @@
 
 struct bitmap;
 
+/* ─────────────────────────────────────────────────────────────────────────
+ * Inode Type Constants
+ *
+ * These constants identify the type of an inode. The type field in inode_disk
+ * replaces the old is_dir boolean to support symbolic links.
+ * ───────────────────────────────────────────────────────────────────────── */
+#define INODE_TYPE_FILE 0    /* Regular file */
+#define INODE_TYPE_DIR 1     /* Directory */
+#define INODE_TYPE_SYMLINK 2 /* Symbolic link */
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * INODE (INDEX NODE) MANAGEMENT
  * ═══════════════════════════════════════════════════════════════════════════
@@ -109,6 +119,46 @@ off_t inode_length(const struct inode* inode);
    @param inode  Inode to query
    @return true if directory, false if regular file. */
 bool inode_is_dir(struct inode* inode);
+
+/* Returns true if INODE represents a symbolic link.
+   @param inode  Inode to query
+   @return true if symbolic link, false otherwise. */
+bool inode_is_symlink(struct inode* inode);
+
+/* Returns true if INODE represents a regular file (not dir, not symlink).
+   @param inode  Inode to query
+   @return true if regular file, false otherwise. */
+bool inode_is_file(struct inode* inode);
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Hard Link Support (Link Count)
+ * ───────────────────────────────────────────────────────────────────────── */
+
+/* Returns the hard link count for INODE.
+   @param inode  Inode to query
+   @return Current link count. */
+uint32_t inode_get_nlink(struct inode* inode);
+
+/* Increments the hard link count for INODE.
+   Call this when creating a new hard link to the inode.
+   @param inode  Inode to modify */
+void inode_inc_nlink(struct inode* inode);
+
+/* Decrements the hard link count for INODE.
+   Call this when removing a directory entry pointing to the inode.
+   @param inode  Inode to modify */
+void inode_dec_nlink(struct inode* inode);
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Symbolic Link Creation
+ * ───────────────────────────────────────────────────────────────────────── */
+
+/* Creates a symbolic link inode at SECTOR pointing to TARGET.
+   The target path is stored as the inode's data content.
+   @param sector  Disk sector for the inode metadata (must be pre-allocated)
+   @param target  Target path string (will be copied into the inode)
+   @return true on success, false on allocation failure. */
+bool inode_create_symlink(block_sector_t sector, const char* target);
 
 /* Returns true if INODE has been marked for removal.
    A removed inode will be fully deleted when its last opener closes it.

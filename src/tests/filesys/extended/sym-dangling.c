@@ -26,7 +26,7 @@ void test_main(void) {
   CHECK(open("dangling") == -1, "open \"dangling\" (must fail)");
 
   /* Create the target file - symlink should now work. */
-  CHECK(create("nonexistent", 512), "create \"nonexistent\"");
+  CHECK(create("nonexistent", 0), "create \"nonexistent\"");
   CHECK((fd = open("nonexistent")) > 1, "open \"nonexistent\"");
   CHECK(write(fd, data, data_len) == (int)data_len, "write \"nonexistent\"");
   close(fd);

@@ -7,7 +7,7 @@ check_expected (IGNORE_EXIT_CODES => 1, [<<'EOF']);
 (wal-basic) create "testfile"
 (wal-basic) File created successfully
 (wal-basic) open "testfile"
-(wal-basic) File opened, fd = 2
+(wal-basic) File opened, fd = 3
 (wal-basic) write 512 bytes to "testfile"
 (wal-basic) Write completed
 (wal-basic) read 512 bytes from "testfile"

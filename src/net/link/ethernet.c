@@ -14,7 +14,8 @@
 /* Broadcast MAC address: FF:FF:FF:FF:FF:FF */
 const uint8_t eth_broadcast_addr[ETH_ADDR_LEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
-void ethernet_init(void) { /* Nothing to initialize */ }
+void ethernet_init(void) { /* Nothing to initialize */
+}
 
 void ethernet_input(struct netdev* dev, struct pbuf* p) {
   struct eth_hdr* eth;

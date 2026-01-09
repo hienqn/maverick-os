@@ -14,4 +14,5 @@
 /* This function is now a no-op. Network initialization is handled
  * by net_init() which should be called instead.
  * Kept for backward compatibility. */
-void e1000_init(void) { /* Network stack initializes E1000 through net_init() */ }
+void e1000_init(void) { /* Network stack initializes E1000 through net_init() */
+}

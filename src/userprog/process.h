@@ -331,7 +331,6 @@ void process_activate(void);
 bool is_main_thread(struct thread*, struct process*);
 pid_t get_pid(struct process*);
 int find_free_fd(void);
-int is_fd_table_full(void); /* Deprecated: use find_free_fd() */
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * PTHREAD FUNCTIONS

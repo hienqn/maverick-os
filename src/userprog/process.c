@@ -844,9 +844,6 @@ int find_free_fd(void) {
   return -1;
 }
 
-/* Legacy name for find_free_fd (deprecated - use find_free_fd instead). */
-int is_fd_table_full(void) { return find_free_fd(); }
-
 /* ═══════════════════════════════════════════════════════════════════════════
  * ELF LOADING
  * ─────────────────────────────────────────────────────────────────────────────

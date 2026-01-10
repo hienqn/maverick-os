@@ -40,4 +40,7 @@ int net_test_transport_headers(void);
 int net_test_ip_advanced(void);
 int net_test_loopback_integration(void);
 
+/* Transport layer tests */
+int net_test_udp(void);
+
 #endif /* NET_TESTS_NET_TESTS_H */

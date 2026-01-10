@@ -1495,6 +1495,169 @@ int net_test_ip_advanced(void) {
 
 /*
  * ============================================================
+ * UDP TESTS
+ * ============================================================
+ */
+
+int net_test_udp(void) {
+  int local_passed = 0, local_failed = 0;
+
+  printf("\n=== UDP Tests ===\n");
+
+  /* Test 1: PCB allocation */
+  struct udp_pcb* pcb = udp_new();
+  if (pcb != NULL) {
+    TEST_PASS("udp_new allocates PCB");
+    local_passed++;
+  } else {
+    TEST_FAIL("udp_new allocates PCB", "returned NULL");
+    local_failed++;
+    goto done; /* Can't continue without PCB */
+  }
+
+  /* Test 2: Bind to specific port */
+  int result = udp_bind(pcb, 0, 9999);
+  if (result == 0) {
+    TEST_PASS("udp_bind to port 9999");
+    local_passed++;
+  } else {
+    TEST_FAIL("udp_bind to port 9999", "bind failed");
+    local_failed++;
+  }
+
+  /* Test 3: Double bind fails */
+  struct udp_pcb* pcb2 = udp_new();
+  if (pcb2 != NULL) {
+    result = udp_bind(pcb2, 0, 9999);
+    if (result != 0) {
+      TEST_PASS("udp_bind rejects duplicate port");
+      local_passed++;
+    } else {
+      TEST_FAIL("udp_bind rejects duplicate port", "should fail");
+      local_failed++;
+    }
+    udp_free(pcb2);
+  }
+
+  /* Test 4: Bind to ephemeral port (port 0) */
+  struct udp_pcb* pcb3 = udp_new();
+  if (pcb3 != NULL) {
+    result = udp_bind(pcb3, 0, 0);
+    if (result == 0 && pcb3->local_port >= 49152) {
+      TEST_PASS("udp_bind ephemeral port");
+      local_passed++;
+    } else {
+      TEST_FAIL("udp_bind ephemeral port", "should assign port >= 49152");
+      local_failed++;
+    }
+    udp_free(pcb3);
+  }
+
+  /* Test 5: UDP connect */
+  result = udp_connect(pcb, ip_addr_from_str("10.0.2.2"), 53);
+  if (result == 0 && pcb->remote_port == 53) {
+    TEST_PASS("udp_connect stores remote");
+    local_passed++;
+  } else {
+    TEST_FAIL("udp_connect stores remote", "failed to set remote");
+    local_failed++;
+  }
+
+  /* Test 6: Multiple PCBs on different ports */
+  struct udp_pcb* pcbs[3];
+  bool multi_ok = true;
+  for (int i = 0; i < 3; i++) {
+    pcbs[i] = udp_new();
+    if (pcbs[i] == NULL || udp_bind(pcbs[i], 0, 7000 + i) != 0) {
+      multi_ok = false;
+    }
+  }
+  if (multi_ok) {
+    TEST_PASS("Multiple UDP sockets on different ports");
+    local_passed++;
+  } else {
+    TEST_FAIL("Multiple UDP sockets", "allocation or bind failed");
+    local_failed++;
+  }
+  for (int i = 0; i < 3; i++) {
+    if (pcbs[i])
+      udp_free(pcbs[i]);
+  }
+
+  /* Test 7: UDP output creates valid packet (loopback) */
+  struct netdev* lo = netdev_get_loopback();
+  if (lo != NULL) {
+    struct udp_pcb* tx_pcb = udp_new();
+    udp_bind(tx_pcb, ip_addr_from_str("127.0.0.1"), 8888);
+
+    struct pbuf* p = pbuf_alloc(PBUF_TRANSPORT, 10, PBUF_RAM);
+    if (p != NULL) {
+      memcpy(p->payload, "HELLO UDP!", 10);
+      uint32_t lo_ip = ip_addr_from_str("127.0.0.1");
+      result = udp_output(tx_pcb, p, lo_ip, 9999);
+      if (result == 0) {
+        TEST_PASS("udp_output sends packet");
+        local_passed++;
+      } else {
+        TEST_FAIL("udp_output sends packet", "send failed");
+        local_failed++;
+      }
+      /* Note: pbuf consumed by ip_output */
+    }
+    udp_free(tx_pcb);
+
+    /* Give time for loopback processing */
+    timer_msleep(50);
+  } else {
+    printf("  [SKIP] No loopback device for output test\n");
+  }
+
+  /* Test 8: UDP checksum calculation */
+  {
+    uint32_t src_ip = ip_addr_from_str("10.0.2.15");
+    uint32_t dst_ip = ip_addr_from_str("10.0.2.2");
+    uint16_t udp_len = 16; /* 8 header + 8 data */
+
+    uint32_t sum = checksum_pseudo_header(src_ip, dst_ip, IP_PROTO_UDP, udp_len);
+
+    /* Build a test UDP packet */
+    uint8_t udp_pkt[16];
+    struct udp_hdr* hdr = (struct udp_hdr*)udp_pkt;
+    hdr->src_port = htons(1234);
+    hdr->dst_port = htons(5678);
+    hdr->length = htons(udp_len);
+    hdr->checksum = 0;
+    memcpy(udp_pkt + 8, "TESTDATA", 8);
+
+    sum = checksum_partial(udp_pkt, udp_len, sum);
+    uint16_t csum = checksum_finish(sum);
+    hdr->checksum = csum;
+
+    /* Verify: recalculating should give 0 */
+    sum = checksum_pseudo_header(src_ip, dst_ip, IP_PROTO_UDP, udp_len);
+    sum = checksum_partial(udp_pkt, udp_len, sum);
+    uint16_t verify = checksum_finish(sum);
+
+    if (verify == 0 || verify == 0xFFFF) {
+      TEST_PASS("UDP checksum verification");
+      local_passed++;
+    } else {
+      TEST_FAIL("UDP checksum verification", "checksum mismatch");
+      local_failed++;
+    }
+  }
+
+  udp_free(pcb);
+
+done:
+  passed += local_passed;
+  failed += local_failed;
+  printf("  UDP: %d passed, %d failed\n", local_passed, local_failed);
+  return local_failed;
+}
+
+/*
+ * ============================================================
  * RUN ALL TESTS
  * ============================================================
  */
@@ -1525,6 +1688,9 @@ int net_run_all_tests(void) {
   net_test_transport_headers();
   net_test_ip_advanced();
   net_test_loopback_integration();
+
+  /* Transport layer tests */
+  net_test_udp();
 
   printf("\n");
   printf("╔═══════════════════════════════════════════════════════════╗\n");

@@ -465,18 +465,6 @@ void* frame_evict(void) {
 
     /* Default eviction logic (no callback registered). */
 
-    /* Flush TLB before checking dirty bit.
-       The CPU may cache the dirty bit in the TLB and not write it to
-       the page table in memory immediately. Reloading CR3 flushes the TLB,
-       forcing any cached dirty bits to be written back to memory.
-       This ensures pagedir_is_dirty() returns the correct value.
-
-       We need to temporarily switch to the owner's page directory to flush
-       the right TLB entries, then restore the original page directory. */
-    uint32_t* orig_pd = active_pd();
-    pagedir_activate(pd);
-    pagedir_activate(orig_pd);
-
     /* Get SPT entry to determine how to handle eviction.
        Acquire SPT lock to prevent concurrent modifications. */
     struct spt_entry* spte = NULL;
@@ -487,28 +475,49 @@ void* frame_evict(void) {
       spte = spt_find(spt, upage);
     }
 
-    /* Check if dirty - need to write back data.
+    /* CRITICAL: Clear the PTE BEFORE checking dirty bit to prevent race.
+
+       Race condition without this fix:
+       1. We read dirty bit (false)
+       2. Victim writes to page (dirty bit becomes true)
+       3. We skip swap_out because we thought it was clean
+       4. Data loss!
+
+       The fix: Clear PTE first, making the page not-present. Any subsequent
+       access by the victim triggers a page fault. The fault handler blocks
+       on the SPT lock (which we hold) until eviction completes.
+
+       Note: pagedir_clear_page() only clears the Present bit, preserving
+       the Dirty bit so we can still read it after clearing. */
+    pagedir_clear_page(pd, upage);
+
+    /* Flush TLB to ensure victim sees the PTE is now clear.
+       After this, any write attempt by victim will fault (and block on SPT lock).
+       This also flushes any cached dirty bits from TLB back to the PTE. */
+    uint32_t* orig_pd = active_pd();
+    pagedir_activate(pd);
+    pagedir_activate(orig_pd);
+
+    /* Now safe to check dirty bit - victim can no longer modify the page.
        We check both the hardware dirty bit AND our software pinned_dirty flag.
-       The hardware bit can be unreliable due to TLB caching, but pinned_dirty
-       is set when loading from swap and guarantees we preserve the data. */
+       The pinned_dirty flag is set when loading from swap and guarantees we
+       preserve the data even if the hardware dirty bit is unreliable.
+
+       NOTE: The hardware dirty bit can be unreliable due to TLB caching and
+       timing issues (dirty bits in TLB may not be written back to PTE before
+       we read it). As a safety measure, we treat all writable non-swap pages
+       as potentially dirty. This ensures we never lose data that was written
+       after the initial load. The cost is extra swap writes for clean pages,
+       but this is acceptable for correctness. */
     bool dirty = pagedir_is_dirty(pd, upage);
     if (spte != NULL && spte->pinned_dirty) {
       dirty = true;
     }
-
-    /* CRITICAL: Clear the PTE BEFORE swap_out to prevent race condition.
-       Without this, the owner process can write to the page after swap_out
-       saves it but before we clear the PTE, causing those writes to be lost.
-       By clearing the PTE first, any access triggers a page fault. The fault
-       handler will block on the SPT lock (which we hold) until eviction
-       completes, ensuring serialization. */
-    pagedir_clear_page(pd, upage);
-
-    /* Flush TLB to ensure all CPUs see the PTE is now clear.
-       This prevents stale TLB entries from allowing access to the page. */
-    uint32_t* orig_pd2 = active_pd();
-    pagedir_activate(pd);
-    pagedir_activate(orig_pd2);
+    /* Safety: writable pages may have been written to since loading.
+       For pages not loaded from swap, we conservatively treat them as dirty. */
+    if (spte != NULL && spte->writable && !spte->pinned_dirty) {
+      dirty = true;
+    }
 
     if (dirty) {
       /* Check if this is an mmap page (writable file-backed).

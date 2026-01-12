@@ -13,6 +13,7 @@
 #define ARCH_COMMON_IO_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 /* ==========================================================================
  * Memory-Mapped I/O (works on all architectures)

@@ -1,20 +1,29 @@
 # -*- makefile -*-
 
+# For RISC-V, skip user programs until user mode is fully ported
+ifeq ($(ARCH),riscv64)
+TEST_SUBDIRS := $(filter-out tests/userprog tests/userprog/kernel tests/userprog/multithreading tests/filesys/base,$(TEST_SUBDIRS))
+endif
+
 include $(patsubst %,$(SRCDIR)/%/Make.tests,$(TEST_SUBDIRS))
 
-# Special rule: use clang instead of gcc for stack-align-* tests.
+# Special rule: use clang instead of gcc for stack-align-* tests (i386 only).
 # This is necessary because gcc defensively auto-aligns the stack in main,
 # which will cause the stack-align-* tests to always pass even if the kernel
 # does not properly align the stack.
 # See https://stackoverflow.com/questions/40307193/responsibility-of-stack-alignment-in-32-bit-x86-assembly.
+ifeq ($(ARCH),i386)
 tests/userprog/stack-align.o: tests/userprog/stack-align.c
-	clang -target i386-pc-linux-elf  -m32 -c $< -o $@ $(CFLAGS) $(CPPFLAGS) -fomit-frame-pointer $(WARNINGS) $(DEFINES) $(DEPS)
+	clang -target i386-pc-linux-elf  -m32 -c $< -o $@ $(CFLAGS) $(CPPFLAGS) -I$(SRCDIR)/lib/user -I. -fomit-frame-pointer $(WARNINGS) $(DEFINES) $(DEPS)
+endif
 
+ifeq ($(ARCH),i386)
 tests/userprog/stack-align-0.o: tests/userprog/stack-align-0.c
-	$(CC) -m32 -c $< -o $@ $(CFLAGS) $(CPPFLAGS) -fomit-frame-pointer $(WARNINGS) $(DEFINES) $(DEPS)
+	$(CC) -m32 -c $< -o $@ $(CFLAGS) $(CPPFLAGS) -I$(SRCDIR)/lib/user -I. -fomit-frame-pointer $(WARNINGS) $(DEFINES) $(DEPS)
 
 tests/filesys/extended/dir-vine.o: tests/filesys/extended/dir-vine.c
 	$(CC) -m32 -c $< -o $@ $(subst -O0,-O1,$(CFLAGS)) $(CPPFLAGS) $(WARNINGS) $(DEFINES) $(DEPS)
+endif
 
 PROGS = $(foreach subdir,$(TEST_SUBDIRS),$($(subdir)_PROGS))
 TESTS = $(foreach subdir,$(TEST_SUBDIRS),$($(subdir)_TESTS))

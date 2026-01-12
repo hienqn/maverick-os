@@ -40,10 +40,16 @@ threads_SRC += threads/ioremap.c	# MMIO mapping.
 devices_SRC  = devices/pit.c		# Programmable interrupt timer chip.
 
 else ifeq ($(ARCH),riscv64)
-# RISC-V core kernel (Phase 1: minimal boot)
+# RISC-V core kernel (Phase 4: with context switching)
 arch_SRC  = arch/riscv64/start.S	# Entry point from OpenSBI.
 arch_SRC += arch/riscv64/init.c		# Early initialization.
 arch_SRC += arch/riscv64/sbi.c		# SBI call wrappers.
+arch_SRC += arch/riscv64/mmu.c		# Sv39 MMU implementation.
+arch_SRC += arch/riscv64/trap.S		# Trap entry/exit assembly.
+arch_SRC += arch/riscv64/intr.c		# Interrupt handling.
+arch_SRC += arch/riscv64/timer.c	# Timer via SBI.
+arch_SRC += arch/riscv64/plic.c		# External interrupt controller.
+arch_SRC += arch/riscv64/switch.S	# Context switching.
 
 # RISC-V doesn't use these i386-specific sources
 threads_SRC =

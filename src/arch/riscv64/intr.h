@@ -19,8 +19,8 @@ enum intr_level {
 
 enum intr_level intr_get_level(void);
 enum intr_level intr_set_level(enum intr_level);
-enum intr_level intr_enable(void);
-enum intr_level intr_disable(void);
+void intr_enable(void);
+void intr_disable(void);
 
 /*
  * RISC-V interrupt/trap frame.
@@ -100,6 +100,9 @@ struct intr_frame {
 #define CAUSE_SUPERVISOR_EXTERNAL (CAUSE_INTERRUPT_FLAG | 9)
 
 typedef void intr_handler_func(struct intr_frame*);
+
+/* Called from trap.S */
+void trap_handler(struct intr_frame* f);
 
 void intr_init(void);
 void intr_register_ext(uint8_t vec, intr_handler_func*, const char* name);

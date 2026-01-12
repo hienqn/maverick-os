@@ -4,7 +4,13 @@ $(PROGS): CPPFLAGS += -I$(SRCDIR)/lib/user -I.
 
 # Linker flags.
 $(PROGS): LDFLAGS += -nostdlib -static -Wl,-T,$(LDSCRIPT)
+
+# Architecture-specific user linker script
+ifeq ($(ARCH),riscv64)
+$(PROGS): LDSCRIPT = $(SRCDIR)/lib/user/user-riscv64.lds
+else
 $(PROGS): LDSCRIPT = $(SRCDIR)/lib/user/user.lds
+endif
 
 # Library code shared between kernel and user programs.
 lib_SRC  = lib/debug.c			# Debug code.

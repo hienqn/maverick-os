@@ -2,6 +2,12 @@
 #include "../syscall-nr.h"
 #include <pthread.h>
 
+#ifdef ARCH_I386
+/*
+ * x86 syscall implementation.
+ * Uses int $0x30 with arguments pushed on the stack.
+ */
+
 /* Invokes syscall NUMBER, passing no arguments, and returns the
    return value as an `int'. */
 #define syscall0(NUMBER)                                                                           \
@@ -78,6 +84,89 @@
                  : "memory");                                                                      \
     retval;                                                                                        \
   })
+
+#elif defined(ARCH_RISCV64)
+/*
+ * RISC-V syscall implementation.
+ * Uses ecall with:
+ *   a7 = syscall number
+ *   a0-a5 = arguments
+ *   a0 = return value
+ */
+
+/* Invokes syscall NUMBER, passing no arguments */
+#define syscall0(NUMBER)                                                                           \
+  ({                                                                                               \
+    register long _num asm("a7") = (NUMBER);                                                       \
+    register long _ret asm("a0");                                                                  \
+    asm volatile("ecall" : "=r"(_ret) : "r"(_num) : "memory");                                     \
+    (int)_ret;                                                                                     \
+  })
+
+/* Invokes syscall NUMBER, passing argument ARG0 */
+#define syscall1(NUMBER, ARG0)                                                                     \
+  ({                                                                                               \
+    register long _num asm("a7") = (NUMBER);                                                       \
+    register long _a0 asm("a0") = (long)(ARG0);                                                    \
+    asm volatile("ecall" : "+r"(_a0) : "r"(_num) : "memory");                                      \
+    (int)_a0;                                                                                      \
+  })
+
+/* Invokes syscall NUMBER, passing argument ARG0, returns float */
+#define syscall1f(NUMBER, ARG0)                                                                    \
+  ({                                                                                               \
+    register long _num asm("a7") = (NUMBER);                                                       \
+    register long _a0 asm("a0") = (long)(ARG0);                                                    \
+    asm volatile("ecall" : "+r"(_a0) : "r"(_num) : "memory");                                      \
+    union {                                                                                        \
+      long l;                                                                                      \
+      float f;                                                                                     \
+    } _u;                                                                                          \
+    _u.l = _a0;                                                                                    \
+    _u.f;                                                                                          \
+  })
+
+/* Invokes syscall NUMBER, passing arguments ARG0 and ARG1 */
+#define syscall2(NUMBER, ARG0, ARG1)                                                               \
+  ({                                                                                               \
+    register long _num asm("a7") = (NUMBER);                                                       \
+    register long _a0 asm("a0") = (long)(ARG0);                                                    \
+    register long _a1 asm("a1") = (long)(ARG1);                                                    \
+    asm volatile("ecall" : "+r"(_a0) : "r"(_num), "r"(_a1) : "memory");                            \
+    (int)_a0;                                                                                      \
+  })
+
+/* Invokes syscall NUMBER, passing arguments ARG0, ARG1, ARG2 */
+#define syscall3(NUMBER, ARG0, ARG1, ARG2)                                                         \
+  ({                                                                                               \
+    register long _num asm("a7") = (NUMBER);                                                       \
+    register long _a0 asm("a0") = (long)(ARG0);                                                    \
+    register long _a1 asm("a1") = (long)(ARG1);                                                    \
+    register long _a2 asm("a2") = (long)(ARG2);                                                    \
+    asm volatile("ecall" : "+r"(_a0) : "r"(_num), "r"(_a1), "r"(_a2) : "memory");                  \
+    (int)_a0;                                                                                      \
+  })
+
+/* Invokes syscall NUMBER, passing 6 arguments */
+#define syscall6(NUMBER, ARG0, ARG1, ARG2, ARG3, ARG4, ARG5)                                       \
+  ({                                                                                               \
+    register long _num asm("a7") = (NUMBER);                                                       \
+    register long _a0 asm("a0") = (long)(ARG0);                                                    \
+    register long _a1 asm("a1") = (long)(ARG1);                                                    \
+    register long _a2 asm("a2") = (long)(ARG2);                                                    \
+    register long _a3 asm("a3") = (long)(ARG3);                                                    \
+    register long _a4 asm("a4") = (long)(ARG4);                                                    \
+    register long _a5 asm("a5") = (long)(ARG5);                                                    \
+    asm volatile("ecall"                                                                           \
+                 : "+r"(_a0)                                                                       \
+                 : "r"(_num), "r"(_a1), "r"(_a2), "r"(_a3), "r"(_a4), "r"(_a5)                     \
+                 : "memory");                                                                      \
+    (int)_a0;                                                                                      \
+  })
+
+#else
+#error "No architecture defined for syscall.c"
+#endif
 
 int practice(int i) { return syscall1(SYS_PRACTICE, i); }
 

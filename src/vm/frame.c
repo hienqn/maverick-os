@@ -496,6 +496,20 @@ void* frame_evict(void) {
       dirty = true;
     }
 
+    /* CRITICAL: Clear the PTE BEFORE swap_out to prevent race condition.
+       Without this, the owner process can write to the page after swap_out
+       saves it but before we clear the PTE, causing those writes to be lost.
+       By clearing the PTE first, any access triggers a page fault. The fault
+       handler will block on the SPT lock (which we hold) until eviction
+       completes, ensuring serialization. */
+    pagedir_clear_page(pd, upage);
+
+    /* Flush TLB to ensure all CPUs see the PTE is now clear.
+       This prevents stale TLB entries from allowing access to the page. */
+    uint32_t* orig_pd2 = active_pd();
+    pagedir_activate(pd);
+    pagedir_activate(orig_pd2);
+
     if (dirty) {
       /* Check if this is an mmap page (writable file-backed).
          Only mmap pages should be written back to file.
@@ -511,7 +525,8 @@ void* frame_evict(void) {
           /* Write failed, fall back to swap. */
           size_t swap_slot = swap_out(kpage);
           if (swap_slot == SWAP_SLOT_INVALID) {
-            /* Both file write and swap failed. Skip this frame. */
+            /* Both file write and swap failed. Restore PTE and skip this frame. */
+            pagedir_set_page(pd, upage, kpage, spte->writable);
             if (spt != NULL)
               lock_release(&spt->spt_lock);
             e = clock_advance(e);
@@ -530,7 +545,9 @@ void* frame_evict(void) {
         /* Other dirty pages: write to swap. */
         size_t swap_slot = swap_out(kpage);
         if (swap_slot == SWAP_SLOT_INVALID) {
-          /* Swap is full, try next frame. */
+          /* Swap is full. Restore PTE and try next frame. */
+          bool writable = (spte != NULL) ? spte->writable : true;
+          pagedir_set_page(pd, upage, kpage, writable);
           if (spt != NULL)
             lock_release(&spt->spt_lock);
           e = clock_advance(e);
@@ -568,9 +585,6 @@ void* frame_evict(void) {
     /* Release SPT lock after modifications. */
     if (spt != NULL)
       lock_release(&spt->spt_lock);
-
-    /* Clear the page table entry. */
-    pagedir_clear_page(pd, upage);
 
     /* Update clock hand. */
     clock_hand = clock_advance(e);

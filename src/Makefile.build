@@ -176,11 +176,12 @@ DEPENDS = $(patsubst %.o,%.d,$(OBJECTS))
 # =============================================================================
 ifeq ($(ARCH),i386)
 KERNEL_LDS = threads/kernel.lds.s
-threads/kernel.lds.s: threads/kernel.lds.S threads/loader.h
+threads/kernel.lds.s: $(SRCDIR)/threads/kernel.lds.S $(SRCDIR)/threads/loader.h
+	@mkdir -p threads
 	$(CC) -E $(CPPFLAGS) $(DEFINES) -P $< -o $@
 else ifeq ($(ARCH),riscv64)
 KERNEL_LDS = arch/riscv64/kernel.lds.s
-arch/riscv64/kernel.lds.s: arch/riscv64/kernel.lds.S arch/riscv64/memlayout.h
+arch/riscv64/kernel.lds.s: $(SRCDIR)/arch/riscv64/kernel.lds.S $(SRCDIR)/arch/riscv64/memlayout.h
 	@mkdir -p arch/riscv64
 	$(CC) -E $(CPPFLAGS) $(DEFINES) -P $< -o $@
 endif

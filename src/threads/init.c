@@ -64,6 +64,7 @@
 #ifdef FILESYS
 #include "devices/block.h"
 #include "devices/ide.h"
+#include "devices/raid.h"
 #include "tests/filesys/kernel/tests.h"
 #include "filesys/filesys.h"
 #include "filesys/fsutil.h"
@@ -216,11 +217,14 @@ int main(void) {
 #ifdef FILESYS
   /* Initialize file system. */
   ide_init();
-  /* TODO: Call raid_init() here to enable RAID support
-   * #include "devices/raid.h" at top of file, then:
-   * raid_init(RAID_LEVEL_0, 1);  // for striping
-   * raid_init(RAID_LEVEL_1, 0);  // for mirroring
+
+  /* Initialize RAID if multiple disks are available.
+   * RAID is disabled by default. Uncomment ONE to enable:
+   * raid_init(RAID_LEVEL_0, 1);  // Striping - max performance, no redundancy
+   * raid_init(RAID_LEVEL_1, 0);  // Mirroring - full redundancy, 50% capacity
+   * raid_init(RAID_LEVEL_5, 1);  // Parity - good balance, survives 1 disk failure
    */
+
   locate_block_devices();
   filesys_init(format_filesys);
 #endif

@@ -140,7 +140,7 @@ bool elf64_load(const void* elf_data, size_t elf_size, struct user_page_table* p
 
 /* User mode transitions */
 void user_entry(struct intr_frame* f) __attribute__((noreturn));
-void syscall_handler(struct intr_frame* f);
+/* syscall_handler is now shared - declared in userprog/syscall.h */
 
 /* Process support */
 bool process_setup_stack(struct user_page_table* pt, int argc, char** argv, uint64_t* sp);

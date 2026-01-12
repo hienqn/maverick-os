@@ -111,7 +111,9 @@
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
+#ifndef ARCH_RISCV64
 #include "threads/flags.h"
+#endif
 #include "threads/init.h"
 #include "threads/interrupt.h"
 #include "threads/malloc.h"
@@ -123,6 +125,11 @@
 #include "vm/page.h"
 #include "vm/frame.h"
 #include "vm/mmap.h"
+#endif
+
+#ifdef ARCH_RISCV64
+#include "arch/riscv64/userprog.h"
+#include "arch/riscv64/csr.h"
 #endif
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -374,11 +381,18 @@ static void start_process(void* aux) {
   /* Initialize interrupt frame and load executable. */
   if (success) {
     memset(&if_, 0, sizeof if_);
+#ifdef ARCH_RISCV64
+    /* RISC-V: Set sstatus for user mode return.
+       SPIE enables interrupts on sret, SUM allows supervisor access to user pages. */
+    if_.sstatus = SSTATUS_SPIE | SSTATUS_SUM;
+    success = load(file_name, (void (**)(void)) & if_.sepc, (void**)&if_.sp, load_info->argc,
+                   load_info->argv);
+#else
     if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
     if_.cs = SEL_UCSEG;
     if_.eflags = FLAG_IF | FLAG_MBS;
-
     success = load(file_name, &if_.eip, &if_.esp, load_info->argc, load_info->argv);
+#endif
   }
 
   /* Handle failure with succesful PCB malloc. Must free the PCB */
@@ -423,13 +437,14 @@ static void start_process(void* aux) {
   load_info->load_success = success;
   sema_up(&load_info->loaded_signal);
 
-  /* Start the user process by simulating a return from an
-     interrupt, implemented by intr_exit (in
-     threads/intr-stubs.S).  Because intr_exit takes all of its
-     arguments on the stack in the form of a `struct intr_frame',
-     we just point the stack pointer (%esp) to our stack frame
-     and jump to it. */
+  /* Start the user process by simulating a return from an interrupt.
+     x86: uses intr_exit in threads/intr-stubs.S
+     RISC-V: uses user_entry() which executes sret */
+#ifdef ARCH_RISCV64
+  user_entry(&if_);
+#else
   asm volatile("movl %0, %%esp; jmp intr_exit" : : "g"(&if_) : "memory");
+#endif
   NOT_REACHED();
 }
 
@@ -605,8 +620,12 @@ static void fork_process(void* aux) {
   /* Copy the parent's interrupt frame to the child */
   memcpy(&if_, load_info->parent_if, sizeof(if_));
   /* CRITICAL: Child process must return 0 from fork().
-     The parent's interrupt frame may have a different value in eax. */
-  if_.eax = 0;
+     The parent's interrupt frame may have a different value in the return register. */
+#ifdef ARCH_RISCV64
+  if_.a0 = 0; /* RISC-V: return value in a0 */
+#else
+  if_.eax = 0; /* x86: return value in eax */
+#endif
 
   /* At this stage, the process has successfully initialized */
   /* Assigned this process its own status to the memory that the parent process created */
@@ -632,13 +651,14 @@ static void fork_process(void* aux) {
      page directory with the duplicated memory mappings. */
   process_activate();
 
-  /* Start the user process by simulating a return from an
-     interrupt, implemented by intr_exit (in
-     threads/intr-stubs.S).  Because intr_exit takes all of its
-     arguments on the stack in the form of a `struct intr_frame',
-     we just point the stack pointer (%esp) to our stack frame
-     and jump to it. */
+  /* Start the user process by simulating a return from an interrupt.
+     x86: uses intr_exit in threads/intr-stubs.S
+     RISC-V: uses user_entry() which executes sret */
+#ifdef ARCH_RISCV64
+  user_entry(&if_);
+#else
   asm volatile("movl %0, %%esp; jmp intr_exit" : : "g"(&if_) : "memory");
+#endif
   NOT_REACHED();
 }
 
@@ -1431,12 +1451,18 @@ static void start_pthread(void* exec_) {
 
   /* Set up interrupt frame */
   memset(&if_, 0, sizeof if_);
+#ifdef ARCH_RISCV64
+  /* RISC-V: Set sstatus for user mode return */
+  if_.sstatus = SSTATUS_SPIE | SSTATUS_SUM;
+  /* Setup thread allocates new stack and sets up sp */
+  success = setup_thread((void**)&if_.sp, load_info->tfun, load_info->arg);
+#else
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-
   /* Setup thread allocates new stack and sets up esp */
   success = setup_thread(&if_.esp, load_info->tfun, load_info->arg);
+#endif
 
   if (!success) {
     /* Failed to set up stack - clean up and exit */
@@ -1452,15 +1478,25 @@ static void start_pthread(void* exec_) {
     thread_exit();
   }
 
-  /* Set eip to the stub function */
+  /* Set entry point to the stub function */
+#ifdef ARCH_RISCV64
+  if_.sepc = (uint64_t)load_info->sfun;
+#else
   if_.eip = (void (*)(void))load_info->sfun;
+#endif
 
   /* Signal success to parent */
   load_info->success = true;
   sema_up(&load_info->started);
 
-  /* Start the user thread by simulating a return from an interrupt */
+  /* Start the user thread by simulating a return from an interrupt.
+     x86: uses intr_exit in threads/intr-stubs.S
+     RISC-V: uses user_entry() which executes sret */
+#ifdef ARCH_RISCV64
+  user_entry(&if_);
+#else
   asm volatile("movl %0, %%esp; jmp intr_exit" : : "g"(&if_) : "memory");
+#endif
   NOT_REACHED();
 }
 

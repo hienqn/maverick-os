@@ -57,6 +57,10 @@
 #include "vm/vm.h"
 #endif
 
+#ifdef ARCH_RISCV64
+#include "arch/riscv64/csr.h"
+#endif
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * EXCEPTION STATISTICS
  * ═══════════════════════════════════════════════════════════════════════════*/
@@ -68,8 +72,11 @@ static long long page_fault_cnt;
  * FORWARD DECLARATIONS
  * ═══════════════════════════════════════════════════════════════════════════*/
 
+#ifndef ARCH_RISCV64
+/* x86-specific exception handlers (use x86 intr_frame fields) */
 static void kill(struct intr_frame*);
 static void page_fault(struct intr_frame*);
+#endif
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * EXCEPTION INITIALIZATION
@@ -89,6 +96,11 @@ static void page_fault(struct intr_frame*);
    Refer to [IA32-v3a] section 5.15 "Exception and Interrupt
    Reference" for a description of each of these exceptions. */
 void exception_init(void) {
+#ifdef ARCH_RISCV64
+  /* RISC-V exception handlers are registered in arch/riscv64/intr.c.
+     Page fault handling will be added in Task 3. For now, RISC-V
+     exceptions are handled by the default trap handler. */
+#else
   /* These exceptions can be raised explicitly by a user program,
      e.g. via the INT, INT3, INTO, and BOUND instructions.  Thus,
      we set DPL==3, meaning that user programs are allowed to
@@ -115,15 +127,17 @@ void exception_init(void) {
      We need to disable interrupts for page faults because the
      fault address is stored in CR2 and needs to be preserved. */
   intr_register_int(14, 0, INTR_OFF, page_fault, "#PF Page-Fault Exception");
+#endif
 }
 
 /* Prints exception statistics. */
 void exception_print_stats(void) { printf("Exception: %lld page faults\n", page_fault_cnt); }
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * EXCEPTION HANDLERS
+ * EXCEPTION HANDLERS (x86-specific)
  * ═══════════════════════════════════════════════════════════════════════════*/
 
+#ifndef ARCH_RISCV64
 /* Handler for an exception (probably) caused by a user process.
    Terminates the user process if it caused the exception.
    Panics the kernel if the exception originated in kernel code. */
@@ -252,3 +266,83 @@ static void page_fault(struct intr_frame* f) {
          user ? "user" : "kernel");
   kill(f);
 }
+#endif /* !ARCH_RISCV64 */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * RISC-V PAGE FAULT HANDLER
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
+#ifdef ARCH_RISCV64
+
+/* RISC-V page fault handler.
+   Called from intr.c for SCAUSE_LOAD_PAGE_FAULT, SCAUSE_STORE_PAGE_FAULT,
+   and SCAUSE_INST_PAGE_FAULT.
+
+   RISC-V provides fault information differently than x86:
+   - Fault address in stval (not CR2)
+   - Fault type encoded in scause (not error_code bits)
+   - User/kernel mode in sstatus.SPP bit */
+void riscv_page_fault(struct intr_frame* f) {
+  void* fault_addr; /* Faulting virtual address */
+  bool not_present; /* True: not-present page */
+  bool write;       /* True: access was write */
+  bool user;        /* True: access by user mode */
+
+  /* Get faulting address from stval CSR (already saved in frame) */
+  fault_addr = (void*)f->stval;
+
+  /* Count page faults */
+  page_fault_cnt++;
+
+  /* Determine cause from scause.
+     RISC-V distinguishes load/store/instruction page faults directly. */
+  write = (f->scause == SCAUSE_STORE_PAGE_FAULT);
+  not_present = true; /* RISC-V page faults are always "not present" */
+
+  /* Determine user/kernel from sstatus.SPP (saved in frame).
+     SPP=0 means trap from user mode, SPP=1 means supervisor mode. */
+  user = ((f->sstatus & SSTATUS_SPP) == 0);
+
+#ifdef VM
+  /* Get the stack pointer. For user faults, use the saved SP from the
+     interrupt frame. For kernel faults (e.g., during syscall), we need
+     the user SP that was saved when entering kernel mode. */
+  void* esp = user ? (void*)f->sp : thread_current()->syscall_esp;
+
+  /* Try to handle the fault via the VM system. */
+  if (vm_handle_fault(fault_addr, user, write, not_present, esp))
+    return; /* Fault handled successfully - return to user. */
+#endif
+
+  /* VM couldn't handle the fault (or VM disabled).
+     Check if this is kernel code accessing user memory (syscall context). */
+  if (!user && is_user_vaddr(fault_addr)) {
+    /* Kernel code tried to access invalid user memory (bad syscall pointer).
+       Kill the user process with exit code -1. */
+    f->a0 = -1;
+    thread_current()->pcb->my_status->exit_code = -1;
+    printf("%s: exit(%d)\n", thread_current()->pcb->process_name, -1);
+    process_exit();
+    NOT_REACHED();
+  }
+
+  /* User fault or kernel fault on kernel address - fatal. */
+  printf("Page fault at %p: %s error %s page in %s context.\n", fault_addr,
+         not_present ? "not present" : "rights violation", write ? "writing" : "reading",
+         user ? "user" : "kernel");
+
+  if (user) {
+    /* Kill the user process */
+    f->a0 = -1;
+    thread_current()->pcb->my_status->exit_code = -1;
+    printf("%s: exit(%d)\n", thread_current()->pcb->process_name, -1);
+    process_exit();
+    NOT_REACHED();
+  } else {
+    /* Kernel bug - panic */
+    intr_dump_frame(f);
+    PANIC("Kernel bug - page fault in kernel at %p", fault_addr);
+  }
+}
+
+#endif /* ARCH_RISCV64 */

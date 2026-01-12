@@ -15,8 +15,16 @@
 #ifndef USERPROG_SYSCALL_H
 #define USERPROG_SYSCALL_H
 
+/* Forward declaration of interrupt frame */
+struct intr_frame;
+
 /* Initializes the system call handler.
    Called once during kernel startup. */
 void syscall_init(void);
+
+/* System call handler - dispatches syscalls to their implementations.
+   x86: Called from INT 0x30 handler.
+   RISC-V: Called from trap handler on ECALL. */
+void syscall_handler(struct intr_frame* f);
 
 #endif /* userprog/syscall.h */

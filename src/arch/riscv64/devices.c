@@ -22,14 +22,16 @@ void serial_putc(uint8_t c) { sbi_console_putchar(c); }
  *
  * SBI console is unbuffered, so this is a no-op.
  */
-void serial_flush(void) { /* No-op: SBI console writes are synchronous */ }
+void serial_flush(void) { /* No-op: SBI console writes are synchronous */
+}
 
 /*
  * vga_putc - Output a character to VGA display.
  *
  * RISC-V virt machine has no VGA, so this is a no-op.
  */
-void vga_putc(uint8_t c __attribute__((unused))) { /* No VGA on RISC-V virt machine */ }
+void vga_putc(uint8_t c __attribute__((unused))) { /* No VGA on RISC-V virt machine */
+}
 
 /*
  * shutdown - Shut down the machine.
@@ -59,4 +61,20 @@ void shutdown_power_off(void) { shutdown(); }
 void shutdown_reboot(void) {
   /* TODO: Use SBI SRST extension for warm reboot */
   shutdown();
+}
+
+/*
+ * input_getc - Get a character from keyboard/serial input.
+ *
+ * Uses SBI console getchar. Returns the character, or blocks until available.
+ * Returns -1 if no input is available (non-blocking on RISC-V SBI).
+ */
+uint8_t input_getc(void) {
+  int c;
+  /* SBI getchar returns -1 if no character available.
+     Loop until we get a valid character. */
+  do {
+    c = sbi_console_getchar();
+  } while (c < 0);
+  return (uint8_t)c;
 }

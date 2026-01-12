@@ -76,6 +76,7 @@ extern struct virtio_blk* virtio_blk_dev;
 
 /* Function prototypes */
 void virtio_blk_init(void);
+void virtio_blk_register(void); /* Register with block layer for filesys */
 bool virtio_blk_read(uint64_t sector, void* buf, uint32_t count);
 bool virtio_blk_write(uint64_t sector, const void* buf, uint32_t count);
 uint64_t virtio_blk_capacity(void);

@@ -264,6 +264,10 @@ void mmu_flush_tlb(void) { sfence_vma_all(); }
 void mmu_flush_tlb_page(uintptr_t va) { sfence_vma_va(va); }
 
 /*
- * Get the kernel's root page table.
+ * Get the kernel's root page table (returns raw physical address).
+ *
+ * Note: This returns the physical address of the kernel page table.
+ * Callers running after paging is enabled should convert to VA using ptov()
+ * if needed, or use the PA directly for SATP operations.
  */
 uint64_t* mmu_get_kernel_pt(void) { return kernel_pt_l2; }

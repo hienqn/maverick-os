@@ -1,11 +1,14 @@
 /* arch/riscv64/virtio-blk.c - VirtIO block device driver.
  *
  * Provides disk access via VirtIO block device.
+ * Registers with Pintos block layer for filesystem access.
  */
 
 #include "arch/riscv64/virtio-blk.h"
 #include "arch/riscv64/virtio.h"
 #include "arch/riscv64/memlayout.h"
+#include "devices/block.h"
+#include "devices/partition.h"
 #include <string.h>
 
 #define UNUSED __attribute__((unused))
@@ -236,4 +239,71 @@ uint64_t virtio_blk_capacity(void) {
   if (!virtio_blk_dev)
     return 0;
   return virtio_blk_dev->capacity;
+}
+
+/* ==========================================================================
+ * Block Layer Integration
+ *
+ * These functions wrap VirtIO operations for the Pintos block device layer,
+ * enabling filesystem access through the standard block API.
+ * ========================================================================== */
+
+/*
+ * virtio_blk_read_block - Block layer read callback.
+ *
+ * Reads a single sector from the VirtIO block device.
+ */
+static void virtio_blk_read_block(void* aux UNUSED, block_sector_t sector, void* buffer) {
+  if (!virtio_blk_read(sector, buffer, 1)) {
+    console_puts("VirtIO: Block read failed at sector ");
+    console_putdec(sector);
+    console_puts("\n");
+  }
+}
+
+/*
+ * virtio_blk_write_block - Block layer write callback.
+ *
+ * Writes a single sector to the VirtIO block device.
+ */
+static void virtio_blk_write_block(void* aux UNUSED, block_sector_t sector, const void* buffer) {
+  if (!virtio_blk_write(sector, buffer, 1)) {
+    console_puts("VirtIO: Block write failed at sector ");
+    console_putdec(sector);
+    console_puts("\n");
+  }
+}
+
+/* Block operations for VirtIO */
+static struct block_operations virtio_blk_ops = {
+    .read = virtio_blk_read_block,
+    .write = virtio_blk_write_block,
+};
+
+/*
+ * virtio_blk_register - Register VirtIO block device with block layer.
+ *
+ * Called after virtio_blk_init() to make the device available to filesys.
+ */
+void virtio_blk_register(void) {
+  if (!virtio_blk_dev || !virtio_blk_dev->dev.initialized) {
+    console_puts("VirtIO: No block device to register\n");
+    return;
+  }
+
+  /* Register as a raw block device - partition_scan will identify roles */
+  struct block* blk = block_register("vda",     /* Device name */
+                                     BLOCK_RAW, /* Type (raw until scanned) */
+                                     "VirtIO",  /* Extra info */
+                                     (block_sector_t)virtio_blk_dev->capacity, /* Size in sectors */
+                                     &virtio_blk_ops,                          /* Operations */
+                                     virtio_blk_dev);                          /* Aux data */
+
+  if (blk != NULL) {
+    console_puts("VirtIO: Registered block device 'vda'\n");
+    /* Scan for partitions to identify filesystem, swap, etc. */
+    partition_scan(blk);
+  } else {
+    console_puts("VirtIO: Failed to register block device\n");
+  }
 }

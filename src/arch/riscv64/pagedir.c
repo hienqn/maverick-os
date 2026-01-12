@@ -333,9 +333,11 @@ void pagedir_set_writable(pagedir_t pd, void* vpage, bool writable) {
  */
 void pagedir_activate(pagedir_t pd) {
   if (pd == NULL) {
-    /* Use kernel page table */
+    /* Use kernel page table.
+       mmu_get_kernel_pt() returns the physical address directly (it's a
+       static array whose linker address is in physical memory 0x8xxxxxxx). */
     uint64_t* kernel_pt = mmu_get_kernel_pt();
-    uint64_t satp = SATP_VALUE(SATP_MODE_SV39, 0, vtop(kernel_pt) >> PGBITS);
+    uint64_t satp = SATP_VALUE(SATP_MODE_SV39, 0, (uintptr_t)kernel_pt >> PGBITS);
     csr_write(satp, satp);
     sfence_vma_all();
     current_pd = NULL;

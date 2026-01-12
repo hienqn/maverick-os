@@ -69,26 +69,51 @@
 #include "filesys/wal.h"
 #include "vm/mmap.h"
 
+#ifdef ARCH_RISCV64
+#include "arch/riscv64/csr.h"
+#endif
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * ARCHITECTURE-SPECIFIC MACROS
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
+#ifdef ARCH_RISCV64
+/* RISC-V: Return value in a0 register */
+#define SYSCALL_RETURN(f, val) ((f)->a0 = (uint64_t)(val))
+#define SYSCALL_GET_RETURN(f) ((int)(f)->a0)
+#else
+/* x86: Return value in eax register */
+#define SYSCALL_RETURN(f, val) ((f)->eax = (uint32_t)(val))
+#define SYSCALL_GET_RETURN(f) ((int)(f)->eax)
+#endif
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * FORWARD DECLARATIONS
  * ═══════════════════════════════════════════════════════════════════════════*/
 
-static void syscall_handler(struct intr_frame*);
+/* syscall_handler is called from interrupt handler (x86) or trap handler (RISC-V) */
+void syscall_handler(struct intr_frame*);
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * SYSCALL INITIALIZATION
  * ═══════════════════════════════════════════════════════════════════════════*/
 
 /* Registers the syscall interrupt handler.
-   INT 0x30 is the software interrupt used for system calls.
-   DPL=3 allows user-mode code to invoke this interrupt. */
-void syscall_init(void) { intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall"); }
+   x86: INT 0x30 is the software interrupt used for system calls.
+   RISC-V: syscall_handler is called directly from trap handler (ECALL). */
+void syscall_init(void) {
+#ifndef ARCH_RISCV64
+  /* x86: Register INT 0x30 handler. DPL=3 allows user-mode invocation. */
+  intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall");
+#endif
+  /* RISC-V: No registration needed - trap handler calls syscall_handler directly */
+}
 
 /* Terminates the current process with the given exit code. */
 static void exit_process(struct intr_frame* f, int exit_code) {
-  f->eax = exit_code;
+  SYSCALL_RETURN(f, exit_code);
   thread_current()->pcb->my_status->exit_code = exit_code;
-  printf("%s: exit(%d)\n", thread_current()->pcb->process_name, f->eax);
+  printf("%s: exit(%d)\n", thread_current()->pcb->process_name, exit_code);
   process_exit();
 }
 
@@ -151,12 +176,32 @@ static struct dir* get_dir_from_fd(int fd) {
  * MAIN SYSCALL HANDLER
  * ─────────────────────────────────────────────────────────────────────────────
  * Dispatches system calls to their handlers based on syscall number.
- * Arguments are read from user stack (f->esp).
- * Return value is stored in f->eax.
+ * x86: Arguments read from user stack (f->esp), syscall# at esp[0].
+ * RISC-V: Arguments in a0-a5 registers, syscall# in a7.
+ * Return value stored in SYSCALL_RETURN(f, (x86) or f->a0 (RISC-V).
  * ═══════════════════════════════════════════════════════════════════════════*/
 
-static void syscall_handler(struct intr_frame* f) {
-  /* Save user ESP for page fault handler. When a fault occurs in kernel mode
+void syscall_handler(struct intr_frame* f) {
+#ifdef ARCH_RISCV64
+  /* RISC-V: Save user SP for page fault handler */
+  thread_current()->syscall_esp = (void*)f->sp;
+
+  /* RISC-V syscall convention: syscall number in a7, args in a0-a5.
+     We create an args array to match x86 code structure (args[1..6] = a0-a5).
+     Note: args[0] is unused on RISC-V but included for code compatibility. */
+  uint64_t args_array[7];
+  args_array[0] = f->a7; /* Syscall number (for compatibility) */
+  args_array[1] = f->a0;
+  args_array[2] = f->a1;
+  args_array[3] = f->a2;
+  args_array[4] = f->a3;
+  args_array[5] = f->a4;
+  args_array[6] = f->a5;
+  uint64_t* args = args_array;
+
+  uint64_t syscall_num = f->a7;
+#else
+  /* x86: Save user ESP for page fault handler. When a fault occurs in kernel mode
      while accessing user memory, the handler needs the user stack pointer
      (not the kernel stack pointer) to check for valid stack growth. */
   thread_current()->syscall_esp = (void*)f->esp;
@@ -176,6 +221,7 @@ static void syscall_handler(struct intr_frame* f) {
   }
 
   uint32_t syscall_num = args[0]; /* May fault - page_fault() handles it */
+#endif
 
   switch (syscall_num) {
 
@@ -194,21 +240,21 @@ static void syscall_handler(struct intr_frame* f) {
     case SYS_EXEC: {
       char* cmd_line = (char*)args[1];
       pid_t pid = process_execute(cmd_line);
-      f->eax = (pid == TID_ERROR) ? -1 : pid;
+      SYSCALL_RETURN(f, (pid == TID_ERROR) ? -1 : pid);
       break;
     }
     case SYS_WAIT: {
       pid_t child_pid = args[1];
-      f->eax = process_wait(child_pid);
+      SYSCALL_RETURN(f, process_wait(child_pid));
       break;
     }
     case SYS_FORK: {
       pid_t pid = process_fork(f);
-      f->eax = (pid == TID_ERROR) ? -1 : pid;
+      SYSCALL_RETURN(f, (pid == TID_ERROR) ? -1 : pid);
       break;
     }
     case SYS_PRACTICE:
-      f->eax = args[1] + 1;
+      SYSCALL_RETURN(f, args[1] + 1);
       break;
 
     /* ═══════════════════════════════════════════════════════════════════════
@@ -222,12 +268,12 @@ static void syscall_handler(struct intr_frame* f) {
         exit_process(f, -1);
         break;
       }
-      f->eax = filesys_create(file_name, initial_size);
+      SYSCALL_RETURN(f, filesys_create(file_name, initial_size));
       break;
     }
     case SYS_REMOVE: {
       char* file_name = (char*)args[1];
-      f->eax = filesys_remove(file_name);
+      SYSCALL_RETURN(f, filesys_remove(file_name));
       break;
     }
     case SYS_OPEN: {
@@ -235,14 +281,14 @@ static void syscall_handler(struct intr_frame* f) {
 
       struct file* open_file = filesys_open(file_name);
       if (open_file == NULL) {
-        f->eax = -1;
+        SYSCALL_RETURN(f, -1);
         break;
       }
 
       int free_fd = find_free_fd();
       if (free_fd == -1) {
         file_close(open_file);
-        f->eax = -1;
+        SYSCALL_RETURN(f, -1);
         break;
       }
 
@@ -255,25 +301,25 @@ static void syscall_handler(struct intr_frame* f) {
         struct dir* open_dir = dir_open(inode_reopen(inode));
         file_close(open_file);
         if (open_dir == NULL) {
-          f->eax = -1;
+          SYSCALL_RETURN(f, -1);
           break;
         }
         ofd = ofd_create_dir(open_dir);
         if (ofd == NULL) {
           dir_close(open_dir);
-          f->eax = -1;
+          SYSCALL_RETURN(f, -1);
           break;
         }
       } else {
         ofd = ofd_create_file(open_file);
         if (ofd == NULL) {
           file_close(open_file);
-          f->eax = -1;
+          SYSCALL_RETURN(f, -1);
           break;
         }
       }
       entry->ofd = ofd;
-      f->eax = free_fd;
+      SYSCALL_RETURN(f, free_fd);
       break;
     }
     case SYS_CLOSE: {
@@ -281,7 +327,7 @@ static void syscall_handler(struct intr_frame* f) {
 
       /* Validate fd range */
       if (!is_valid_fd(fd)) {
-        f->eax = -1;
+        SYSCALL_RETURN(f, -1);
         break;
       }
 
@@ -300,7 +346,7 @@ static void syscall_handler(struct intr_frame* f) {
       int size = args[3];
 
       if (size == 0) {
-        f->eax = 0;
+        SYSCALL_RETURN(f, 0);
         break;
       }
 
@@ -313,15 +359,15 @@ static void syscall_handler(struct intr_frame* f) {
       /* Validate fd and get OFD */
       struct open_file_desc* ofd = get_ofd(fd);
       if (ofd == NULL) {
-        f->eax = -1;
+        SYSCALL_RETURN(f, -1);
         break;
       }
 
       if (ofd->type == FD_CONSOLE) {
         if (ofd->cmode == CONSOLE_READ) {
-          f->eax = read_from_input(buffer, size);
+          SYSCALL_RETURN(f, read_from_input(buffer, size));
         } else {
-          f->eax = -1; /* Can't read from stdout/stderr */
+          SYSCALL_RETURN(f, -1); /* Can't read from stdout/stderr */
         }
         break;
       }
@@ -331,7 +377,7 @@ static void syscall_handler(struct intr_frame* f) {
            This ensures we don't hold filesystem locks if user buffer is bad. */
         char* kbuf = malloc(size);
         if (kbuf == NULL) {
-          f->eax = -1;
+          SYSCALL_RETURN(f, -1);
           break;
         }
         int bytes_read = file_read(ofd->file, kbuf, size);
@@ -339,12 +385,12 @@ static void syscall_handler(struct intr_frame* f) {
           memcpy(buffer, kbuf, bytes_read); /* May fault on bad user ptr - no locks held */
         }
         free(kbuf);
-        f->eax = bytes_read;
+        SYSCALL_RETURN(f, bytes_read);
         break;
       }
 
       /* FD_NONE, FD_DIR, or invalid entry */
-      f->eax = -1;
+      SYSCALL_RETURN(f, -1);
       break;
     }
     case SYS_WRITE: {
@@ -353,7 +399,7 @@ static void syscall_handler(struct intr_frame* f) {
       uint32_t size = args[3];
 
       if (size == 0) {
-        f->eax = 0;
+        SYSCALL_RETURN(f, 0);
         break;
       }
 
@@ -366,16 +412,16 @@ static void syscall_handler(struct intr_frame* f) {
       /* Validate fd and get OFD */
       struct open_file_desc* ofd = get_ofd(fd);
       if (ofd == NULL) {
-        f->eax = -1;
+        SYSCALL_RETURN(f, -1);
         break;
       }
 
       if (ofd->type == FD_CONSOLE) {
         if (ofd->cmode == CONSOLE_WRITE) {
           putbuf(buffer, size);
-          f->eax = size;
+          SYSCALL_RETURN(f, size);
         } else {
-          f->eax = -1; /* Can't write to stdin */
+          SYSCALL_RETURN(f, -1); /* Can't write to stdin */
         }
         break;
       }
@@ -385,18 +431,18 @@ static void syscall_handler(struct intr_frame* f) {
            This ensures we don't hold filesystem locks if user buffer is bad. */
         char* kbuf = malloc(size);
         if (kbuf == NULL) {
-          f->eax = -1;
+          SYSCALL_RETURN(f, -1);
           break;
         }
         memcpy(kbuf, buffer, size); /* May fault on bad user ptr - no locks held */
         int bytes_written = file_write(ofd->file, kbuf, size);
         free(kbuf);
-        f->eax = bytes_written;
+        SYSCALL_RETURN(f, bytes_written);
         break;
       }
 
       /* FD_NONE, FD_DIR, or invalid entry */
-      f->eax = -1;
+      SYSCALL_RETURN(f, -1);
       break;
     }
     case SYS_SEEK: {
@@ -412,14 +458,14 @@ static void syscall_handler(struct intr_frame* f) {
       int fd = args[1];
 
       struct file* file = get_file_from_fd(fd);
-      f->eax = (file != NULL) ? file_tell(file) : -1;
+      SYSCALL_RETURN(f, (file != NULL) ? file_tell(file) : -1);
       break;
     }
     case SYS_FILESIZE: {
       int fd = args[1];
 
       struct file* file = get_file_from_fd(fd);
-      f->eax = (file != NULL) ? file_length(file) : -1;
+      SYSCALL_RETURN(f, (file != NULL) ? file_length(file) : -1);
       break;
     }
     case SYS_INUMBER: {
@@ -427,7 +473,7 @@ static void syscall_handler(struct intr_frame* f) {
 
       struct open_file_desc* ofd = get_ofd(fd);
       if (ofd == NULL) {
-        f->eax = -1;
+        SYSCALL_RETURN(f, -1);
         break;
       }
 
@@ -437,7 +483,7 @@ static void syscall_handler(struct intr_frame* f) {
       else if (ofd->type == FD_DIR && ofd->dir != NULL)
         inode = dir_get_inode(ofd->dir);
 
-      f->eax = (inode != NULL) ? (int)inode_get_inumber(inode) : -1;
+      SYSCALL_RETURN(f, (inode != NULL) ? (int)inode_get_inumber(inode) : -1);
       break;
     }
 
@@ -447,13 +493,13 @@ static void syscall_handler(struct intr_frame* f) {
 
     case SYS_CHDIR: {
       char* dir_path = (char*)args[1];
-      f->eax = filesys_chdir(dir_path);
+      SYSCALL_RETURN(f, filesys_chdir(dir_path));
       break;
     }
 
     case SYS_MKDIR: {
       char* dir_path = (char*)args[1];
-      f->eax = filesys_mkdir(dir_path);
+      SYSCALL_RETURN(f, filesys_mkdir(dir_path));
       break;
     }
 
@@ -463,7 +509,7 @@ static void syscall_handler(struct intr_frame* f) {
 
       struct dir* dir = get_dir_from_fd(fd);
       if (dir == NULL) {
-        f->eax = false;
+        SYSCALL_RETURN(f, false);
         break;
       }
 
@@ -477,7 +523,7 @@ static void syscall_handler(struct intr_frame* f) {
           break;
         }
       }
-      f->eax = success;
+      SYSCALL_RETURN(f, success);
       break;
     }
 
@@ -485,7 +531,7 @@ static void syscall_handler(struct intr_frame* f) {
       int fd = args[1];
 
       struct open_file_desc* ofd = get_ofd(fd);
-      f->eax = (ofd != NULL && ofd->type == FD_DIR);
+      SYSCALL_RETURN(f, (ofd != NULL && ofd->type == FD_DIR));
       break;
     }
 
@@ -503,7 +549,7 @@ static void syscall_handler(struct intr_frame* f) {
         break;
       }
 
-      f->eax = filesys_link(oldpath, newpath);
+      SYSCALL_RETURN(f, filesys_link(oldpath, newpath));
       break;
     }
 
@@ -517,7 +563,7 @@ static void syscall_handler(struct intr_frame* f) {
         break;
       }
 
-      f->eax = filesys_symlink(target, linkpath);
+      SYSCALL_RETURN(f, filesys_symlink(target, linkpath));
       break;
     }
 
@@ -538,7 +584,7 @@ static void syscall_handler(struct intr_frame* f) {
         break;
       }
 
-      f->eax = filesys_readlink(path, buf, bufsize);
+      SYSCALL_RETURN(f, filesys_readlink(path, buf, bufsize));
       break;
     }
 
@@ -550,7 +596,7 @@ static void syscall_handler(struct intr_frame* f) {
       stub_fun sfun = (stub_fun)args[1];
       pthread_fun tfun = (pthread_fun)args[2];
       void* arg = (void*)args[3];
-      f->eax = pthread_execute(sfun, tfun, arg);
+      SYSCALL_RETURN(f, pthread_execute(sfun, tfun, arg));
       break;
     }
 
@@ -560,12 +606,12 @@ static void syscall_handler(struct intr_frame* f) {
 
     case SYS_PT_JOIN: {
       tid_t tid = args[1];
-      f->eax = pthread_join(tid, NULL);
+      SYSCALL_RETURN(f, pthread_join(tid, NULL));
       break;
     }
 
     case SYS_GET_TID:
-      f->eax = thread_current()->tid;
+      SYSCALL_RETURN(f, thread_current()->tid);
       break;
 
       /* ═══════════════════════════════════════════════════════════════════════
@@ -577,7 +623,7 @@ static void syscall_handler(struct intr_frame* f) {
 
       /* Check for NULL pointer - return false instead of crashing */
       if (user_lock == NULL) {
-        f->eax = false;
+        SYSCALL_RETURN(f, false);
         break;
       }
 
@@ -586,14 +632,14 @@ static void syscall_handler(struct intr_frame* f) {
 
       if (pcb->next_lock_id >= MAX_LOCKS) {
         lock_release(&pcb->exit_lock);
-        f->eax = false;
+        SYSCALL_RETURN(f, false);
         break;
       }
 
       struct lock* k_lock = malloc(sizeof(struct lock));
       if (k_lock == NULL) {
         lock_release(&pcb->exit_lock);
-        f->eax = false;
+        SYSCALL_RETURN(f, false);
         break;
       }
 
@@ -603,14 +649,14 @@ static void syscall_handler(struct intr_frame* f) {
       lock_release(&pcb->exit_lock);
 
       *user_lock = (lock_t)id; /* Safe: no locks held, validated non-NULL */
-      f->eax = true;
+      SYSCALL_RETURN(f, true);
       break;
     }
 
     case SYS_LOCK_ACQUIRE: {
       lock_t* user_lock = (lock_t*)args[1];
       if (user_lock == NULL) {
-        f->eax = false;
+        SYSCALL_RETURN(f, false);
         break;
       }
 
@@ -623,10 +669,10 @@ static void syscall_handler(struct intr_frame* f) {
       lock_release(&pcb->exit_lock);
 
       if (k_lock == NULL || lock_held_by_current_thread(k_lock)) {
-        f->eax = false;
+        SYSCALL_RETURN(f, false);
       } else {
         lock_acquire(k_lock);
-        f->eax = true;
+        SYSCALL_RETURN(f, true);
       }
       break;
     }
@@ -634,7 +680,7 @@ static void syscall_handler(struct intr_frame* f) {
     case SYS_LOCK_RELEASE: {
       lock_t* user_lock = (lock_t*)args[1];
       if (user_lock == NULL) {
-        f->eax = false;
+        SYSCALL_RETURN(f, false);
         break;
       }
 
@@ -647,10 +693,10 @@ static void syscall_handler(struct intr_frame* f) {
       lock_release(&pcb->exit_lock);
 
       if (k_lock == NULL || !lock_held_by_current_thread(k_lock)) {
-        f->eax = false;
+        SYSCALL_RETURN(f, false);
       } else {
         lock_release(k_lock);
-        f->eax = true;
+        SYSCALL_RETURN(f, true);
       }
       break;
     }
@@ -661,7 +707,7 @@ static void syscall_handler(struct intr_frame* f) {
 
       /* Check for NULL pointer or negative value - return false instead of crashing */
       if (user_sema == NULL || val < 0) {
-        f->eax = false;
+        SYSCALL_RETURN(f, false);
         break;
       }
 
@@ -670,14 +716,14 @@ static void syscall_handler(struct intr_frame* f) {
 
       if (pcb->next_sema_id >= MAX_SEMAS) {
         lock_release(&pcb->exit_lock);
-        f->eax = false;
+        SYSCALL_RETURN(f, false);
         break;
       }
 
       struct semaphore* k_sema = malloc(sizeof(struct semaphore));
       if (k_sema == NULL) {
         lock_release(&pcb->exit_lock);
-        f->eax = false;
+        SYSCALL_RETURN(f, false);
         break;
       }
 
@@ -687,14 +733,14 @@ static void syscall_handler(struct intr_frame* f) {
       lock_release(&pcb->exit_lock);
 
       *user_sema = (sema_t)id; /* Safe: no locks held, validated non-NULL */
-      f->eax = true;
+      SYSCALL_RETURN(f, true);
       break;
     }
 
     case SYS_SEMA_DOWN: {
       sema_t* user_sema = (sema_t*)args[1];
       if (user_sema == NULL) {
-        f->eax = false;
+        SYSCALL_RETURN(f, false);
         break;
       }
 
@@ -707,10 +753,10 @@ static void syscall_handler(struct intr_frame* f) {
       lock_release(&pcb->exit_lock);
 
       if (k_sema == NULL) {
-        f->eax = false;
+        SYSCALL_RETURN(f, false);
       } else {
         sema_down(k_sema);
-        f->eax = true;
+        SYSCALL_RETURN(f, true);
       }
       break;
     }
@@ -718,7 +764,7 @@ static void syscall_handler(struct intr_frame* f) {
     case SYS_SEMA_UP: {
       sema_t* user_sema = (sema_t*)args[1];
       if (user_sema == NULL) {
-        f->eax = false;
+        SYSCALL_RETURN(f, false);
         break;
       }
 
@@ -731,10 +777,10 @@ static void syscall_handler(struct intr_frame* f) {
       lock_release(&pcb->exit_lock);
 
       if (k_sema == NULL) {
-        f->eax = false;
+        SYSCALL_RETURN(f, false);
       } else {
         sema_up(k_sema);
-        f->eax = true;
+        SYSCALL_RETURN(f, true);
       }
       break;
     }
@@ -749,21 +795,21 @@ static void syscall_handler(struct intr_frame* f) {
 
       /* Basic security check: ensure address is in user space */
       if (!is_user_vaddr(addr)) {
-        f->eax = (uint32_t)MAP_FAILED;
+        SYSCALL_RETURN(f, (uint32_t)MAP_FAILED);
         break;
       }
 
       /* Get file length for the mapping */
       struct file* file = get_file_from_fd(fd);
       if (file == NULL) {
-        f->eax = (uint32_t)MAP_FAILED;
+        SYSCALL_RETURN(f, (uint32_t)MAP_FAILED);
         break;
       }
       off_t file_size = file_length(file);
 
       /* Let mmap_create handle all validation (page-alignment, file validity, etc.) */
       void* result = mmap_create(addr, (size_t)file_size, fd, 0);
-      f->eax = (uint32_t)result;
+      SYSCALL_RETURN(f, (uint32_t)result);
       break;
     }
 
@@ -773,13 +819,13 @@ static void syscall_handler(struct intr_frame* f) {
 
       /* Validate address is in user space */
       if (!is_user_vaddr(addr)) {
-        f->eax = -1;
+        SYSCALL_RETURN(f, -1);
         break;
       }
 
       /* Atomically find and destroy the region containing this address */
       int result = mmap_find_and_destroy(addr);
-      f->eax = result;
+      SYSCALL_RETURN(f, result);
       break;
     }
 
@@ -795,7 +841,7 @@ static void syscall_handler(struct intr_frame* f) {
 
       /* Validate user address if provided */
       if (addr != NULL && !is_user_vaddr(addr)) {
-        f->eax = (uint32_t)MAP_FAILED;
+        SYSCALL_RETURN(f, (uint32_t)MAP_FAILED);
         break;
       }
 
@@ -807,7 +853,7 @@ static void syscall_handler(struct intr_frame* f) {
         /* File-backed mapping */
         result = mmap_create(addr, length, fd, offset);
       }
-      f->eax = (uint32_t)result;
+      SYSCALL_RETURN(f, (uint32_t)result);
       break;
     }
 

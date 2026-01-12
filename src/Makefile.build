@@ -2,11 +2,20 @@
 
 SRCDIR = ../..
 
-all: kernel.bin loader.bin
-
 include ../../Make.config
 include ../Make.vars
 include ../../tests/Make.tests
+
+# =============================================================================
+# Build Targets
+# =============================================================================
+# For i386: build both kernel.bin and loader.bin
+# For riscv64: build only kernel.bin (OpenSBI handles boot)
+ifeq ($(NO_LOADER),1)
+all: kernel.bin
+else
+all: kernel.bin loader.bin
+endif
 
 # Compiler and assembler options.
 kernel.bin: CPPFLAGS += -I$(SRCDIR)/lib/kernel
@@ -121,11 +130,16 @@ kernel.o: threads/kernel.lds.s $(OBJECTS)
 kernel.bin: kernel.o
 	$(OBJCOPY) -R .note -R .comment -S $< $@
 
+# =============================================================================
+# Loader (i386 only)
+# =============================================================================
+ifneq ($(NO_LOADER),1)
 threads/loader.o: threads/loader.S
 	$(CC) -c $< -o $@ $(ASFLAGS) $(CPPFLAGS) $(DEFINES)
 
 loader.bin: threads/loader.o
 	$(LD) -N -e 0 -Ttext 0x7c00 --oformat binary -o $@ $<
+endif
 
 os.dsk: kernel.bin
 	cat $^ > $@

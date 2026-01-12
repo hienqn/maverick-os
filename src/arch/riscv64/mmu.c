@@ -141,14 +141,11 @@ static void map_mmio_regions(void) {
    *   PLIC:   0x0C000000
    *   CLINT:  0x02000000
    *
-   * For now, we don't need special mappings since we use SBI for console.
-   * When we add device drivers, we'll map these regions.
-   *
-   * For devices at PA < 0x80000000, we can map them at:
-   *   VA = PHYS_BASE - 0x80000000 + PA = 0xFFFFFFFF00000000 + PA
-   * But for simplicity in Phase 2, we'll use identity mapping for MMIO
-   * or access through SBI.
+   * Create identity mapping for low MMIO region (0x00000000 - 0x3FFFFFFF).
+   * L2 index 0 covers this range as a 1GB gigapage.
    */
+  uint64_t mmio_pte = pte_create(0, PTE_V | PTE_R | PTE_W | PTE_A | PTE_D | PTE_G);
+  kernel_pt_l2[0] = mmio_pte;
 }
 
 /*

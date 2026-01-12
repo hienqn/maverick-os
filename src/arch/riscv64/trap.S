@@ -212,9 +212,13 @@ restore_regs:
  * install_trap_vector - Set stvec to point to trap_entry.
  *
  * Called from C code during initialization.
+ * Also initializes sscratch to 0 for S-mode trap handling.
  */
 .globl install_trap_vector
 install_trap_vector:
+    /* Initialize sscratch to 0 (convention: 0 means we're in S-mode) */
+    csrw sscratch, zero
+    /* Set trap vector */
     la t0, trap_entry
     csrw stvec, t0
     ret

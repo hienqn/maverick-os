@@ -8,6 +8,7 @@
 #include "arch/riscv64/sbi.h"
 #include "arch/riscv64/csr.h"
 #include "arch/riscv64/intr.h"
+#include "threads/thread.h"
 #include <stdint.h>
 
 #define UNUSED __attribute__((unused))
@@ -73,8 +74,8 @@ void timer_interrupt(struct intr_frame* f UNUSED) {
   /* Schedule next timer interrupt */
   set_next_timer();
 
-  /* TODO: Call thread_tick() for scheduling */
-  /* thread_tick(); */
+  /* Notify thread subsystem of timer tick (for preemptive scheduling) */
+  thread_tick();
 }
 
 /*

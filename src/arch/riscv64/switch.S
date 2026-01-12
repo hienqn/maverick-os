@@ -24,7 +24,7 @@
  * Returns:
  *   a0 - Previous thread (the thread that was running before 'next')
  *
- * The thread structure has the stack pointer at offset 0.
+ * The thread's stack pointer is at offset THREAD_STACK_OFS in struct thread.
  */
 .globl switch_threads
 .align 4
@@ -51,12 +51,11 @@ switch_threads:
     sd a0,  SWITCH_CUR(sp)
     sd a1,  SWITCH_NEXT(sp)
 
-    /* Save current stack pointer to current thread's stack field.
-     * struct thread has stack at offset 0. */
-    sd sp, 0(a0)
+    /* Save current stack pointer to current thread's stack field. */
+    sd sp, THREAD_STACK_OFS(a0)
 
     /* Load new stack pointer from next thread's stack field */
-    ld sp, 0(a1)
+    ld sp, THREAD_STACK_OFS(a1)
 
     /* Restore callee-saved registers from new thread's stack */
     ld s0,  SWITCH_S0(sp)
@@ -87,52 +86,49 @@ switch_threads:
  * switch_entry - Entry point for newly created threads.
  *
  * When a new thread is first scheduled, switch_threads() returns here.
- * This function calls switch_thunk() which pops the thread arguments
- * and calls kernel_thread().
+ * At this point:
+ *   - a0 contains 'cur' (previous thread) from switch_threads
+ *   - sp points to switch_entry_frame (containing ra = kernel_thread)
+ *   - Above that is kernel_thread_frame (containing function, aux)
+ *
+ * This function:
+ *   1. Calls schedule_tail(cur) to complete the context switch
+ *   2. Pops switch_entry_frame to get kernel_thread address
+ *   3. Pops kernel_thread_frame to get function and aux into a0, a1
+ *   4. Jumps to kernel_thread(function, aux)
  */
 .globl switch_entry
 .align 4
 switch_entry:
-    /* Save ra before calling C code */
-    addi sp, sp, -16
-    sd ra, 0(sp)
+    /* a0 already has 'cur' from switch_threads */
+    /* sp points to switch_entry_frame */
 
-    /* Call switch_thunk to set up arguments and jump to thread function */
-    call switch_thunk
+    /* Call thread_switch_tail(cur) to complete context switch */
+    call thread_switch_tail
 
-    /* Restore ra and return */
-    ld ra, 0(sp)
-    addi sp, sp, 16
-    ret
+    /* Pop switch_entry_frame: get kernel_thread address */
+    ld t0, 0(sp)            /* t0 = address of kernel_thread */
+    addi sp, sp, 8          /* pop switch_entry_frame (8 bytes) */
+
+    /* Pop kernel_thread_frame: get function and aux */
+    ld a0, 0(sp)            /* a0 = function */
+    ld a1, 8(sp)            /* a1 = aux */
+    addi sp, sp, 16         /* pop kernel_thread_frame (16 bytes) */
+
+    /* Jump to kernel_thread(function, aux) */
+    jr t0
 
 /*
- * switch_thunk - Prepares arguments for a new thread.
+ * switch_thunk - Legacy entry point, now unused.
  *
- * When a new thread starts, the switch frame contains cur and next pointers.
- * This function extracts them and sets up for the thread's main function.
- *
- * The actual implementation is in thread.c:schedule_tail().
+ * Previously used to call thread_switch_tail, but switch_entry now handles
+ * everything directly. Kept for compatibility.
  */
 .globl switch_thunk
 .align 4
 switch_thunk:
-    /* When switch_threads returns to switch_entry for a new thread,
-     * register a0 already contains 'cur' (loaded at switch_threads line 77).
-     * We don't need to reload it from the stack.
-     *
-     * Note: The switch frame was deallocated by switch_threads before
-     * returning, so we cannot safely access it from here anyway.
-     */
-
-    /* Call schedule_tail(cur) - a0 already has cur from switch_threads */
-    call schedule_tail
-
-    /* schedule_tail returns. Now we should return to kernel_thread
-     * or wherever the new thread should start.
-     *
-     * For a newly created thread, the ra in the switch frame points
-     * to kernel_thread_entry, which will call the thread's function. */
-    ret
+    /* This is now called directly by switch_entry, just call thread_switch_tail */
+    tail thread_switch_tail
 
 /*
  * thread_launch - Start executing a new thread.

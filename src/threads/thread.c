@@ -61,14 +61,16 @@
 #include <random.h>
 #include <stdio.h>
 #include <string.h>
-#include "threads/flags.h"
 #include "threads/fixed-point.h"
 #include "threads/interrupt.h"
-#include "threads/intr-stubs.h"
 #include "threads/palloc.h"
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#ifdef ARCH_I386
+#include "threads/flags.h"
+#include "threads/intr-stubs.h"
+#endif
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -136,13 +138,24 @@ static struct lock tid_lock;
  * ═══════════════════════════════════════════════════════════════════════════
  * When a new kernel thread starts, it needs this stack frame to know
  * which function to call. The frame is set up by thread_create().
+ *
+ * Architecture differences:
+ *   i386:   eip is pushed by ret instruction, function/aux follow
+ *   RISC-V: function/aux are loaded into a0/a1 by switch_entry
  * ═══════════════════════════════════════════════════════════════════════════*/
 
+#ifdef ARCH_I386
 struct kernel_thread_frame {
   void* eip;             /* Return address (NULL, since kernel_thread doesn't return). */
   thread_func* function; /* Function to call in the new thread. */
   void* aux;             /* Auxiliary data passed to the function. */
 };
+#elif defined(ARCH_RISCV64)
+struct kernel_thread_frame {
+  thread_func* function; /* Function to call (loaded into a0 by switch_entry). */
+  void* aux;             /* Auxiliary data (loaded into a1 by switch_entry). */
+};
+#endif
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * CPU TIME STATISTICS
@@ -389,20 +402,31 @@ tid_t thread_create(const char* name, int priority, thread_func* function, void*
   init_thread(t, name, priority);
   tid = t->tid = allocate_tid();
 
-  /* Stack frame for kernel_thread(). */
+  /* Set up stack frames for new thread bootstrap.
+   * Frames are allocated from top of stack downward. */
   kf = alloc_frame(t, sizeof *kf);
+  ef = alloc_frame(t, sizeof *ef);
+  sf = alloc_frame(t, sizeof *sf);
+
+#ifdef ARCH_I386
+  /* i386: Arguments passed on stack, return addresses for ret instruction */
   kf->eip = NULL;
   kf->function = function;
   kf->aux = aux;
-
-  /* Stack frame for switch_entry(). */
-  ef = alloc_frame(t, sizeof *ef);
   ef->eip = (void (*)(void))kernel_thread;
-
-  /* Stack frame for switch_threads(). */
-  sf = alloc_frame(t, sizeof *sf);
   sf->eip = switch_entry;
   sf->ebp = 0;
+#elif defined(ARCH_RISCV64)
+  /* RISC-V: Arguments loaded into registers by switch_entry */
+  kf->function = function;
+  kf->aux = aux;
+  ef->ra = (uint64_t)kernel_thread;
+  sf->ra = (uint64_t)switch_entry;
+  /* Initialize callee-saved registers to 0 */
+  sf->s0 = sf->s1 = sf->s2 = sf->s3 = 0;
+  sf->s4 = sf->s5 = sf->s6 = sf->s7 = 0;
+  sf->s8 = sf->s9 = sf->s10 = sf->s11 = 0;
+#endif
 
   /* Add to run queue. */
   thread_unblock(t);
@@ -803,19 +827,26 @@ static void idle(void* idle_started_ UNUSED) {
     intr_disable();
     thread_block();
 
-    /* Re-enable interrupts and wait for the next one.
+    /* Re-enable interrupts and wait for the next one. */
+#ifdef ARCH_I386
+    /* The `sti' instruction disables interrupts until the
+       completion of the next instruction, so these two
+       instructions are executed atomically.  This atomicity is
+       important; otherwise, an interrupt could be handled
+       between re-enabling interrupts and waiting for the next
+       one to occur, wasting as much as one clock tick worth of
+       time.
 
-         The `sti' instruction disables interrupts until the
-         completion of the next instruction, so these two
-         instructions are executed atomically.  This atomicity is
-         important; otherwise, an interrupt could be handled
-         between re-enabling interrupts and waiting for the next
-         one to occur, wasting as much as one clock tick worth of
-         time.
-
-         See [IA32-v2a] "HLT", [IA32-v2b] "STI", and [IA32-v3a]
-         7.11.1 "HLT Instruction". */
+       See [IA32-v2a] "HLT", [IA32-v2b] "STI", and [IA32-v3a]
+       7.11.1 "HLT Instruction". */
     asm volatile("sti; hlt" : : : "memory");
+#elif defined(ARCH_RISCV64)
+    /* Enable interrupts, then wait for an interrupt to occur.
+       wfi (Wait For Interrupt) is a hint that allows the processor
+       to enter a low-power state until an interrupt arrives. */
+    intr_enable();
+    asm volatile("wfi" : : : "memory");
+#endif
   }
 }
 
@@ -830,14 +861,20 @@ static void kernel_thread(thread_func* function, void* aux) {
 
 /* Returns the running thread. */
 struct thread* running_thread(void) {
+  /* Copy the CPU's stack pointer, then round down to the start of a page.
+     Because `struct thread' is always at the beginning of a page and the
+     stack pointer is somewhere in the middle, this locates the current thread. */
+#ifdef ARCH_I386
   uint32_t* esp;
-
-  /* Copy the CPU's stack pointer into `esp', and then round that
-     down to the start of a page.  Because `struct thread' is
-     always at the beginning of a page and the stack pointer is
-     somewhere in the middle, this locates the curent thread. */
   asm("mov %%esp, %0" : "=g"(esp));
   return pg_round_down(esp);
+#elif defined(ARCH_RISCV64)
+  uint64_t* sp;
+  asm volatile("mv %0, sp" : "=r"(sp));
+  return pg_round_down(sp);
+#else
+#error "Architecture not supported for running_thread()"
+#endif
 }
 
 /* Returns true if T appears to point to a valid thread. */
@@ -1160,3 +1197,10 @@ static tid_t allocate_tid(void) {
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof(struct thread, stack);
+
+#ifdef ARCH_RISCV64
+#include "arch/riscv64/switch.h"
+/* Verify THREAD_STACK_OFS matches actual offset - compile error if wrong */
+_Static_assert(offsetof(struct thread, stack) == THREAD_STACK_OFS,
+               "THREAD_STACK_OFS in switch.h doesn't match struct thread layout");
+#endif

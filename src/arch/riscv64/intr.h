@@ -19,8 +19,8 @@ enum intr_level {
 
 enum intr_level intr_get_level(void);
 enum intr_level intr_set_level(enum intr_level);
-void intr_enable(void);
-void intr_disable(void);
+enum intr_level intr_enable(void);
+enum intr_level intr_disable(void);
 
 /*
  * RISC-V interrupt/trap frame.
@@ -112,5 +112,6 @@ void intr_yield_on_return(void);
 
 void intr_dump_frame(const struct intr_frame*);
 const char* intr_name(uint8_t vec);
+void intr_get_stats(uint64_t* interrupts, uint64_t* exceptions);
 
 #endif /* ARCH_RISCV64_INTR_H */

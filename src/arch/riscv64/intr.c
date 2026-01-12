@@ -30,6 +30,9 @@ extern void install_trap_vector(void);
 static uint64_t interrupt_count;
 static uint64_t exception_count;
 
+/* Interrupt context nesting depth (0 = not in interrupt context) */
+static int in_intr_context;
+
 /* Forward declarations */
 static void handle_interrupt(struct intr_frame* f, uint64_t cause);
 static void handle_exception(struct intr_frame* f, uint64_t cause);
@@ -56,13 +59,23 @@ void intr_init(void) {
 
 /*
  * intr_enable - Enable interrupts.
+ * Returns the previous interrupt state.
  */
-void intr_enable(void) { csr_set(sstatus, SSTATUS_SIE); }
+enum intr_level intr_enable(void) {
+  enum intr_level old = intr_get_level();
+  csr_set(sstatus, SSTATUS_SIE);
+  return old;
+}
 
 /*
  * intr_disable - Disable interrupts.
+ * Returns the previous interrupt state.
  */
-void intr_disable(void) { csr_clear(sstatus, SSTATUS_SIE); }
+enum intr_level intr_disable(void) {
+  enum intr_level old = intr_get_level();
+  csr_clear(sstatus, SSTATUS_SIE);
+  return old;
+}
 
 /*
  * intr_get_level - Get current interrupt enable state.
@@ -112,6 +125,9 @@ void intr_register_ext(uint8_t vec, intr_handler_func* handler, const char* name
 void trap_handler(struct intr_frame* f) {
   uint64_t cause = f->scause;
 
+  /* Mark that we're in interrupt context */
+  in_intr_context++;
+
   if (SCAUSE_IS_INTERRUPT(cause)) {
     /* Interrupt */
     interrupt_count++;
@@ -121,6 +137,9 @@ void trap_handler(struct intr_frame* f) {
     exception_count++;
     handle_exception(f, cause);
   }
+
+  /* Leaving interrupt context */
+  in_intr_context--;
 }
 
 /*
@@ -225,11 +244,12 @@ void intr_yield_on_return(void) { /* Will be implemented with thread scheduling 
 
 /*
  * intr_context - Returns true if we're in an interrupt context.
+ *
+ * This returns true when executing inside a trap handler (interrupt or
+ * exception), not just when interrupts are disabled. Critical sections
+ * disable interrupts but are not "interrupt context".
  */
-bool intr_context(void) {
-  /* Check if SIE is disabled (we disable it during trap handling) */
-  return (csr_read(sstatus) & SSTATUS_SIE) == 0;
-}
+bool intr_context(void) { return in_intr_context > 0; }
 
 /*
  * intr_get_stats - Get interrupt statistics.

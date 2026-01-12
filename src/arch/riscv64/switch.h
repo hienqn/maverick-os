@@ -47,6 +47,11 @@
 /* Total frame size (must be 16-byte aligned) */
 #define SWITCH_FRAME_SIZE 128
 
+/* Offset of 'stack' field in struct thread.
+ * Layout: tid_t(4) + status(4) + name[16] = 24 bytes before stack.
+ * This MUST match offsetof(struct thread, stack). */
+#define THREAD_STACK_OFS 24
+
 #ifndef __ASSEMBLER__
 #include <stdint.h>
 

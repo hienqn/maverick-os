@@ -153,6 +153,7 @@ void virtio_init(void);
 bool virtio_setup_queue(struct virtio_device* dev, int queue_idx, struct virtqueue* vq);
 int virtio_alloc_desc(struct virtqueue* vq);
 void virtio_free_desc(struct virtqueue* vq, int idx);
+void virtio_free_chain(struct virtqueue* vq, int head);
 void virtio_submit(struct virtqueue* vq, int head);
 bool virtio_poll(struct virtqueue* vq, uint32_t* len);
 

@@ -41,9 +41,26 @@ static bool page_from_pool(const struct pool*, void* page);
 /* Initializes the page allocator.  At most USER_PAGE_LIMIT
    pages are put into the user pool. */
 void palloc_init(size_t user_page_limit) {
-  /* Free memory starts at 1 MB and runs to the end of RAM. */
-  uint8_t* free_start = ptov(1024 * 1024);
-  uint8_t* free_end = ptov(init_ram_pages * PGSIZE);
+  uint8_t* free_start;
+  uint8_t* free_end;
+
+#ifdef ARCH_I386
+  /* i386: Free memory starts at 1 MB (kernel loads at 1MB). */
+  free_start = ptov(1024 * 1024);
+  free_end = ptov(init_ram_pages * PGSIZE);
+#elif defined(ARCH_RISCV64)
+  /* RISC-V: Free memory starts after kernel (_end symbol from linker).
+   * _end is at physical address ~0x802xxxxx. We use the identity mapping
+   * for the page allocator since that's where the kernel runs. */
+  extern char _end[];
+  free_start = (uint8_t*)ROUND_UP((uintptr_t)_end, PGSIZE);
+  /* RAM ends at init_ram_pages * PGSIZE after PHYS_RAM_BASE.
+   * Use identity-mapped addresses (PA = VA for 0x80000000 region). */
+  free_end = (uint8_t*)(PHYS_RAM_BASE + init_ram_pages * PGSIZE);
+#else
+#error "Architecture not supported for palloc_init"
+#endif
+
   size_t free_pages = (free_end - free_start) / PGSIZE;
   size_t user_pages = free_pages / 2;
   size_t kernel_pages;

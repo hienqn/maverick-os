@@ -1,18 +1,50 @@
 CompileFlags:
+  Compiler: clang
   Add:
+    - -isystem/usr/lib/llvm-14/lib/clang/14.0.0/include
     - -I/home/workspace/group0/src
     - -I/home/workspace/group0/src/lib
     - -I/home/workspace/group0/src/lib/kernel
+    - -I/home/workspace/group0/src/arch/common
   Remove:
     - -m32
     - -march=i686
     - -fno-pic
     - -fno-inline
     - -fno-stack-protector
-    
+    - -nostdinc
+
+# Per-path overrides for architecture-specific files
+---
+# i386 architecture files
+If:
+  PathMatch: .*/arch/i386/.*
+CompileFlags:
+  Add:
+    - -DARCH_I386
+    - -I/home/workspace/group0/src/arch/i386
+
+---
+# RISC-V architecture files
+If:
+  PathMatch: .*/arch/riscv64/.*
+CompileFlags:
+  Add:
+    - -DARCH_RISCV64
+    - -I/home/workspace/group0/src/arch/riscv64
+    - --target=riscv64-unknown-elf
+
+---
+# Default to i386 for non-arch-specific files (existing behavior)
+If:
+  PathExclude: .*/arch/(i386|riscv64)/.*
+CompileFlags:
+  Add:
+    - -DARCH_I386
+    - -I/home/workspace/group0/src/arch/i386
+
 Diagnostics:
   UnusedIncludes: None
-  
+
 Index:
   Background: Build
-

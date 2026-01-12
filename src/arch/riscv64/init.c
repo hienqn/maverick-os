@@ -14,10 +14,13 @@
 #include "arch/riscv64/plic.h"
 #include "arch/riscv64/virtio-blk.h"
 #include "arch/riscv64/userprog.h"
+#include "threads/thread.h"
+#include "threads/palloc.h"
 #include <stdint.h>
 #include <string.h>
 
 /* Forward declarations */
+void riscv_init(uint64_t hartid, void* dtb);
 static void console_init(void);
 static void console_putchar(char c);
 static void console_puts(const char* s);
@@ -144,6 +147,17 @@ void riscv_init(uint64_t hartid, void* dtb) {
   console_puthex((uint64_t)init_page_dir);
   console_puts("\n");
 
+  /* Debug: check the VPN2 calculation */
+  console_puts("  VPN2 of PHYS_BASE = ");
+  console_putdec(((uint64_t)PHYS_BASE >> 30) & 0x1FF);
+  console_puts("\n");
+  console_puts("  L2[510] = ");
+  console_puthex(init_page_dir[510]);
+  console_puts("\n");
+  console_puts("  L2[2] = ");
+  console_puthex(init_page_dir[2]);
+  console_puts("\n");
+
   /* Enable paging */
   console_puts("  Enabling Sv39 paging...\n");
   mmu_enable();
@@ -151,11 +165,32 @@ void riscv_init(uint64_t hartid, void* dtb) {
 
   /* Test virtual memory by reading through PHYS_BASE */
   console_puts("\nTesting virtual memory...\n");
-  volatile uint64_t* test_va = (volatile uint64_t*)PHYS_BASE;
-  uint64_t test_val = *test_va;
-  console_puts("  Read from PHYS_BASE: ");
-  console_puthex(test_val);
+  console_puts("  PHYS_BASE = ");
+  console_puthex(PHYS_BASE);
   console_puts("\n");
+
+  /* Print current satp value */
+  uint64_t cur_satp = csr_read(satp);
+  console_puts("  Current satp = ");
+  console_puthex(cur_satp);
+  console_puts("\n");
+
+  /* First test: read via identity-mapped address (should work) */
+  console_puts("  Testing identity map at 0x80200000...\n");
+  volatile uint64_t* identity_va = (volatile uint64_t*)0x80200000UL;
+  uint64_t identity_val = *identity_va;
+  console_puts("  Identity read: ");
+  console_puthex(identity_val);
+  console_puts("\n");
+
+  /* Test PHYS_BASE mapping by reading kernel code area.
+   * Note: PA 0x80000000-0x8001FFFF is PMP-protected by OpenSBI.
+   * Kernel is at PA 0x80200000, so use PHYS_BASE + 0x200000. */
+  volatile uint64_t* kern_va = (volatile uint64_t*)(PHYS_BASE + 0x200000UL);
+  uint64_t kern_val = *kern_va;
+  console_puts("  High VA mapping works: ");
+  console_puthex(kern_val);
+  console_puts(" (same as identity read)\n");
 
   /* Print CSR values for debugging */
   uint64_t sstatus = csr_read(sstatus);
@@ -167,6 +202,17 @@ void riscv_init(uint64_t hartid, void* dtb) {
   console_puts("  satp: ");
   console_puthex(satp);
   console_puts("\n");
+
+  /* Initialize threading subsystem.
+   * thread_init() must come first - it sets up the initial thread structure
+   * so that locks (used by palloc) work correctly. */
+  console_puts("\nInitializing threading...\n");
+  thread_init();
+  console_puts("  Thread subsystem initialized\n");
+
+  /* Initialize page allocator (requires paging to be enabled). */
+  palloc_init(SIZE_MAX); /* No limit on user pages for now */
+  console_puts("  Page allocator initialized\n");
 
   /* Initialize interrupt handling */
   console_puts("\nInitializing interrupts...\n");
@@ -183,9 +229,16 @@ void riscv_init(uint64_t hartid, void* dtb) {
   console_putdec(TIMER_FREQ);
   console_puts(" Hz)\n");
 
-  /* Enable interrupts */
-  console_puts("  Enabling interrupts...\n");
-  intr_enable();
+  /* Start thread scheduler (creates idle thread, enables preemption).
+   * This internally enables interrupts. */
+  console_puts("  Starting thread scheduler...\n");
+  uint64_t cur_sp;
+  asm volatile("mv %0, sp" : "=r"(cur_sp));
+  console_puts("  Current SP: ");
+  console_puthex(cur_sp);
+  console_puts("\n");
+  thread_start();
+  console_puts("  Scheduler started!\n");
 
   /* Wait for a few timer ticks to verify timer works */
   console_puts("\nWaiting for timer interrupts...\n");
@@ -297,69 +350,4 @@ static void console_putdec(uint64_t val) {
 }
 
 /* Interrupt control functions are now in intr.c */
-
-/*
- * Minimal debug_panic for assertion failures.
- */
-void debug_panic(const char* file, int line, const char* function, const char* message, ...) {
-  console_puts("\n*** PANIC ***\n");
-  console_puts("File: ");
-  console_puts(file);
-  console_puts("\nLine: ");
-  console_putdec(line);
-  console_puts("\nFunction: ");
-  console_puts(function);
-  console_puts("\nMessage: ");
-  console_puts(message);
-  console_puts("\n");
-  sbi_shutdown();
-  while (1) {
-    asm volatile("wfi");
-  }
-}
-
-/*
- * Minimal memset implementation for early boot.
- * The full implementation is in lib/string.c but may have dependencies.
- */
-void* early_memset(void* dst, int c, size_t n) {
-  uint8_t* d = dst;
-  while (n-- > 0) {
-    *d++ = (uint8_t)c;
-  }
-  return dst;
-}
-
-/*
- * Stub implementations for thread subsystem functions.
- * These are called by switch.S but the full thread subsystem
- * isn't ported yet. They will be replaced when threads/thread.c
- * is compiled for RISC-V.
- */
-
-/* Forward declaration of thread struct (minimal) */
-struct thread;
-
-/*
- * schedule_tail - Called after a context switch completes.
- *
- * In the full implementation, this releases the lock on the
- * previous thread and performs cleanup. For now, this is a no-op.
- */
-void schedule_tail(struct thread* prev __attribute__((unused))) {
-  /* No-op stub - full implementation in threads/thread.c */
-}
-
-/*
- * thread_exit - Called when a thread's function returns.
- *
- * In the full implementation, this marks the thread as dying
- * and triggers a reschedule. For now, just halt.
- */
-void thread_exit(void) {
-  console_puts("thread_exit: Thread terminated.\n");
-  sbi_shutdown();
-  while (1) {
-    asm volatile("wfi");
-  }
-}
+/* Note: schedule_tail() and thread_exit() are now provided by threads/thread.c */

@@ -94,7 +94,7 @@ static void print_stacktrace(struct thread* t, void* aux UNUSED) {
     frame = (void**)saved_frame->ebp;
     retaddr = (void*)saved_frame->eip;
 #elif defined(ARCH_RISCV64)
-    if (t->stack == (uint8_t*)t + PGSIZE || saved_frame->ra == switch_entry) {
+    if (t->stack == (uint8_t*)t + PGSIZE || saved_frame->ra == (uintptr_t)switch_entry) {
       printf(" thread was never scheduled.\n");
       return;
     }

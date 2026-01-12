@@ -20,7 +20,11 @@ endif
 # Compiler and assembler options.
 kernel.bin: CPPFLAGS += -I$(SRCDIR)/lib/kernel
 
-# Core kernel.
+# =============================================================================
+# Architecture-Specific Sources
+# =============================================================================
+ifeq ($(ARCH),i386)
+# i386 core kernel
 threads_SRC  = threads/start.S		# Startup code.
 threads_SRC += threads/init.c		# Main program.
 threads_SRC += threads/thread.c		# Thread management core.
@@ -32,8 +36,23 @@ threads_SRC += threads/palloc.c		# Page allocator.
 threads_SRC += threads/malloc.c		# Subpage allocator.
 threads_SRC += threads/ioremap.c	# MMIO mapping.
 
-# Device driver code.
+# i386 device drivers
 devices_SRC  = devices/pit.c		# Programmable interrupt timer chip.
+
+else ifeq ($(ARCH),riscv64)
+# RISC-V core kernel (Phase 1: minimal boot)
+arch_SRC  = arch/riscv64/start.S	# Entry point from OpenSBI.
+arch_SRC += arch/riscv64/init.c		# Early initialization.
+arch_SRC += arch/riscv64/sbi.c		# SBI call wrappers.
+
+# RISC-V doesn't use these i386-specific sources
+threads_SRC =
+devices_SRC =
+
+endif
+
+ifeq ($(ARCH),i386)
+# i386 device drivers (continued)
 devices_SRC += devices/timer.c		# Periodic timer device.
 devices_SRC += devices/kbd.c		# Keyboard device.
 devices_SRC += devices/vga.c		# Video device.
@@ -50,6 +69,13 @@ devices_SRC += devices/pci.c		# PCI configuration space access.
 devices_SRC += devices/e1000.c		# E1000 network device.
 devices_SRC += devices/raid.c		# Software RAID layer.
 
+endif
+
+# =============================================================================
+# Portable Sources (shared between architectures)
+# =============================================================================
+
+ifeq ($(ARCH),i386)
 # Library code shared between kernel and user programs.
 lib_SRC  = lib/debug.c			# Debug helpers.
 lib_SRC += lib/random.c			# Pseudo-random numbers.
@@ -67,7 +93,16 @@ lib/kernel_SRC += lib/kernel/bitmap.c	# Bitmaps.
 lib/kernel_SRC += lib/kernel/hash.c	# Hash tables.
 lib/kernel_SRC += lib/kernel/console.c	# printf(), putchar().
 lib/kernel_SRC += lib/kernel/test-lib.c # Testing functions
+else
+# RISC-V Phase 1: Minimal library with no kernel dependencies
+lib_SRC  = lib/string.c			# String functions (no deps).
+lib/kernel_SRC =
+endif
 
+# =============================================================================
+# i386-only subsystems (not yet ported to RISC-V)
+# =============================================================================
+ifeq ($(ARCH),i386)
 # User process code.
 userprog_SRC  = userprog/process.c	# Process loading.
 userprog_SRC += userprog/pagedir.c	# Page directories.
@@ -116,16 +151,41 @@ net_SRC += net/transport/udp.c		# UDP protocol (scaffold).
 net_SRC += net/transport/tcp.c		# TCP protocol (scaffold).
 net_SRC += net/socket/socket.c		# Socket API (scaffold).
 net_SRC += net/tests/net_tests.c	# Network stack tests.
+else
+# RISC-V: empty for now, will be populated in later phases
+userprog_SRC =
+vm_SRC =
+filesys_SRC =
+net_SRC =
+# Also clear test sources that have x86-specific code
+tests/threads_SRC =
+tests/userprog/kernel_SRC =
+tests/filesys/kernel_SRC =
+endif
 
-SOURCES = $(foreach dir,$(KERNEL_SUBDIRS),$($(dir)_SRC))
+# =============================================================================
+# Source Collection
+# =============================================================================
+# Add arch_SRC to sources for RISC-V builds
+SOURCES = $(arch_SRC) $(foreach dir,$(KERNEL_SUBDIRS),$($(dir)_SRC))
 OBJECTS = $(patsubst %.c,%.o,$(patsubst %.S,%.o,$(SOURCES)))
 DEPENDS = $(patsubst %.o,%.d,$(OBJECTS))
 
-# Linker script preprocessing - must include DEFINES for architecture detection
+# =============================================================================
+# Linker Script
+# =============================================================================
+ifeq ($(ARCH),i386)
+KERNEL_LDS = threads/kernel.lds.s
 threads/kernel.lds.s: threads/kernel.lds.S threads/loader.h
 	$(CC) -E $(CPPFLAGS) $(DEFINES) -P $< -o $@
+else ifeq ($(ARCH),riscv64)
+KERNEL_LDS = arch/riscv64/kernel.lds.s
+arch/riscv64/kernel.lds.s: arch/riscv64/kernel.lds.S arch/riscv64/memlayout.h
+	@mkdir -p arch/riscv64
+	$(CC) -E $(CPPFLAGS) $(DEFINES) -P $< -o $@
+endif
 
-kernel.o: threads/kernel.lds.s $(OBJECTS)
+kernel.o: $(KERNEL_LDS) $(OBJECTS)
 	$(LD) -T $< -o $@ $(OBJECTS)
 
 kernel.bin: kernel.o
@@ -148,6 +208,7 @@ os.dsk: kernel.bin
 clean::
 	rm -f $(OBJECTS) $(DEPENDS)
 	rm -f threads/loader.o threads/kernel.lds.s threads/loader.d
+	rm -f arch/riscv64/kernel.lds.s
 	rm -f kernel.bin.tmp
 	rm -f kernel.o kernel.lds.s
 	rm -f kernel.bin loader.bin

@@ -119,10 +119,16 @@ void bitmap_mark(struct bitmap* b, size_t bit_idx) {
   size_t idx = elem_idx(bit_idx);
   elem_type mask = bit_mask(bit_idx);
 
+#ifdef ARCH_I386
   /* This is equivalent to `b->bits[idx] |= mask' except that it
      is guaranteed to be atomic on a uniprocessor machine.  See
      the description of the OR instruction in [IA32-v2b]. */
   asm("orl %1, %0" : "=m"(b->bits[idx]) : "r"(mask) : "cc");
+#else
+  /* Non-atomic version for other architectures.
+     TODO: Use RISC-V AMO instructions for SMP support. */
+  b->bits[idx] |= mask;
+#endif
 }
 
 /* Atomically sets the bit numbered BIT_IDX in B to false. */
@@ -130,10 +136,15 @@ void bitmap_reset(struct bitmap* b, size_t bit_idx) {
   size_t idx = elem_idx(bit_idx);
   elem_type mask = bit_mask(bit_idx);
 
+#ifdef ARCH_I386
   /* This is equivalent to `b->bits[idx] &= ~mask' except that it
      is guaranteed to be atomic on a uniprocessor machine.  See
      the description of the AND instruction in [IA32-v2a]. */
   asm("andl %1, %0" : "=m"(b->bits[idx]) : "r"(~mask) : "cc");
+#else
+  /* Non-atomic version for other architectures. */
+  b->bits[idx] &= ~mask;
+#endif
 }
 
 /* Atomically toggles the bit numbered IDX in B;
@@ -143,10 +154,15 @@ void bitmap_flip(struct bitmap* b, size_t bit_idx) {
   size_t idx = elem_idx(bit_idx);
   elem_type mask = bit_mask(bit_idx);
 
+#ifdef ARCH_I386
   /* This is equivalent to `b->bits[idx] ^= mask' except that it
      is guaranteed to be atomic on a uniprocessor machine.  See
      the description of the XOR instruction in [IA32-v2b]. */
   asm("xorl %1, %0" : "=m"(b->bits[idx]) : "r"(mask) : "cc");
+#else
+  /* Non-atomic version for other architectures. */
+  b->bits[idx] ^= mask;
+#endif
 }
 
 /* Returns the value of the bit numbered IDX in B. */

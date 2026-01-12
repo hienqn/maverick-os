@@ -1,5 +1,12 @@
-#ifndef THREADS_INTERRUPT_H
-#define THREADS_INTERRUPT_H
+/* arch/i386/intr.h - i386 interrupt handling definitions.
+ *
+ * This header defines the i386-specific interrupt frame and related
+ * functions. The interrupt frame layout matches what the CPU and
+ * intr-stubs.S push onto the stack during an interrupt.
+ */
+
+#ifndef ARCH_I386_INTR_H
+#define ARCH_I386_INTR_H
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -64,4 +71,4 @@ void intr_yield_on_return(void);
 void intr_dump_frame(const struct intr_frame*);
 const char* intr_name(uint8_t vec);
 
-#endif /* threads/interrupt.h */
+#endif /* ARCH_I386_INTR_H */

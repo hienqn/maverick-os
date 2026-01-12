@@ -1,5 +1,12 @@
-#ifndef THREADS_VADDR_H
-#define THREADS_VADDR_H
+/* arch/i386/vaddr.h - x86 virtual address helpers.
+ *
+ * Defines PHYS_BASE at 0xC0000000 (3GB) where physical memory is mapped.
+ * User space: 0x00000000 - 0xBFFFFFFF
+ * Kernel space: 0xC0000000 - 0xFFFFFFFF
+ */
+
+#ifndef ARCH_I386_VADDR_H
+#define ARCH_I386_VADDR_H
 
 #include <debug.h>
 #include <stdint.h>
@@ -68,4 +75,4 @@ static inline uintptr_t vtop(const void* vaddr) {
   return (uintptr_t)vaddr - (uintptr_t)PHYS_BASE;
 }
 
-#endif /* threads/vaddr.h */
+#endif /* ARCH_I386_VADDR_H */

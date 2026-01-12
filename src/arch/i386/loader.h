@@ -1,5 +1,7 @@
-#ifndef THREADS_LOADER_H
-#define THREADS_LOADER_H
+/* arch/i386/loader.h - x86 bootloader constants. */
+
+#ifndef ARCH_I386_LOADER_H
+#define ARCH_I386_LOADER_H
 
 /* Constants fixed by the PC BIOS. */
 #define LOADER_BASE 0x7c00 /* Physical address of loader's base. */
@@ -37,4 +39,4 @@
 extern uint32_t init_ram_pages;
 #endif
 
-#endif /* threads/loader.h */
+#endif /* ARCH_I386_LOADER_H */

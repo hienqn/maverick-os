@@ -1,7 +1,14 @@
-#ifndef THREADS_SWITCH_H
-#define THREADS_SWITCH_H
+/* arch/i386/switch.h - x86 context switch frame structure.
+ *
+ * The x86 switch frame saves only 4 callee-saved registers (ebx, esi, edi, ebp)
+ * per the cdecl calling convention. Return address (eip) is pushed by call.
+ */
+
+#ifndef ARCH_I386_SWITCH_H
+#define ARCH_I386_SWITCH_H
 
 #ifndef __ASSEMBLER__
+#include <stdint.h>
 /* switch_thread()'s stack frame. */
 struct switch_threads_frame {
   uint32_t edi;        /*  0: Saved %edi. */
@@ -34,4 +41,4 @@ void switch_thunk(void);
 #define SWITCH_CUR 20
 #define SWITCH_NEXT 24
 
-#endif /* threads/switch.h */
+#endif /* ARCH_I386_SWITCH_H */

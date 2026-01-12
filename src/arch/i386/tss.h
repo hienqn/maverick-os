@@ -1,5 +1,11 @@
-#ifndef USERPROG_TSS_H
-#define USERPROG_TSS_H
+/* arch/i386/tss.h - x86 Task State Segment definitions.
+ *
+ * TSS is required for ring transitions (user<->kernel).
+ * RISC-V handles this via sscratch CSR instead.
+ */
+
+#ifndef ARCH_I386_TSS_H
+#define ARCH_I386_TSS_H
 
 #include <stdint.h>
 
@@ -8,4 +14,4 @@ void tss_init(void);
 struct tss* tss_get(void);
 void tss_update(void);
 
-#endif /* userprog/tss.h */
+#endif /* ARCH_I386_TSS_H */

@@ -1,5 +1,11 @@
-#ifndef USERPROG_GDT_H
-#define USERPROG_GDT_H
+/* arch/i386/gdt.h - x86 Global Descriptor Table definitions.
+ *
+ * x86 segmentation requires GDT for privilege separation.
+ * RISC-V does not have segmentation (uses page table U bit instead).
+ */
+
+#ifndef ARCH_I386_GDT_H
+#define ARCH_I386_GDT_H
 
 #include "threads/loader.h"
 
@@ -12,4 +18,4 @@
 
 void gdt_init(void);
 
-#endif /* userprog/gdt.h */
+#endif /* ARCH_I386_GDT_H */

@@ -1,5 +1,7 @@
-#ifndef THREADS_IO_H
-#define THREADS_IO_H
+/* arch/i386/io.h - x86 port I/O operations. */
+
+#ifndef ARCH_I386_IO_H
+#define ARCH_I386_IO_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -88,4 +90,4 @@ static inline void outsl(uint16_t port, const void* addr, size_t cnt) {
   asm volatile("rep outsl" : "+S"(addr), "+c"(cnt) : "d"(port));
 }
 
-#endif /* threads/io.h */
+#endif /* ARCH_I386_IO_H */

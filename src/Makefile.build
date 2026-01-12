@@ -121,8 +121,9 @@ SOURCES = $(foreach dir,$(KERNEL_SUBDIRS),$($(dir)_SRC))
 OBJECTS = $(patsubst %.c,%.o,$(patsubst %.S,%.o,$(SOURCES)))
 DEPENDS = $(patsubst %.o,%.d,$(OBJECTS))
 
-threads/kernel.lds.s: CPPFLAGS += -P
+# Linker script preprocessing - must include DEFINES for architecture detection
 threads/kernel.lds.s: threads/kernel.lds.S threads/loader.h
+	$(CC) -E $(CPPFLAGS) $(DEFINES) -P $< -o $@
 
 kernel.o: threads/kernel.lds.s $(OBJECTS)
 	$(LD) -T $< -o $@ $(OBJECTS)

@@ -1,5 +1,13 @@
-#ifndef THREADS_PTE_H
-#define THREADS_PTE_H
+/* arch/i386/pte.h - x86 page table entry definitions.
+ *
+ * x86 uses a 2-level page table with 10-10-12 bit split:
+ *   - 10 bits: Page Directory Index
+ *   - 10 bits: Page Table Index
+ *   - 12 bits: Page Offset
+ */
+
+#ifndef ARCH_I386_PTE_H
+#define ARCH_I386_PTE_H
 
 #include "threads/vaddr.h"
 
@@ -97,4 +105,4 @@ static inline uint32_t pte_create_user(void* page, bool writable) {
    to. */
 static inline void* pte_get_page(uint32_t pte) { return ptov(pte & PTE_ADDR); }
 
-#endif /* threads/pte.h */
+#endif /* ARCH_I386_PTE_H */

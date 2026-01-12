@@ -85,11 +85,13 @@
 /* Partition that contains the file system. */
 struct block* fs_device;
 
-/* Maximum number of path components (e.g., /a/b/c/d has 4 components). */
-#define MAX_PATH_COMPONENTS 64
+/* Maximum number of path components (e.g., /a/b/c/d has 4 components).
+   Keep low to reduce stack usage (each pointer is 4 bytes). */
+#define MAX_PATH_COMPONENTS 16
 
-/* Maximum symlink depth to prevent infinite loops (ELOOP). */
-#define MAX_SYMLINK_DEPTH 20
+/* Maximum symlink depth to prevent infinite loops (ELOOP).
+   Keep low to prevent stack overflow from recursive path parsing. */
+#define MAX_SYMLINK_DEPTH 8
 
 /* Maximum symlink target length to prevent memory exhaustion. */
 #define MAX_SYMLINK_TARGET_LEN 4096

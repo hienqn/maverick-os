@@ -220,7 +220,8 @@ static void handle_exception(struct intr_frame* f, uint64_t cause) {
  * This is a hint to the scheduler that should be checked in trap_return.
  * For now, we'll handle this in the timer interrupt directly.
  */
-void intr_yield_on_return(void) { /* Will be implemented with thread scheduling */ }
+void intr_yield_on_return(void) { /* Will be implemented with thread scheduling */
+}
 
 /*
  * intr_context - Returns true if we're in an interrupt context.

@@ -52,6 +52,7 @@ arch_SRC += arch/riscv64/plic.c		# External interrupt controller.
 arch_SRC += arch/riscv64/switch.S	# Context switching.
 arch_SRC += arch/riscv64/virtio.c	# VirtIO core.
 arch_SRC += arch/riscv64/virtio-blk.c	# VirtIO block device.
+arch_SRC += arch/riscv64/userprog.c	# User program support.
 
 # RISC-V doesn't use these i386-specific sources
 threads_SRC =

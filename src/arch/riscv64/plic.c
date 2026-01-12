@@ -15,6 +15,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
+/* Boot hart ID from init.c */
+extern uint64_t boot_hartid;
+
 /* PLIC handler table */
 static plic_handler_func plic_handlers[PLIC_NUM_SOURCES];
 
@@ -32,8 +35,8 @@ static inline void plic_write(uintptr_t addr, uint32_t val) { *(volatile uint32_
  * plic_init - Initialize the PLIC for the current hart.
  */
 void plic_init(void) {
-  /* Get hart ID */
-  plic_hart = 0; /* TODO: Get from thread_current() or boot_hartid */
+  /* Get hart ID from boot parameters */
+  plic_hart = (uint32_t)boot_hartid;
 
   /* Set all priorities to 0 (disabled) initially */
   for (int i = 1; i < PLIC_NUM_SOURCES; i++) {

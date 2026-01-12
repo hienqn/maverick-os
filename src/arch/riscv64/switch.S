@@ -116,18 +116,15 @@ switch_entry:
 .globl switch_thunk
 .align 4
 switch_thunk:
-    /* The switch frame is still on the stack from switch_threads.
-     * We need to extract cur and next, then call schedule_tail(cur).
+    /* When switch_threads returns to switch_entry for a new thread,
+     * register a0 already contains 'cur' (loaded at switch_threads line 77).
+     * We don't need to reload it from the stack.
      *
-     * At this point:
-     *   sp points to the switch frame (after switch_entry's adjustment)
-     *   We need to get back to where cur/next are stored.
+     * Note: The switch frame was deallocated by switch_threads before
+     * returning, so we cannot safely access it from here anyway.
      */
 
-    /* Load cur from the switch frame (it's above switch_entry's frame) */
-    ld a0, (16 + SWITCH_CUR)(sp)
-
-    /* Call schedule_tail(cur) to complete the context switch */
+    /* Call schedule_tail(cur) - a0 already has cur from switch_threads */
     call schedule_tail
 
     /* schedule_tail returns. Now we should return to kernel_thread

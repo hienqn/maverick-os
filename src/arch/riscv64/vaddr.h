@@ -48,8 +48,12 @@ static inline void* pg_round_down(const void* va) { return (void*)((uintptr_t)va
    This address also marks the end of user programs' address space.
    Up to this point in memory, user programs are allowed to map
    whatever they like.  At this point and above, the virtual address
-   space belongs to the kernel. */
-#define PHYS_BASE ((void*)0xFFFFFFFF80000000UL)
+   space belongs to the kernel.
+
+   Note: PHYS_BASE is defined in memlayout.h as an integer constant.
+   We use that definition and cast to void* when needed. */
+#include "arch/riscv64/memlayout.h"
+/* PHYS_BASE is defined in memlayout.h */
 
 /* Maximum user virtual address (256GB in Sv39 lower half) */
 #define USER_VIRT_MAX 0x0000004000000000UL

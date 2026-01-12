@@ -591,22 +591,69 @@ static struct spt_entry* spt_clone_entry(struct spt_entry* parent_entry, uint32_
    Pass 1: Create all child entries (parent entries unchanged except page table permissions)
    Pass 2: Mark parent PAGE_FRAME entries as PAGE_COW (only after Pass 1 succeeds)
 
-   This ensures parent state is not corrupted if fork fails partway through. */
+   This ensures parent state is not corrupted if fork fails partway through.
+
+   SYNCHRONIZATION:
+   ----------------
+   We must hold parent->spt_lock to prevent eviction from modifying parent entries
+   while we iterate. However, we cannot hold the lock when calling frame_alloc
+   (PAGE_SWAP case) because that could deadlock with eviction.
+
+   Lock ordering: frame_lock -> spt_lock (eviction uses this order)
+   If we held spt_lock and called frame_alloc -> frame_evict -> spt_lock, deadlock!
+
+   Solution:
+   - For PAGE_ZERO/PAGE_FILE: No frame_alloc, safe under lock
+   - For PAGE_FRAME/PAGE_COW: Pin frame before releasing lock, preventing eviction
+   - For PAGE_SWAP: Release lock, do swap operations, re-acquire lock */
 bool spt_clone(void* child_spt, void* parent_spt, uint32_t* child_pagedir,
                uint32_t* parent_pagedir) {
   struct spt* parent = (struct spt*)parent_spt;
   struct spt* child = (struct spt*)child_spt;
   struct hash_iterator i;
 
-  /* Pass 1: Create all child entries. */
+  /* Pass 1: Create all child entries.
+     Hold parent's spt_lock to prevent concurrent eviction from modifying entries. */
+  lock_acquire(&parent->spt_lock);
+
   hash_first(&i, &parent->pages);
   while (hash_next(&i)) {
     struct spt_entry* parent_entry = hash_entry(hash_cur(&i), struct spt_entry, hash_elem);
 
+    /* For PAGE_FRAME/PAGE_COW entries, pin the frame first to prevent eviction.
+       This must be done while holding spt_lock so the status doesn't change. */
+    void* pinned_kpage = NULL;
+    if (parent_entry->status == PAGE_FRAME || parent_entry->status == PAGE_COW) {
+      pinned_kpage = parent_entry->kpage;
+      frame_pin(pinned_kpage);
+    }
+
+    /* For PAGE_SWAP, we need to release lock before calling frame_alloc.
+       Save the necessary info first. */
+    bool is_swap = (parent_entry->status == PAGE_SWAP);
+
+    if (is_swap) {
+      /* Release lock for swap operations that may trigger eviction. */
+      lock_release(&parent->spt_lock);
+    }
+
     /* Clone this entry. */
     struct spt_entry* child_entry = spt_clone_entry(parent_entry, child_pagedir, parent_pagedir);
-    if (child_entry == NULL)
+
+    if (is_swap) {
+      /* Re-acquire lock after swap operations. */
+      lock_acquire(&parent->spt_lock);
+    }
+
+    /* Unpin the frame if we pinned it. */
+    if (pinned_kpage != NULL) {
+      frame_unpin(pinned_kpage);
+    }
+
+    if (child_entry == NULL) {
+      lock_release(&parent->spt_lock);
       return false;
+    }
 
     /* Insert into child's SPT. */
     if (!spt_insert(child, child_entry)) {
@@ -616,12 +663,14 @@ bool spt_clone(void* child_spt, void* parent_spt, uint32_t* child_pagedir,
       else if (child_entry->status == PAGE_SWAP)
         swap_free(child_entry->swap_slot);
       free(child_entry);
+      lock_release(&parent->spt_lock);
       return false;
     }
   }
 
   /* Pass 2: Mark parent PAGE_FRAME entries as PAGE_COW.
-     Only runs after all child entries are successfully created. */
+     Only runs after all child entries are successfully created.
+     Still holding parent->spt_lock from Pass 1. */
   hash_first(&i, &parent->pages);
   while (hash_next(&i)) {
     struct spt_entry* parent_entry = hash_entry(hash_cur(&i), struct spt_entry, hash_elem);
@@ -631,5 +680,6 @@ bool spt_clone(void* child_spt, void* parent_spt, uint32_t* child_pagedir,
     /* PAGE_COW entries stay as PAGE_COW (already shared). */
   }
 
+  lock_release(&parent->spt_lock);
   return true;
 }

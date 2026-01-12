@@ -236,6 +236,10 @@ void frame_free(void* kpage);
 /* Pin a frame to prevent eviction. */
 void frame_pin(void* kpage);
 
+/* Pin a frame if it exists. Returns true if found and pinned, false otherwise.
+   Use this when the frame might have been evicted between lookup and pin. */
+bool frame_pin_if_present(void* kpage);
+
 /* Unpin a frame to allow eviction. */
 void frame_unpin(void* kpage);
 

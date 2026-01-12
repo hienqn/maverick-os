@@ -136,10 +136,22 @@ void frame_init(void) {
    The frame starts PINNED to prevent eviction during page fault handling.
    Caller must call frame_unpin() when done setting up the page.
 
-   Returns NULL if allocation fails (no memory and all frames pinned). */
+   Returns NULL if allocation fails (no memory and all frames pinned).
+
+   SYNCHRONIZATION:
+   ----------------
+   We pre-allocate the frame_entry struct before acquiring the lock to avoid
+   holding the lock during malloc (which could block). The frame is added to
+   the list atomically with the lock held. Since the frame is newly allocated
+   (either from palloc or eviction), no other thread can know about it yet,
+   so there's no race between allocation and list insertion. */
 void* frame_alloc(void* upage, bool writable UNUSED) {
   void* kpage;
-  struct frame_entry* fe;
+
+  /* Pre-allocate entry struct (malloc may block, don't hold lock). */
+  struct frame_entry* fe = (struct frame_entry*)malloc(sizeof(struct frame_entry));
+  if (fe == NULL)
+    return NULL;
 
   /* Try to allocate from user pool. */
   kpage = palloc_get_page(PAL_USER | PAL_ZERO);
@@ -147,17 +159,12 @@ void* frame_alloc(void* upage, bool writable UNUSED) {
   /* If no free pages, try to evict one. */
   if (kpage == NULL) {
     kpage = frame_evict();
-    if (kpage == NULL)
+    if (kpage == NULL) {
+      free(fe);
       return NULL; /* All frames pinned, cannot evict. */
+    }
     /* Zero the reclaimed frame. */
     memset(kpage, 0, PGSIZE);
-  }
-
-  /* Create frame table entry. */
-  fe = (struct frame_entry*)malloc(sizeof(struct frame_entry));
-  if (fe == NULL) {
-    palloc_free_page(kpage);
-    return NULL;
   }
 
   /* Initialize entry fields. */
@@ -168,7 +175,7 @@ void* frame_alloc(void* upage, bool writable UNUSED) {
   fe->pinned = true;         /* Pin until caller is done setting up. */
   fe->evict_callback = NULL; /* Use default eviction logic. */
 
-  /* Add to frame list. */
+  /* Add to frame list atomically. */
   lock_acquire(&frame_lock);
   list_push_back(&frame_list, &fe->elem);
   lock_release(&frame_lock);
@@ -181,21 +188,16 @@ void* frame_alloc(void* upage, bool writable UNUSED) {
    Used when a page was allocated via palloc_get_page directly (e.g., by
    pagedir_dup during fork) and needs to be tracked by the frame table.
 
-   Returns true if registration succeeded, false on failure. */
+   Returns true if registration succeeded, false on failure.
+
+   SYNCHRONIZATION: This function holds frame_lock for the entire operation
+   to prevent TOCTOU race conditions. The malloc is done outside the lock
+   for efficiency, but we re-check for duplicates after acquiring the lock. */
 bool frame_register(void* kpage, void* upage, struct thread* owner) {
   if (kpage == NULL)
     return false;
 
-  /* Check if already registered. */
-  lock_acquire(&frame_lock);
-  struct frame_entry* existing = frame_find_entry(kpage);
-  if (existing != NULL) {
-    lock_release(&frame_lock);
-    return false; /* Already registered. */
-  }
-  lock_release(&frame_lock);
-
-  /* Create frame table entry. */
+  /* Allocate entry outside lock (malloc might block). */
   struct frame_entry* fe = (struct frame_entry*)malloc(sizeof(struct frame_entry));
   if (fe == NULL)
     return false;
@@ -208,8 +210,16 @@ bool frame_register(void* kpage, void* upage, struct thread* owner) {
   fe->pinned = true;         /* Start pinned like frame_alloc. */
   fe->evict_callback = NULL; /* Use default eviction logic. */
 
-  /* Add to frame list. */
+  /* Atomically check for existing and add if not present.
+     This prevents TOCTOU race where another thread registers between
+     our check and insert. */
   lock_acquire(&frame_lock);
+  struct frame_entry* existing = frame_find_entry(kpage);
+  if (existing != NULL) {
+    lock_release(&frame_lock);
+    free(fe); /* Discard our entry since duplicate exists. */
+    return false;
+  }
   list_push_back(&frame_list, &fe->elem);
   lock_release(&frame_lock);
 
@@ -289,6 +299,27 @@ void frame_pin(void* kpage) {
   if (fe != NULL)
     fe->pinned = true;
   lock_release(&frame_lock);
+}
+
+/* Pin a frame if it exists in the frame table.
+   Returns true if the frame was found and pinned, false otherwise.
+
+   This is essential for COW fault handling where we need to know
+   if a frame was evicted between when we read the SPT entry and
+   when we try to pin it. */
+bool frame_pin_if_present(void* kpage) {
+  if (kpage == NULL)
+    return false;
+
+  lock_acquire(&frame_lock);
+  struct frame_entry* fe = frame_find_entry(kpage);
+  if (fe != NULL) {
+    fe->pinned = true;
+    lock_release(&frame_lock);
+    return true;
+  }
+  lock_release(&frame_lock);
+  return false;
 }
 
 /* Unpin a frame to allow eviction.

@@ -101,16 +101,19 @@ void virtio_blk_init(void) {
     virtio_write32(base, VIRTIO_MMIO_DRIVER_FEATURES_SEL, 0);
     virtio_write32(base, VIRTIO_MMIO_DRIVER_FEATURES, 0);
 
-    /* Set FEATURES_OK */
-    status = virtio_read32(base, VIRTIO_MMIO_STATUS);
-    virtio_write32(base, VIRTIO_MMIO_STATUS, status | VIRTIO_STATUS_FEATURES_OK);
+    /* For modern (v2), set FEATURES_OK */
+    if (blk_device.dev.version == 2) {
+      status = virtio_read32(base, VIRTIO_MMIO_STATUS);
+      virtio_write32(base, VIRTIO_MMIO_STATUS, status | VIRTIO_STATUS_FEATURES_OK);
 
-    /* Verify FEATURES_OK was accepted */
-    status = virtio_read32(base, VIRTIO_MMIO_STATUS);
-    if (!(status & VIRTIO_STATUS_FEATURES_OK)) {
-      console_puts("  ERROR: Features not accepted\n");
-      continue;
+      /* Verify FEATURES_OK was accepted */
+      status = virtio_read32(base, VIRTIO_MMIO_STATUS);
+      if (!(status & VIRTIO_STATUS_FEATURES_OK)) {
+        console_puts("  ERROR: Features not accepted\n");
+        continue;
+      }
     }
+    /* Legacy (v1) doesn't use FEATURES_OK - proceed directly */
 
     /* Set up the virtqueue */
     if (!virtio_setup_queue(&blk_device.dev, 0, &blk_device.vq)) {

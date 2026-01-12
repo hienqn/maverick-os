@@ -43,6 +43,7 @@ static void console_puthex(uint64_t val) {
  * virtio_probe - Probe for a VirtIO device at given MMIO address.
  *
  * Returns true if a valid VirtIO device was found and dev is populated.
+ * Supports both legacy (v1) and modern (v2) VirtIO MMIO transports.
  */
 bool virtio_probe(uint64_t base, struct virtio_device* dev) {
   uint32_t magic = virtio_read32(base, VIRTIO_MMIO_MAGIC_VALUE);
@@ -51,8 +52,7 @@ bool virtio_probe(uint64_t base, struct virtio_device* dev) {
   }
 
   uint32_t version = virtio_read32(base, VIRTIO_MMIO_VERSION);
-  if (version != 2) {
-    /* We only support VirtIO 1.0+ (version 2 in MMIO) */
+  if (version != 1 && version != 2) {
     console_puts("  Warning: VirtIO version ");
     console_puthex(version);
     console_puts(" not supported\n");
@@ -67,6 +67,7 @@ bool virtio_probe(uint64_t base, struct virtio_device* dev) {
 
   dev->base = base;
   dev->device_id = device_id;
+  dev->version = version;
   dev->vq = NULL;
   dev->initialized = false;
 
@@ -77,6 +78,7 @@ bool virtio_probe(uint64_t base, struct virtio_device* dev) {
  * virtio_setup_queue - Set up a virtqueue for a device.
  *
  * The virtqueue must be page-aligned and persist for device lifetime.
+ * Handles both legacy (v1) and modern (v2) VirtIO MMIO transports.
  */
 bool virtio_setup_queue(struct virtio_device* dev, int queue_idx, struct virtqueue* vq) {
   uint64_t base = dev->base;
@@ -93,11 +95,20 @@ bool virtio_setup_queue(struct virtio_device* dev, int queue_idx, struct virtque
     return false;
   }
 
-  /* Check if already initialized */
-  uint32_t ready = virtio_read32(base, VIRTIO_MMIO_QUEUE_READY);
-  if (ready) {
-    console_puts("  Queue already initialized\n");
-    return false;
+  /* For v2, check if already initialized via QUEUE_READY */
+  if (dev->version == 2) {
+    uint32_t ready = virtio_read32(base, VIRTIO_MMIO_QUEUE_READY);
+    if (ready) {
+      console_puts("  Queue already initialized\n");
+      return false;
+    }
+  } else {
+    /* For v1, check via QUEUE_PFN */
+    uint32_t pfn = virtio_read32(base, VIRTIO_MMIO_QUEUE_PFN);
+    if (pfn != 0) {
+      console_puts("  Queue already initialized\n");
+      return false;
+    }
   }
 
   /* Initialize virtqueue structure */
@@ -120,20 +131,36 @@ bool virtio_setup_queue(struct virtio_device* dev, int queue_idx, struct virtque
     size = max_size;
   virtio_write32(base, VIRTIO_MMIO_QUEUE_NUM, size);
 
-  /* Set queue addresses (physical addresses) */
-  uint64_t desc_addr = (uint64_t)&vq->desc[0];
-  uint64_t avail_addr = (uint64_t)&vq->avail;
-  uint64_t used_addr = (uint64_t)&vq->used;
+  if (dev->version == 1) {
+    /* Legacy v1: Use page frame number for entire virtqueue */
+    /* First set the guest page size */
+    virtio_write32(base, VIRTIO_MMIO_GUEST_PAGE_SIZE, 4096);
 
-  virtio_write32(base, VIRTIO_MMIO_QUEUE_DESC_LOW, desc_addr & 0xFFFFFFFF);
-  virtio_write32(base, VIRTIO_MMIO_QUEUE_DESC_HIGH, desc_addr >> 32);
-  virtio_write32(base, VIRTIO_MMIO_QUEUE_AVAIL_LOW, avail_addr & 0xFFFFFFFF);
-  virtio_write32(base, VIRTIO_MMIO_QUEUE_AVAIL_HIGH, avail_addr >> 32);
-  virtio_write32(base, VIRTIO_MMIO_QUEUE_USED_LOW, used_addr & 0xFFFFFFFF);
-  virtio_write32(base, VIRTIO_MMIO_QUEUE_USED_HIGH, used_addr >> 32);
+    /* The virtqueue must be at a page-aligned address */
+    uint64_t vq_addr = (uint64_t)vq;
+    uint32_t pfn = vq_addr / 4096;
 
-  /* Enable the queue */
-  virtio_write32(base, VIRTIO_MMIO_QUEUE_READY, 1);
+    /* Set queue alignment (used ring alignment) */
+    virtio_write32(base, VIRTIO_MMIO_QUEUE_ALIGN, 4096);
+
+    /* Set the page frame number to activate queue */
+    virtio_write32(base, VIRTIO_MMIO_QUEUE_PFN, pfn);
+  } else {
+    /* Modern v2: Use separate addresses for each ring component */
+    uint64_t desc_addr = (uint64_t)&vq->desc[0];
+    uint64_t avail_addr = (uint64_t)&vq->avail;
+    uint64_t used_addr = (uint64_t)&vq->used;
+
+    virtio_write32(base, VIRTIO_MMIO_QUEUE_DESC_LOW, desc_addr & 0xFFFFFFFF);
+    virtio_write32(base, VIRTIO_MMIO_QUEUE_DESC_HIGH, desc_addr >> 32);
+    virtio_write32(base, VIRTIO_MMIO_QUEUE_AVAIL_LOW, avail_addr & 0xFFFFFFFF);
+    virtio_write32(base, VIRTIO_MMIO_QUEUE_AVAIL_HIGH, avail_addr >> 32);
+    virtio_write32(base, VIRTIO_MMIO_QUEUE_USED_LOW, used_addr & 0xFFFFFFFF);
+    virtio_write32(base, VIRTIO_MMIO_QUEUE_USED_HIGH, used_addr >> 32);
+
+    /* Enable the queue */
+    virtio_write32(base, VIRTIO_MMIO_QUEUE_READY, 1);
+  }
 
   dev->vq = vq;
   return true;
@@ -239,7 +266,9 @@ void virtio_init(void) {
     struct virtio_device dev;
 
     if (virtio_probe(base, &dev)) {
-      console_puts("  Found VirtIO device at ");
+      console_puts("  Found VirtIO v");
+      console_puthex(dev.version);
+      console_puts(" device at ");
       console_puthex(base);
       console_puts(": type ");
       console_puthex(dev.device_id);

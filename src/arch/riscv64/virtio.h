@@ -17,7 +17,7 @@
 #define VIRTIO_MMIO_SIZE 0x1000
 #define VIRTIO_MMIO_COUNT 8 /* Up to 8 VirtIO devices */
 
-/* VirtIO MMIO register offsets */
+/* VirtIO MMIO register offsets (common to v1 and v2) */
 #define VIRTIO_MMIO_MAGIC_VALUE 0x000
 #define VIRTIO_MMIO_VERSION 0x004
 #define VIRTIO_MMIO_DEVICE_ID 0x008
@@ -29,18 +29,25 @@
 #define VIRTIO_MMIO_QUEUE_SEL 0x030
 #define VIRTIO_MMIO_QUEUE_NUM_MAX 0x034
 #define VIRTIO_MMIO_QUEUE_NUM 0x038
-#define VIRTIO_MMIO_QUEUE_READY 0x044
 #define VIRTIO_MMIO_QUEUE_NOTIFY 0x050
 #define VIRTIO_MMIO_INTERRUPT_STATUS 0x060
 #define VIRTIO_MMIO_INTERRUPT_ACK 0x064
 #define VIRTIO_MMIO_STATUS 0x070
+#define VIRTIO_MMIO_CONFIG 0x100
+
+/* VirtIO MMIO v1 (legacy) specific registers */
+#define VIRTIO_MMIO_GUEST_PAGE_SIZE 0x028 /* v1: Page size for PFN */
+#define VIRTIO_MMIO_QUEUE_ALIGN 0x03c     /* v1: Alignment for used ring */
+#define VIRTIO_MMIO_QUEUE_PFN 0x040       /* v1: Queue page frame number */
+
+/* VirtIO MMIO v2 (modern) specific registers */
+#define VIRTIO_MMIO_QUEUE_READY 0x044
 #define VIRTIO_MMIO_QUEUE_DESC_LOW 0x080
 #define VIRTIO_MMIO_QUEUE_DESC_HIGH 0x084
 #define VIRTIO_MMIO_QUEUE_AVAIL_LOW 0x090
 #define VIRTIO_MMIO_QUEUE_AVAIL_HIGH 0x094
 #define VIRTIO_MMIO_QUEUE_USED_LOW 0x0a0
 #define VIRTIO_MMIO_QUEUE_USED_HIGH 0x0a4
-#define VIRTIO_MMIO_CONFIG 0x100
 
 /* VirtIO magic value */
 #define VIRTIO_MAGIC 0x74726976 /* "virt" little-endian */
@@ -143,6 +150,7 @@ struct virtqueue {
 struct virtio_device {
   uint64_t base;        /* MMIO base address */
   uint32_t device_id;   /* Device type */
+  uint32_t version;     /* MMIO transport version (1=legacy, 2=modern) */
   struct virtqueue* vq; /* Virtqueue for this device */
   bool initialized;     /* True if successfully initialized */
 };

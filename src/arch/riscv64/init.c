@@ -12,11 +12,13 @@
 #include "arch/riscv64/intr.h"
 #include "arch/riscv64/timer.h"
 #include "arch/riscv64/plic.h"
+#include "arch/riscv64/virtio-blk.h"
 #include <stdint.h>
 #include <string.h>
 
 /* Forward declarations */
 static void console_init(void);
+static void console_putchar(char c);
 static void console_puts(const char* s);
 static void console_puthex(uint64_t val);
 static void console_putdec(uint64_t val);
@@ -146,11 +148,36 @@ void riscv_init(uint64_t hartid, void* dtb) {
   console_putdec(timer_ticks() - start_ticks);
   console_puts(" timer ticks!\n");
 
+  /* Initialize VirtIO devices */
+  virtio_init();
+  virtio_blk_init();
+
+  /* Test block device if available */
+  if (virtio_blk_dev) {
+    console_puts("\nTesting VirtIO block device...\n");
+
+    /* Read first sector */
+    static uint8_t buf[512] __attribute__((aligned(8)));
+    if (virtio_blk_read(0, buf, 1)) {
+      console_puts("  Read sector 0 successfully\n");
+      console_puts("  First 16 bytes: ");
+      for (int i = 0; i < 16; i++) {
+        static const char hex[] = "0123456789abcdef";
+        console_putchar(hex[buf[i] >> 4]);
+        console_putchar(hex[buf[i] & 0xf]);
+        console_putchar(' ');
+      }
+      console_puts("\n");
+    } else {
+      console_puts("  ERROR: Failed to read sector 0\n");
+    }
+  }
+
   console_puts("\n");
-  console_puts("RISC-V Phase 3 complete: Interrupts working!\n");
+  console_puts("RISC-V Phase 5 complete: VirtIO devices working!\n");
   console_puts("Halting...\n");
 
-  /* For Phase 3, halt here. Later phases will continue boot. */
+  /* For now, halt here. Later phases will continue boot. */
   sbi_shutdown();
 
   /* Should not reach here */
@@ -167,7 +194,8 @@ void riscv_init(uint64_t hartid, void* dtb) {
  * performance.
  */
 
-static void console_init(void) { /* Nothing to do for SBI console */ }
+static void console_init(void) { /* Nothing to do for SBI console */
+}
 
 static void console_putchar(char c) { sbi_console_putchar(c); }
 

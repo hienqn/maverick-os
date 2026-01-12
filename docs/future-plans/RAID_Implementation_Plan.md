@@ -34,6 +34,7 @@ Buffer Cache (cache.c)
 enum raid_level {
   RAID_LEVEL_0,  /* Striping - no redundancy */
   RAID_LEVEL_1,  /* Mirroring - full redundancy */
+  RAID_LEVEL_5,  /* Striping with distributed parity */
 };
 
 struct raid_config {
@@ -68,6 +69,12 @@ bool raid_is_initialized(void);
 /* Helper functions for RAID 0 calculations */
 size_t raid0_disk_for_sector(block_sector_t sector);
 block_sector_t raid0_physical_sector(block_sector_t sector);
+
+/* Helper functions for RAID 5 calculations */
+size_t raid5_parity_disk(block_sector_t stripe);
+size_t raid5_data_disk(block_sector_t sector);
+block_sector_t raid5_physical_sector(block_sector_t sector);
+void raid5_compute_parity(void* parity, void* data[], size_t count);
 
 #endif
 ```
@@ -104,6 +111,35 @@ block_sector_t raid0_physical_sector(block_sector_t sector) {
   /* Returns physical sector number on the target disk */
 }
 
+/* ========== RAID 5 HELPER FUNCTIONS (PROVIDED) ========== */
+
+size_t raid5_parity_disk(block_sector_t stripe) {
+  /* Parity rotates: stripe 0 -> last disk, stripe 1 -> second-to-last, etc.
+   * Returns: (num_disks - 1 - (stripe % num_disks)) */
+}
+
+size_t raid5_data_disk(block_sector_t sector) {
+  /* Returns which disk holds this logical sector's data.
+   * Must account for parity disk rotation. */
+}
+
+block_sector_t raid5_physical_sector(block_sector_t sector) {
+  /* Returns physical sector number on the target disk */
+}
+
+void raid5_compute_parity(void* parity, void* data[], size_t count) {
+  /* XOR all data buffers together to compute parity.
+   * parity[i] = data[0][i] ^ data[1][i] ^ ... ^ data[count-1][i] */
+  memset(parity, 0, BLOCK_SECTOR_SIZE);
+  for (size_t d = 0; d < count; d++) {
+    uint8_t* p = parity;
+    uint8_t* src = data[d];
+    for (size_t i = 0; i < BLOCK_SECTOR_SIZE; i++) {
+      p[i] ^= src[i];
+    }
+  }
+}
+
 /* ========== YOUR IMPLEMENTATION ========== */
 
 void raid_read(block_sector_t sector, void* buffer) {
@@ -128,6 +164,19 @@ void raid_read(block_sector_t sector, void* buffer) {
        */
       PANIC("RAID 1 read not implemented!");
       break;
+
+    case RAID_LEVEL_5:
+      /* TODO: Implement RAID 5 read
+       * 1. Use raid5_data_disk() to find which disk has the data
+       * 2. Use raid5_physical_sector() to get physical sector
+       * 3. Call block_read(disks[disk_index], physical_sector, buffer)
+       *
+       * Note: For degraded mode (disk failure), you would need to:
+       * - Read from all OTHER disks (including parity)
+       * - XOR them together to reconstruct the missing data
+       */
+      PANIC("RAID 5 read not implemented!");
+      break;
   }
 }
 
@@ -149,6 +198,22 @@ void raid_write(block_sector_t sector, const void* buffer) {
        * Loop through all disks and call block_write on each
        */
       PANIC("RAID 1 write not implemented!");
+      break;
+
+    case RAID_LEVEL_5:
+      /* TODO: Implement RAID 5 write (read-modify-write)
+       * 1. Determine which stripe this sector belongs to
+       * 2. Find the parity disk for this stripe using raid5_parity_disk()
+       * 3. Find the data disk using raid5_data_disk()
+       * 4. Read OLD data from data disk
+       * 5. Read OLD parity from parity disk
+       * 6. Compute NEW parity: new_parity = old_parity ^ old_data ^ new_data
+       * 7. Write new data to data disk
+       * 8. Write new parity to parity disk
+       *
+       * Alternative: full-stripe write (read all data, compute parity from scratch)
+       */
+      PANIC("RAID 5 write not implemented!");
       break;
   }
 }
@@ -195,6 +260,7 @@ Add RAID initialization after `ide_init()`:
   /* Uncomment ONE to enable RAID: */
   // raid_init(RAID_LEVEL_0, 1);  /* RAID 0 striping */
   // raid_init(RAID_LEVEL_1, 0);  /* RAID 1 mirroring */
+  // raid_init(RAID_LEVEL_5, 1);  /* RAID 5 striping with parity */
 
   locate_block_devices();
   filesys_init(format_filesys);
@@ -241,6 +307,57 @@ Disk 2:    0  1  2  3  4  5 ...  (copy)
 **Read:** From any disk (same data)
 **Write:** To ALL disks
 
+### RAID 5 (Striping with Distributed Parity)
+
+Data is striped across disks with parity rotating between disks. With 4 disks:
+
+```
+Stripe 0:  D0   D1   D2   P0   <- parity on disk 3
+Stripe 1:  D3   D4   P1   D5   <- parity on disk 2
+Stripe 2:  D6   P2   D7   D8   <- parity on disk 1
+Stripe 3:  P3   D9   D10  D11  <- parity on disk 0
+Stripe 4:  D12  D13  D14  P4   <- parity on disk 3 (repeats)
+```
+
+**Key concepts:**
+
+1. **Parity rotation:** The parity block rotates across disks to distribute the write load. Without rotation, one disk would handle all parity writes.
+
+2. **XOR parity:** Parity is computed by XORing all data blocks in a stripe:
+   ```
+   P0 = D0 ^ D1 ^ D2
+   ```
+
+3. **Data recovery:** If any ONE disk fails, its data can be reconstructed:
+   ```
+   If D1 is lost: D1 = D0 ^ D2 ^ P0
+   If P0 is lost: P0 = D0 ^ D1 ^ D2
+   ```
+
+**Formulas:**
+- `stripe = sector / (num_disks - 1)` (one disk per stripe holds parity)
+- `parity_disk = (num_disks - 1 - (stripe % num_disks))`
+- Data disk calculation must skip the parity disk position
+
+**Read:** Find data disk, read directly (or reconstruct if disk failed)
+
+**Write (read-modify-write):**
+1. Read old data from data disk
+2. Read old parity from parity disk
+3. Compute: `new_parity = old_parity ^ old_data ^ new_data`
+4. Write new data and new parity
+
+**Why read-modify-write?** For small writes, it's faster to read 2 blocks (old data + old parity), compute the delta, and write 2 blocks, rather than reading ALL data blocks in the stripe to recompute parity from scratch.
+
+**Trade-offs vs RAID 0/1:**
+| Aspect | RAID 0 | RAID 1 | RAID 5 |
+|--------|--------|--------|--------|
+| Capacity | 100% | 50% | (N-1)/N |
+| Read speed | Fast | Fast | Fast |
+| Write speed | Fast | Medium | Slower (read-modify-write) |
+| Fault tolerance | None | N-1 disks | 1 disk |
+| Min disks | 2 | 2 | 3 |
+
 ## Running with Multiple Disks
 
 ### Create disk images:
@@ -282,6 +399,33 @@ Write to multiple sectors, check `raid_print_stats()` shows balanced disk I/O.
 ### Test 3: Verify mirroring (RAID 1)
 Write once, check all `disk_writes[]` incremented.
 
+### Test 4: Verify parity (RAID 5)
+```c
+void test_raid5_parity(void) {
+  char buf1[512], buf2[512], buf3[512];
+
+  /* Write to sectors in same stripe */
+  memset(buf1, 'A', 512);
+  memset(buf2, 'B', 512);
+  memset(buf3, 'C', 512);
+
+  raid_write(0, buf1);  /* D0 */
+  raid_write(1, buf2);  /* D1 */
+  raid_write(2, buf3);  /* D2 */
+
+  /* Verify reads work */
+  char read_buf[512];
+  raid_read(0, read_buf);
+  ASSERT(memcmp(buf1, read_buf, 512) == 0);
+
+  /* Check stats show parity disk writes */
+  raid_print_stats();
+}
+```
+
+### Test 5: Verify RAID 5 read-modify-write
+Write to a single sector, check that exactly 2 reads (old data + old parity) and 2 writes (new data + new parity) occurred.
+
 ## Implementation Checklist
 
 - [ ] Create `src/devices/raid.h`
@@ -290,6 +434,9 @@ Write once, check all `disk_writes[]` incremented.
 - [ ] Implement `raid_write()` for RAID 0
 - [ ] Implement `raid_read()` for RAID 1
 - [ ] Implement `raid_write()` for RAID 1
+- [ ] Implement `raid_read()` for RAID 5
+- [ ] Implement `raid_write()` for RAID 5 (read-modify-write)
+- [ ] Implement RAID 5 helper functions
 - [ ] Modify `cache.c` to use RAID layer
 - [ ] Modify `init.c` to call `raid_init()`
 - [ ] Add to build system
@@ -305,7 +452,9 @@ Write once, check all `disk_writes[]` incremented.
 
 ## What You Implement
 
-1. **`raid_read()` body** - The switch cases for RAID 0 and RAID 1
-2. **`raid_write()` body** - The switch cases for RAID 0 and RAID 1
+1. **`raid_read()` body** - The switch cases for RAID 0, RAID 1, and RAID 5
+2. **`raid_write()` body** - The switch cases for RAID 0, RAID 1, and RAID 5
 
-The helper functions `raid0_disk_for_sector()` and `raid0_physical_sector()` are provided to make RAID 0 calculations easier.
+The helper functions are provided to make calculations easier:
+- `raid0_disk_for_sector()` and `raid0_physical_sector()` for RAID 0
+- `raid5_parity_disk()`, `raid5_data_disk()`, `raid5_physical_sector()`, and `raid5_compute_parity()` for RAID 5

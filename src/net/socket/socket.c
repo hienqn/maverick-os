@@ -2,74 +2,9 @@
  * @file net/socket/socket.c
  * @brief POSIX Socket API implementation.
  *
- * ============================================================================
- * WHY SOCKETS EXIST
- * ============================================================================
+ * This wraps UDP (and TCP) PCBs in a standard socket abstraction.
  *
- * The socket layer provides a UNIFIED INTERFACE for network communication.
- * Without it, applications would need to know the details of each protocol:
- *
- *   Without sockets:          With sockets:
- *   ─────────────────         ─────────────────
- *   struct udp_pcb* pcb;      int fd = socket(AF_INET, SOCK_DGRAM, 0);
- *   pcb = udp_new();          bind(fd, &addr, sizeof(addr));
- *   udp_bind(pcb, ip, port);  sendto(fd, buf, len, 0, &dest, sizeof(dest));
- *   struct pbuf* p = ...;     recvfrom(fd, buf, len, 0, &from, &fromlen);
- *   udp_output(pcb, p, ...);  close(fd);
- *   udp_recv(pcb, ...);
- *   udp_free(pcb);
- *
- * ============================================================================
- * ROLE IN THE NETWORK STACK
- * ============================================================================
- *
- *   ┌─────────────────────────────────────────────────────────────────────┐
- *   │  APPLICATION                                                        │
- *   │    socket(), bind(), sendto(), recvfrom(), close()                  │
- *   ├─────────────────────────────────────────────────────────────────────┤
- *   │  SOCKET LAYER  (this file)                                          │
- *   │    - Translates POSIX API to protocol-specific calls                │
- *   │    - Manages socket state (bound, connected, shutdown)              │
- *   │    - Handles byte order conversion (network <-> host)               │
- *   │    - Allocates/frees pbufs for sending                              │
- *   ├─────────────────────────────────────────────────────────────────────┤
- *   │  TRANSPORT LAYER  (udp.c, tcp.c)                                    │
- *   │    - Protocol-specific logic (ports, checksums, reliability)        │
- *   │    - UDP: udp_new, udp_bind, udp_output, udp_recv, udp_free         │
- *   │    - TCP: connection state, retransmission, flow control            │
- *   ├─────────────────────────────────────────────────────────────────────┤
- *   │  NETWORK LAYER  (ip.c)                                              │
- *   │    - Routing, IP addresses                                          │
- *   ├─────────────────────────────────────────────────────────────────────┤
- *   │  LINK LAYER  (ethernet.c, arp.c)                                    │
- *   │    - MAC addresses, physical transmission                           │
- *   └─────────────────────────────────────────────────────────────────────┘
- *
- * ============================================================================
- * WHAT THIS LAYER DOES
- * ============================================================================
- *
- * 1. ABSTRACTION: Hide protocol differences behind a common API
- *    - Same sendto()/recvfrom() works for UDP
- *    - Same send()/recv() works for TCP (when implemented)
- *
- * 2. STATE MANAGEMENT: Track socket lifecycle
- *    - bound: Has a local address/port been assigned?
- *    - connected: Is there a default remote address?
- *    - listening: Is this a TCP server socket?
- *
- * 3. BUFFER MANAGEMENT: Handle pbuf allocation for applications
- *    - App passes raw buffer to sendto()
- *    - Socket layer allocates pbuf, copies data, sends via UDP
- *
- * 4. BYTE ORDER: Convert between network and host byte order
- *    - sockaddr_in uses network byte order (big-endian)
- *    - UDP functions expect host byte order for ports
- *
- * ============================================================================
- * KEY CONCEPTS
- * ============================================================================
- *
+ * KEY CONCEPTS:
  * - sockaddr_in fields are in NETWORK byte order
  * - Use ntohs() when passing port to udp_bind/udp_connect
  * - Use htons() when filling sockaddr_in from udp_recv

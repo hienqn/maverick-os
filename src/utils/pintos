@@ -1,4 +1,43 @@
 #! /usr/bin/perl -w
+#
+# =============================================================================
+# PintOS Virtual Machine Runner
+# =============================================================================
+#
+# This script runs PintOS in a virtual machine (QEMU, Bochs, or VMware Player).
+# It handles disk image creation, file transfers, and VM configuration.
+#
+# ARCHITECTURE SUPPORT:
+# --------------------
+# - i386 (default): Uses qemu-system-i386 with IDE disks and MBR boot
+# - riscv64:        Uses qemu-system-riscv64 with OpenSBI and VirtIO
+#
+# USAGE:
+# -----
+# Basic:
+#   pintos -- run alarm-single
+#
+# With architecture:
+#   pintos --arch=riscv64 -- -q rtkt alarm-single
+#
+# With debugging:
+#   pintos --gdb -- run alarm-single
+#
+# RISC-V DIFFERENCES:
+# ------------------
+# - Uses OpenSBI firmware (-bios default) instead of custom loader
+# - Kernel loaded directly via -kernel flag
+# - Arguments passed via -append instead of disk-based loader args
+# - VirtIO block devices instead of IDE (-device virtio-blk-device)
+# - Minimum 128MB RAM enforced (OpenSBI + kernel requirements)
+# - No partitioned boot disk needed for thread tests
+#
+# ENVIRONMENT VARIABLES:
+# ---------------------
+# - ARCH: Default architecture (i386 or riscv64)
+# - PINTOS_PORT: GDB server port (default: 1234)
+#
+# =============================================================================
 
 use strict;
 use POSIX;

@@ -2,6 +2,35 @@
  *
  * This is called from start.S after basic setup.
  * It initializes console output, sets up paging, and boots the kernel.
+ *
+ * TEST FRAMEWORK INTEGRATION:
+ * --------------------------
+ * The test framework (tests.pm) expects specific output messages:
+ *
+ * Boot sequence messages:
+ *   - "Pintos booting with NNN kB RAM..."  - Printed after RAM detection
+ *   - "Boot complete."                      - Printed after all init done
+ *
+ * Test execution markers:
+ *   - "Executing 'testname':"               - Before running test
+ *   - "Execution of 'testname' complete."   - After test finishes
+ *
+ * Shutdown messages:
+ *   - "Timer: NNN ticks"                    - From timer_print_stats()
+ *   - "Powering off..."                     - Before SBI shutdown
+ *
+ * COMMAND LINE OPTIONS:
+ * --------------------
+ * Supported options (passed via QEMU -append):
+ *   -q              Quiet mode (accepted, currently no-op)
+ *   -sched=POLICY   Scheduler: fifo, prio, fair, mlfqs (accepted, uses default)
+ *   -f              Format filesystem (accepted, no-op)
+ *   -rs=SEED        Random seed (accepted, not yet implemented)
+ *
+ * KERNEL ACTIONS:
+ * --------------
+ *   rtkt NAME       Run thread kernel test (alias: threads-test)
+ *   run PROG        Run user program (not yet implemented)
  */
 
 #include "arch/riscv64/sbi.h"

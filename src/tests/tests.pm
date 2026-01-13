@@ -1,3 +1,34 @@
+# =============================================================================
+# PintOS Test Framework - Core Testing Module
+# =============================================================================
+#
+# This module provides the core test checking infrastructure for PintOS.
+# It is used by individual test .ck files to validate test output.
+#
+# KEY FUNCTIONS:
+# -------------
+# - read_text_file($file): Read file contents, stripping line endings
+# - common_checks($run, @output): Verify boot/shutdown messages
+# - check_expected($expected): Compare output against expected
+# - get_core_output($run, @output): Extract test output between markers
+# - pass/fail: Report test results
+#
+# ARCHITECTURE NOTES:
+# ------------------
+# - RISC-V QEMU serial output uses CRLF line endings (from OpenSBI)
+# - read_text_file() strips both CR and LF to handle this
+# - Test markers: "Executing 'testname':" and "Execution of 'testname' complete."
+#
+# EXPECTED OUTPUT FORMAT:
+# ----------------------
+# Tests must produce these messages for framework compatibility:
+# - "Pintos booting with NNN kB RAM..."  (boot start)
+# - "Boot complete."                      (boot finished)
+# - "Timer: NNN ticks"                    (shutdown stats)
+# - "Powering off..."                     (shutdown)
+#
+# =============================================================================
+
 use strict;
 use warnings;
 use tests::Algorithm::Diff;

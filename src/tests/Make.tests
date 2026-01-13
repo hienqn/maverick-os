@@ -1,4 +1,44 @@
 # -*- makefile -*-
+#
+# =============================================================================
+# PintOS Test Framework
+# =============================================================================
+#
+# This makefile provides the test infrastructure for running PintOS tests
+# on both i386 and RISC-V architectures.
+#
+# ARCHITECTURE SUPPORT:
+# --------------------
+# - i386:    Uses QEMU with IDE disks, loader.bin for boot
+# - riscv64: Uses QEMU with OpenSBI firmware, VirtIO devices, no loader needed
+#
+# RUNNING TESTS:
+# -------------
+# For i386 (default):
+#   cd src/threads/build && make tests/threads/alarm-single.result
+#
+# For RISC-V:
+#   cd src/riscv/build && make tests/threads/alarm-single.result ARCH=riscv64
+#
+# Run all tests:
+#   make check                    # i386
+#   make check ARCH=riscv64       # RISC-V
+#
+# KEY VARIABLES:
+# -------------
+# - ARCH:        Architecture (i386 or riscv64), passed to pintos via --arch
+# - TEST:        Current test being run
+# - TESTCMD:     Complete pintos command line
+# - RUNCMD:      Command to run test (default: run)
+#
+# RISC-V NOTES:
+# ------------
+# - Swap is disabled until VirtIO block driver is fully tested
+# - User programs (userprog, filesys) are skipped until user mode is ported
+# - Tests use 'rtkt' (Run Threads Kernel Test) command
+# - QEMU serial output uses CRLF; tests.pm strips CR characters
+#
+# =============================================================================
 
 # For RISC-V, skip user programs until user mode is fully ported
 ifeq ($(ARCH),riscv64)

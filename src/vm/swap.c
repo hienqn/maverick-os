@@ -118,23 +118,3 @@ void swap_free(size_t slot) {
   bitmap_reset(swap_bitmap, slot);
   lock_release(&swap_lock);
 }
-
-/* ============================================================================
- * STATISTICS
- * ============================================================================ */
-
-/* Get number of swap slots in use. */
-size_t swap_used_slots(void) {
-  if (swap_bitmap == NULL) {
-    return 0;
-  }
-  return bitmap_count(swap_bitmap, 0, bitmap_size(swap_bitmap), true);
-}
-
-/* Get total number of swap slots. */
-size_t swap_total_slots(void) {
-  if (swap_bitmap == NULL) {
-    return 0;
-  }
-  return bitmap_size(swap_bitmap);
-}

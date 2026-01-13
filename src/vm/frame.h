@@ -14,7 +14,7 @@
  * PURPOSE:
  * --------
  * While palloc.c manages raw physical memory (free vs. used), the frame
- * table adds ownership tracking needed for virtual memory:
+ * table adds ownership tracking needed for virtual memory: 
  *   - Which process owns each frame?
  *   - What virtual address maps to it?
  *   - Can it be evicted (or is it pinned)?
@@ -53,38 +53,6 @@
 
 /* Forward declarations. */
 struct thread;
-
-/* ============================================================================
- * EVICTION CALLBACK (Dependency Inversion)
- * ============================================================================
- *
- * The frame table needs to notify owners when their frame is being evicted.
- * Rather than hardcoding dependencies on process/pagedir/spt, we use a
- * callback pattern that allows owners to handle eviction cleanup themselves.
- *
- * CALLBACK RESPONSIBILITIES:
- * --------------------------
- * When called, the eviction callback should:
- *   1. Check if the page is dirty and needs to be written back
- *   2. Write dirty data to swap or file as appropriate
- *   3. Update the owner's supplemental page table entry
- *   4. Clear the page table entry (pagedir_clear_page)
- *
- * PARAMETERS:
- *   owner_ctx - Opaque pointer to owner context (e.g., struct thread*)
- *   upage     - User virtual address being evicted
- *   kpage     - Kernel virtual address of the frame
- *
- * RETURNS:
- *   true  - Eviction succeeded, frame can be reclaimed
- *   false - Eviction failed (e.g., swap full), try another frame
- *
- * DEFAULT BEHAVIOR:
- * -----------------
- * If no callback is registered, the frame table uses its built-in eviction
- * logic for backward compatibility. The callback is optional.
- */
-typedef bool (*frame_evict_callback_fn)(void* owner_ctx, void* upage, void* kpage);
 
 /* ============================================================================
  * FRAME TABLE ENTRY
@@ -133,8 +101,7 @@ struct frame_entry {
   /* ===== Core Identification ===== */
 
   /* Kernel virtual address of this frame.
-     This is the address returned by palloc_get_page().
-     Used as the key for frame_lookup(). */
+     This is the address returned by palloc_get_page(). */
   void* kpage;
 
   /* ===== Ownership (Single-Owner Model) ===== */
@@ -165,13 +132,6 @@ struct frame_entry {
      Must be cleared when operation completes. */
   bool pinned;
 
-  /* ===== Eviction Callback (Optional) ===== */
-
-  /* Custom eviction handler for this frame.
-     If NULL, uses default built-in eviction logic.
-     If set, called during eviction to let owner handle cleanup. */
-  frame_evict_callback_fn evict_callback;
-
   /* ===== List Management ===== */
 
   /* List element for the global frame list.
@@ -193,13 +153,12 @@ void frame_init(void);
 
 /* Allocate a frame for user virtual address UPAGE.
    UPAGE: User virtual address that will map to this frame.
-   WRITABLE: Whether the page should be writable.
 
    If no frames are available, evicts a frame using clock algorithm.
    Returns kernel virtual address of allocated frame, or NULL on failure.
 
    The frame is automatically tracked in the frame table. */
-void* frame_alloc(void* upage, bool writable);
+void* frame_alloc(void* upage);
 
 /* Register an already-allocated page with the frame table.
    Used when a page was allocated via palloc_get_page directly (e.g., by
@@ -242,19 +201,6 @@ bool frame_pin_if_present(void* kpage);
 
 /* Unpin a frame to allow eviction. */
 void frame_unpin(void* kpage);
-
-/* Set eviction callback for a frame.
-   The callback is invoked when the frame is selected for eviction.
-   Pass NULL to use the default built-in eviction logic. */
-void frame_set_evict_callback(void* kpage, frame_evict_callback_fn callback);
-
-/* ============================================================================
- * FRAME LOOKUP
- * ============================================================================ */
-
-/* Find frame table entry for kernel page KPAGE.
-   Returns NULL if not found. */
-void* frame_lookup(void* kpage);
 
 /* ============================================================================
  * EVICTION

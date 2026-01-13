@@ -294,7 +294,7 @@ bool spt_load_page(void* entry) {
   pd = t->pcb->pagedir;
 
   /* Allocate a frame. */
-  kpage = frame_alloc(e->upage, e->writable);
+  kpage = frame_alloc(e->upage);
   if (kpage == NULL)
     return false;
 
@@ -536,7 +536,7 @@ static struct spt_entry* spt_clone_entry(struct spt_entry* parent_entry, uint32_
     case PAGE_SWAP: {
       /* Page is in swap: read into new frame, then swap out to new slot.
          This avoids sharing swap slots between processes. */
-      void* temp_kpage = frame_alloc(child_entry->upage, child_entry->writable);
+      void* temp_kpage = frame_alloc(child_entry->upage);
       if (temp_kpage == NULL) {
         free(child_entry);
         return NULL;

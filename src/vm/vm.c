@@ -96,7 +96,7 @@ bool vm_handle_fault(void* fault_addr, bool user UNUSED, bool write, bool not_pr
 
     /* Allocate a new frame for the private copy.
        Note: We don't hold spt_lock here to avoid deadlock with eviction. */
-    void* new_kpage = frame_alloc(fault_page, true);
+    void* new_kpage = frame_alloc(fault_page);
     if (new_kpage == NULL) {
       frame_unpin(old_kpage);
       return false;

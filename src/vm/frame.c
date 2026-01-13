@@ -97,18 +97,6 @@ static struct frame_entry* frame_find_entry(void* kpage) {
   return NULL;
 }
 
-/* Check if a list element is still in frame_list.
-   Must be called with frame_lock held.
-   Used to validate iterators after releasing and reacquiring the lock. */
-static bool frame_elem_valid(struct list_elem* elem) {
-  struct list_elem* e;
-  for (e = list_begin(&frame_list); e != list_end(&frame_list); e = list_next(e)) {
-    if (e == elem)
-      return true;
-  }
-  return false;
-}
-
 /* ============================================================================
  * INITIALIZATION
  * ============================================================================ */
@@ -145,7 +133,7 @@ void frame_init(void) {
    the list atomically with the lock held. Since the frame is newly allocated
    (either from palloc or eviction), no other thread can know about it yet,
    so there's no race between allocation and list insertion. */
-void* frame_alloc(void* upage, bool writable UNUSED) {
+void* frame_alloc(void* upage) {
   void* kpage;
 
   /* Pre-allocate entry struct (malloc may block, don't hold lock). */
@@ -172,8 +160,7 @@ void* frame_alloc(void* upage, bool writable UNUSED) {
   fe->upage = upage;
   fe->owner = thread_current();
   fe->ref_count = 1;
-  fe->pinned = true;         /* Pin until caller is done setting up. */
-  fe->evict_callback = NULL; /* Use default eviction logic. */
+  fe->pinned = true; /* Pin until caller is done setting up. */
 
   /* Add to frame list atomically. */
   lock_acquire(&frame_lock);
@@ -207,8 +194,7 @@ bool frame_register(void* kpage, void* upage, struct thread* owner) {
   fe->upage = upage;
   fe->owner = owner;
   fe->ref_count = 1;
-  fe->pinned = true;         /* Start pinned like frame_alloc. */
-  fe->evict_callback = NULL; /* Use default eviction logic. */
+  fe->pinned = true; /* Start pinned like frame_alloc. */
 
   /* Atomically check for existing and add if not present.
      This prevents TOCTOU race where another thread registers between
@@ -332,32 +318,6 @@ void frame_unpin(void* kpage) {
   lock_release(&frame_lock);
 }
 
-/* Set eviction callback for a frame.
-   Allows custom eviction handling instead of default logic. */
-void frame_set_evict_callback(void* kpage, frame_evict_callback_fn callback) {
-  lock_acquire(&frame_lock);
-  struct frame_entry* fe = frame_find_entry(kpage);
-  if (fe != NULL)
-    fe->evict_callback = callback;
-  lock_release(&frame_lock);
-}
-
-/* ============================================================================
- * FRAME LOOKUP
- * ============================================================================ */
-
-/* Find frame table entry for kernel page KPAGE.
-   Returns pointer to frame_entry, or NULL if not found.
-
-   Note: The returned pointer is valid only while frame_lock is not
-   held by another operation that might free the entry. */
-void* frame_lookup(void* kpage) {
-  lock_acquire(&frame_lock);
-  struct frame_entry* fe = frame_find_entry(kpage);
-  lock_release(&frame_lock);
-  return fe;
-}
-
 /* ============================================================================
  * EVICTION (CLOCK ALGORITHM)
  * ============================================================================ */
@@ -448,53 +408,6 @@ void* frame_evict(void) {
     void* kpage = fe->kpage;
     void* upage = fe->upage;
     struct thread* owner = fe->owner;
-    frame_evict_callback_fn callback = fe->evict_callback;
-
-    /* If a custom eviction callback is registered, use it instead of
-       the default logic. This allows for dependency inversion - the
-       owner can handle their own eviction without frame.c needing to
-       know about SPT, pagedir, etc. */
-    if (callback != NULL) {
-      /* Release lock before callback to avoid deadlock. */
-      lock_release(&frame_lock);
-
-      bool success = callback(owner, upage, kpage);
-      lock_acquire(&frame_lock);
-
-      /* Validate iterator is still valid after lock was released.
-         Another thread may have modified the frame list. */
-      if (!frame_elem_valid(e)) {
-        /* Iterator invalidated, restart from clock_hand. */
-        if (clock_hand == NULL || list_empty(&frame_list)) {
-          lock_release(&frame_lock);
-          return NULL;
-        }
-        e = clock_hand;
-        start = e;
-        continue;
-      }
-
-      if (!success) {
-        /* Callback failed (e.g., swap full). Try next frame. */
-        e = clock_advance(e);
-        if (e == start) {
-          lock_release(&frame_lock);
-          return NULL;
-        }
-        continue;
-      }
-
-      /* Callback succeeded - remove entry and return frame. */
-      clock_hand = clock_advance(e);
-      if (clock_hand == e)
-        clock_hand = NULL;
-      list_remove(e);
-      lock_release(&frame_lock);
-      free(fe);
-      return kpage;
-    }
-
-    /* Default eviction logic (no callback registered). */
 
     /* Get SPT entry to determine how to handle eviction.
        Acquire SPT lock to prevent concurrent modifications. */

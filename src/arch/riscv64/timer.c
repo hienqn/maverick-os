@@ -19,6 +19,8 @@
 #include "lib/kernel/list.h"
 #include <debug.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <inttypes.h>
 
 #define UNUSED __attribute__((unused))
 
@@ -180,3 +182,11 @@ void timer_msleep(int64_t ms) {
  * Returns the current value of the time CSR.
  */
 uint64_t timer_read_time(void) { return get_time(); }
+
+/*
+ * timer_print_stats - Print timer statistics.
+ *
+ * Prints the total number of timer ticks since boot.
+ * Required for test framework compatibility.
+ */
+void timer_print_stats(void) { printf("Timer: %" PRId64 " ticks\n", timer_ticks()); }

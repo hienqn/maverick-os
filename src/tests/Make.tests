@@ -79,6 +79,10 @@ VERBOSE =
 RUNCMD = run
 
 TESTCMD = pintos -v -k $(if ${PINTOS_DEBUG},--gdb,-T $(TIMEOUT))
+# Pass architecture to pintos script
+ifneq ($(ARCH),)
+TESTCMD += --arch=$(ARCH)
+endif
 TESTCMD += $(or ${FORCE_SIMULATOR},$(SIMULATOR))
 TESTCMD += $(PINTOSOPTS)
 ifeq ($(filter userprog, $(KERNEL_SUBDIRS)), userprog)
@@ -87,8 +91,11 @@ TESTCMD += $(foreach file,$(PUTFILES),-p $(file) -a $(notdir $(file)))
 endif
 ifeq ($(filter vm, $(KERNEL_SUBDIRS)), vm)
 # Add swap unless the test has _NO_SWAP set (e.g., for multi-oom OOM testing)
+# Skip for RISC-V until disk infrastructure is fully ported
 ifeq ($($(TEST)_NO_SWAP),)
+ifneq ($(ARCH),riscv64)
 TESTCMD += --swap-size=4
+endif
 endif
 endif
 TESTCMD += -- -q
@@ -101,8 +108,14 @@ endif
 TESTCMD += $(if $($(TEST)_ARGS),$(RUNCMD) '$(*F) $($(TEST)_ARGS)',$(RUNCMD) $(*F))
 TESTCMD += $(if ${PINTOS_DEBUG},,< /dev/null)
 TESTCMD += $(if ${PINTOS_DEBUG},,2> $(TEST).errors $(if $(VERBOSE),|tee,>) $(TEST).output)
+# RISC-V doesn't use loader.bin (OpenSBI handles boot)
+ifeq ($(ARCH),riscv64)
+%.output: kernel.bin
+	$(TESTCMD)
+else
 %.output: kernel.bin loader.bin
 	$(TESTCMD)
+endif
 
 %.result: %.ck %.output
 	perl -I$(SRCDIR) $< $* $@

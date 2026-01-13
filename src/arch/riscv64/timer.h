@@ -38,4 +38,7 @@ void timer_msleep(int64_t ms);
 /* Read the raw time counter (mtime equivalent) */
 uint64_t timer_read_time(void);
 
+/* Print timer statistics (for test compatibility) */
+void timer_print_stats(void);
+
 #endif /* ARCH_RISCV64_TIMER_H */

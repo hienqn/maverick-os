@@ -20,6 +20,7 @@
 #include "threads/malloc.h"
 #include <stdint.h>
 #include <string.h>
+#include <stdio.h>
 
 /* Forward declarations */
 void riscv_init(uint64_t hartid, void* dtb);
@@ -137,6 +138,10 @@ void riscv_init(uint64_t hartid, void* dtb) {
 
   /* Detect memory */
   detect_memory();
+  /* Print in standard Pintos format for test compatibility */
+  console_puts("Pintos booting with ");
+  console_putdec(init_ram_pages * PGSIZE / 1024);
+  console_puts(" kB RAM...\n");
   console_puts("  RAM: ");
   console_putdec(init_ram_pages * PGSIZE / (1024 * 1024));
   console_puts(" MB (");
@@ -284,6 +289,9 @@ void riscv_init(uint64_t hartid, void* dtb) {
   /* Initialize memory allocator (needed for various subsystems) */
   malloc_init();
 
+  /* Boot complete */
+  console_puts("Boot complete.\n");
+
   /* Parse command line from device tree or defaults */
   console_puts("\nParsing command line...\n");
   parse_dtb_cmdline(dtb);
@@ -297,7 +305,8 @@ void riscv_init(uint64_t hartid, void* dtb) {
   run_actions(argv);
 
   /* Shutdown after running actions */
-  console_puts("\nAll actions completed. Shutting down.\n");
+  timer_print_stats();
+  console_puts("Powering off...\n");
   sbi_shutdown();
 
   /* Should not reach here */
@@ -321,9 +330,6 @@ static void console_putchar(char c) { sbi_console_putchar(c); }
 
 static void console_puts(const char* s) {
   while (*s) {
-    if (*s == '\n') {
-      console_putchar('\r');
-    }
     console_putchar(*s++);
   }
 }
@@ -553,6 +559,18 @@ static char** parse_options(char** argv) {
       }
     } else if (!strcmp(name, "-ul")) {
       /* User page limit - already handled by palloc_init */
+    } else if (!strcmp(name, "-sched")) {
+      /* Scheduler selection - accept but use default for now */
+      /* Supported values: fifo, prio, fair, mlfqs */
+      (void)value;
+    } else if (!strcmp(name, "-fair")) {
+      /* Fair scheduler variant - accept but use default for now */
+      (void)value;
+    } else if (!strcmp(name, "-f")) {
+      /* Format filesystem - accept but no-op for now */
+    } else if (!strcmp(name, "-filesys") || !strcmp(name, "-scratch") || !strcmp(name, "-swap")) {
+      /* Block device names - accept but no-op for now */
+      (void)value;
     } else {
       console_puts("Unknown option: ");
       console_puts(name);
@@ -593,17 +611,17 @@ static void run_actions(char** argv) {
       /* process_execute(prog); - TODO: implement when userprog ready */
       console_puts("User programs not yet implemented for RISC-V\n");
 
-    } else if (!strcmp(action, "threads-test")) {
-      /* Run threads kernel test */
+    } else if (!strcmp(action, "threads-test") || !strcmp(action, "rtkt")) {
+      /* Run threads kernel test (rtkt = Run Threads Kernel Test) */
       if (*argv == NULL) {
-        console_puts("threads-test: missing test name\n");
+        console_puts("rtkt: missing test name\n");
         break;
       }
       const char* test = *argv++;
-      console_puts("Running threads test: ");
-      console_puts(test);
-      console_puts("\n");
+      /* Print markers for test framework compatibility */
+      printf("Executing '%s':\n", test);
       run_threads_test(test);
+      printf("Execution of '%s' complete.\n", test);
 
     } else {
       console_puts("Unknown action: ");

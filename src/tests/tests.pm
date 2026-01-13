@@ -618,6 +618,8 @@ sub read_text_file {
     open (FILE, '<', $file_name) or die "$file_name: open: $!\n";
     my (@content) = <FILE>;
     chomp (@content);
+    # Strip carriage returns for CRLF line endings (e.g., from QEMU serial)
+    s/\r//g for @content;
     close (FILE);
     return @content;
 }

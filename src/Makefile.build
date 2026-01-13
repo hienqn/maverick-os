@@ -262,8 +262,13 @@ endif
 # Source Collection
 # =============================================================================
 # Add arch_SRC to sources for RISC-V builds
-# Include both KERNEL_SUBDIRS and TEST_SUBDIRS in source collection
+# For i386: tests are included via KERNEL_SUBDIRS
+# For RISC-V: tests need to be added via TEST_SUBDIRS
+ifeq ($(ARCH),riscv64)
 SOURCES = $(arch_SRC) $(foreach dir,$(KERNEL_SUBDIRS) $(TEST_SUBDIRS),$($(dir)_SRC))
+else
+SOURCES = $(arch_SRC) $(foreach dir,$(KERNEL_SUBDIRS),$($(dir)_SRC))
+endif
 OBJECTS = $(patsubst %.c,%.o,$(patsubst %.S,%.o,$(SOURCES)))
 DEPENDS = $(patsubst %.o,%.d,$(OBJECTS))
 

@@ -78,14 +78,4 @@ void swap_in(size_t slot, void* kpage);
    Used when a page is freed while swapped out. */
 void swap_free(size_t slot);
 
-/* ============================================================================
- * STATISTICS (Optional)
- * ============================================================================ */
-
-/* Get number of swap slots in use. */
-size_t swap_used_slots(void);
-
-/* Get total number of swap slots. */
-size_t swap_total_slots(void);
-
 #endif /* vm/swap.h */

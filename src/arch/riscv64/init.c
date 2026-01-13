@@ -14,8 +14,10 @@
 #include "arch/riscv64/plic.h"
 #include "arch/riscv64/virtio-blk.h"
 #include "arch/riscv64/userprog.h"
+#include "arch/riscv64/boot.h"
 #include "threads/thread.h"
 #include "threads/palloc.h"
+#include "threads/malloc.h"
 #include <stdint.h>
 #include <string.h>
 
@@ -26,6 +28,10 @@ static void console_putchar(char c);
 static void console_puts(const char* s);
 static void console_puthex(uint64_t val);
 static void console_putdec(uint64_t val);
+static void parse_dtb_cmdline(void* dtb);
+static char** read_command_line(void);
+static char** parse_options(char** argv);
+static void run_actions(char** argv);
 
 /* Global variables set during boot */
 uint64_t boot_hartid;
@@ -275,15 +281,23 @@ void riscv_init(uint64_t hartid, void* dtb) {
     }
   }
 
-  /* Test Phase 6: User mode infrastructure */
-  console_puts("\nTesting Phase 6: User mode infrastructure...\n");
-  test_user_mode_infrastructure();
+  /* Initialize memory allocator (needed for various subsystems) */
+  malloc_init();
 
-  console_puts("\n");
-  console_puts("RISC-V Phase 6 complete: User mode infrastructure ready!\n");
-  console_puts("Halting...\n");
+  /* Parse command line from device tree or defaults */
+  console_puts("\nParsing command line...\n");
+  parse_dtb_cmdline(dtb);
 
-  /* For now, halt here. Later phases will continue boot. */
+  /* Read and parse command line arguments */
+  char** argv = read_command_line();
+  argv = parse_options(argv);
+
+  /* Run kernel actions (tests, user programs, etc.) */
+  console_puts("\nRunning kernel actions...\n");
+  run_actions(argv);
+
+  /* Shutdown after running actions */
+  console_puts("\nAll actions completed. Shutting down.\n");
   sbi_shutdown();
 
   /* Should not reach here */
@@ -351,3 +365,250 @@ static void console_putdec(uint64_t val) {
 
 /* Interrupt control functions are now in intr.c */
 /* Note: schedule_tail() and thread_exit() are now provided by threads/thread.c */
+
+/* ==========================================================================
+ * Command Line Parsing
+ * ==========================================================================
+ * On RISC-V, command line arguments come from QEMU's -append flag,
+ * which OpenSBI passes via the device tree's /chosen/bootargs property.
+ */
+
+/* Storage for command line arguments (in kernel BSS) */
+uint32_t riscv_arg_cnt;
+char riscv_args_buffer[LOADER_ARGS_LEN];
+
+/*
+ * riscv_init_cmdline - Initialize command line from a string.
+ *
+ * Parses a space-separated command line into null-terminated arguments
+ * and stores them at the LOADER_ARGS address for read_command_line().
+ */
+void riscv_init_cmdline(const char* cmdline) {
+  if (!cmdline || !*cmdline) {
+    riscv_arg_cnt = 0;
+    return;
+  }
+
+  char* dest = riscv_args_buffer;
+  char* end = riscv_args_buffer + LOADER_ARGS_LEN - 1;
+  uint32_t argc = 0;
+  int in_arg = 0;
+
+  while (*cmdline && dest < end) {
+    if (*cmdline == ' ' || *cmdline == '\t') {
+      if (in_arg) {
+        *dest++ = '\0'; /* Null-terminate argument */
+        in_arg = 0;
+      }
+      cmdline++;
+    } else {
+      if (!in_arg) {
+        argc++;
+        in_arg = 1;
+      }
+      *dest++ = *cmdline++;
+    }
+  }
+
+  if (in_arg && dest < end) {
+    *dest++ = '\0'; /* Null-terminate last argument */
+  }
+
+  riscv_arg_cnt = argc;
+}
+
+/* Byte swap for big-endian FDT parsing (no library call needed) */
+static inline uint32_t bswap32(uint32_t x) {
+  return ((x & 0xff000000u) >> 24) | ((x & 0x00ff0000u) >> 8) | ((x & 0x0000ff00u) << 8) |
+         ((x & 0x000000ffu) << 24);
+}
+
+/*
+ * parse_dtb_cmdline - Extract bootargs from device tree.
+ *
+ * Looks for /chosen/bootargs in the FDT and initializes command line.
+ * Falls back to default "-q" if not found.
+ */
+static void parse_dtb_cmdline(void* dtb) {
+  /* FDT header structure (all fields big-endian) */
+  uint32_t* fdt = (uint32_t*)dtb;
+
+  if (!dtb) {
+    console_puts("  No DTB, using defaults\n");
+    riscv_init_cmdline("-q");
+    return;
+  }
+
+  /* Check FDT magic (big-endian: 0xd00dfeed) */
+  uint32_t magic = bswap32(fdt[0]);
+  if (magic != 0xd00dfeed) {
+    console_puts("  Invalid DTB magic, using defaults\n");
+    riscv_init_cmdline("-q");
+    return;
+  }
+
+  /* Parse FDT header */
+  uint32_t totalsize = bswap32(fdt[1]);
+  uint32_t off_dt_struct = bswap32(fdt[2]);
+  uint32_t off_dt_strings = bswap32(fdt[3]);
+
+  uint8_t* struct_block = (uint8_t*)dtb + off_dt_struct;
+  char* strings_block = (char*)dtb + off_dt_strings;
+
+/* FDT tokens */
+#define FDT_BEGIN_NODE 0x00000001
+#define FDT_END_NODE 0x00000002
+#define FDT_PROP 0x00000003
+#define FDT_NOP 0x00000004
+#define FDT_END 0x00000009
+
+  /* Walk the structure block looking for bootargs property */
+  uint32_t* p = (uint32_t*)struct_block;
+  uint32_t* end = (uint32_t*)((uint8_t*)dtb + totalsize);
+
+  while (p < end) {
+    uint32_t token = bswap32(*p++);
+
+    if (token == FDT_BEGIN_NODE) {
+      /* Skip node name (null-terminated, 4-byte aligned) */
+      char* name = (char*)p;
+      while (*name)
+        name++;
+      name++; /* Skip null */
+      p = (uint32_t*)(((uintptr_t)name + 3) & ~3);
+    } else if (token == FDT_PROP) {
+      uint32_t len = bswap32(*p++);
+      uint32_t nameoff = bswap32(*p++);
+      char* propname = strings_block + nameoff;
+
+      if (strcmp(propname, "bootargs") == 0 && len > 0) {
+        const char* bootargs = (const char*)p;
+        console_puts("  Found bootargs: ");
+        console_puts(bootargs);
+        console_puts("\n");
+        riscv_init_cmdline(bootargs);
+        return;
+      }
+      /* Skip property value (4-byte aligned) */
+      p = (uint32_t*)((uint8_t*)p + ((len + 3) & ~3));
+    } else if (token == FDT_END_NODE) {
+      /* Continue */
+    } else if (token == FDT_NOP) {
+      /* Continue */
+    } else if (token == FDT_END) {
+      break;
+    } else {
+      /* Unknown token, stop parsing */
+      break;
+    }
+  }
+
+  console_puts("  No bootargs in DTB, using defaults\n");
+  riscv_init_cmdline("-q");
+}
+
+/*
+ * read_command_line - Read command line arguments from memory.
+ *
+ * Returns an argv-style array pointing to the arguments stored
+ * at LOADER_ARGS by riscv_init_cmdline().
+ */
+static char** read_command_line(void) {
+  static char* argv[LOADER_ARGS_LEN / 2 + 1];
+  uint32_t argc = riscv_arg_cnt;
+  char* p = riscv_args_buffer;
+  char* end = riscv_args_buffer + LOADER_ARGS_LEN;
+
+  console_puts("Kernel command line:");
+  for (uint32_t i = 0; i < argc && p < end; i++) {
+    argv[i] = p;
+    console_puts(" ");
+    console_puts(p);
+    p += strlen(p) + 1;
+  }
+  argv[argc] = NULL;
+  console_puts("\n");
+
+  return argv;
+}
+
+/*
+ * parse_options - Parse kernel options from command line.
+ *
+ * Handles options like -q (quiet), -rs (random seed), etc.
+ * Returns pointer to first non-option argument.
+ */
+static char** parse_options(char** argv) {
+  for (; *argv != NULL && **argv == '-'; argv++) {
+    char* save_ptr;
+    char* name = strtok_r(*argv, "=", &save_ptr);
+    char* value = strtok_r(NULL, "", &save_ptr);
+
+    if (!strcmp(name, "-q")) {
+      /* Quiet mode - reduce output (currently ignored) */
+    } else if (!strcmp(name, "-rs")) {
+      /* Random seed for tests */
+      if (value) {
+        /* random_init(atoi(value)); - if available */
+      }
+    } else if (!strcmp(name, "-ul")) {
+      /* User page limit - already handled by palloc_init */
+    } else {
+      console_puts("Unknown option: ");
+      console_puts(name);
+      console_puts("\n");
+    }
+  }
+  return argv;
+}
+
+/*
+ * run_actions - Run kernel actions specified on command line.
+ *
+ * Supports:
+ *   run PROG           - Run user program PROG
+ *   threads-test NAME  - Run threads kernel test NAME
+ */
+static void run_actions(char** argv) {
+  /* External test runner from tests/threads/tests.c */
+  extern void run_threads_test(const char* name);
+
+  while (*argv != NULL) {
+    const char* action = *argv++;
+
+    /* Skip options that weren't handled by parse_options */
+    if (action[0] == '-')
+      continue;
+
+    if (!strcmp(action, "run")) {
+      /* Run user program */
+      if (*argv == NULL) {
+        console_puts("run: missing program name\n");
+        break;
+      }
+      const char* prog = *argv++;
+      console_puts("Running: ");
+      console_puts(prog);
+      console_puts("\n");
+      /* process_execute(prog); - TODO: implement when userprog ready */
+      console_puts("User programs not yet implemented for RISC-V\n");
+
+    } else if (!strcmp(action, "threads-test")) {
+      /* Run threads kernel test */
+      if (*argv == NULL) {
+        console_puts("threads-test: missing test name\n");
+        break;
+      }
+      const char* test = *argv++;
+      console_puts("Running threads test: ");
+      console_puts(test);
+      console_puts("\n");
+      run_threads_test(test);
+
+    } else {
+      console_puts("Unknown action: ");
+      console_puts(action);
+      console_puts("\n");
+    }
+  }
+}

@@ -21,16 +21,19 @@ void timer_init(void);
 void timer_interrupt(struct intr_frame* f);
 
 /* Get current timer ticks since boot */
-uint64_t timer_ticks(void);
+int64_t timer_ticks(void);
+
+/* Get elapsed ticks since THEN (compatible with i386 interface) */
+int64_t timer_elapsed(int64_t then);
 
 /* Get time in milliseconds since boot */
 uint64_t timer_ms(void);
 
 /* Sleep for given number of ticks */
-void timer_sleep(uint64_t ticks);
+void timer_sleep(int64_t ticks);
 
 /* Sleep for given number of milliseconds */
-void timer_msleep(uint64_t ms);
+void timer_msleep(int64_t ms);
 
 /* Read the raw time counter (mtime equivalent) */
 uint64_t timer_read_time(void);

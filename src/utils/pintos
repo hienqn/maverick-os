@@ -32,6 +32,8 @@ our (@disks);			# Extra disk images to pass to simulator.
 our ($loader_fn);		# Bootstrap loader.
 our (%geometry);		# IDE disk geometry.
 our ($align);			# Partition alignment.
+our ($arch);			# Architecture: i386 or riscv64.
+our (@kern_args);		# Kernel arguments (for RISC-V -append).
 
 parse_command_line ();
 prepare_scratch_disk ();
@@ -55,6 +57,8 @@ sub parse_command_line {
 		    "bochs" => sub { set_sim ("bochs") },
 		    "qemu" => sub { set_sim ("qemu") },
 		    "player" => sub { set_sim ("player") },
+
+		    "arch=s" => \$arch,
 
 		    "debug=s" => sub { set_debug ($_[1]) },
 		    "no-debug" => sub { set_debug ("none") },
@@ -103,6 +107,9 @@ sub parse_command_line {
     $sim = "bochs" if !defined $sim;
     $debug = "none" if !defined $debug;
     $vga = exists ($ENV{DISPLAY}) ? "window" : "none" if !defined $vga;
+    $arch = $ENV{ARCH} || "i386" if !defined $arch;
+    die "unknown architecture `$arch' (use i386 or riscv64)\n"
+      if $arch ne 'i386' && $arch ne 'riscv64';
 
     undef $timeout, print "warning: disabling timeout with --$debug\n"
       if defined ($timeout) && $debug ne 'none';
@@ -129,6 +136,9 @@ Simulator selection:
   --bochs                  (default) Use Bochs as simulator
   --qemu                   Use QEMU as simulator
   --player                 Use VMware Player as simulator
+Architecture selection:
+  --arch=ARCH              Architecture: i386 (default) or riscv64
+                           Can also be set via ARCH environment variable
 Debugger selection:
   --no-debug               (default) No debugger
   --monitor                Debug with simulator's monitor
@@ -301,6 +311,9 @@ sub find_disks {
     push (@args, @kernel_args);
     push (@args, 'append', $_->[0]) foreach @gets;
 
+    # Save kernel args for RISC-V (passed via -append instead of disk)
+    @kern_args = @args;
+
     # Make disk.
     my (%disk);
     our (@role_order);
@@ -315,7 +328,8 @@ sub find_disks {
     $disk{ALIGN} = $align;
     $disk{GEOMETRY} = %geometry;
     $disk{FORMAT} = 'partitioned';
-    $disk{LOADER} = read_loader ($loader_fn);
+    # RISC-V doesn't use a loader (OpenSBI handles boot)
+    $disk{LOADER} = ($arch eq 'riscv64') ? undef : read_loader ($loader_fn);
     $disk{ARGS} = \@args;
     assemble_disk (%disk);
 
@@ -618,18 +632,59 @@ sub run_qemu {
       if $vga eq 'terminal';
     print "warning: qemu doesn't support jitter\n"
       if defined $jitter;
-    my (@cmd) = ('qemu-system-i386');
-    push (@cmd, '-device', 'isa-debug-exit');
 
-    push (@cmd, '-hda', $disks[0]) if defined $disks[0];
-    push (@cmd, '-hdb', $disks[1]) if defined $disks[1];
-    push (@cmd, '-hdc', $disks[2]) if defined $disks[2];
-    push (@cmd, '-hdd', $disks[3]) if defined $disks[3];
-    push (@cmd, '-m', $mem);
-    push (@cmd, '-netdev', 'user,id=net0');
-    push (@cmd, '-device', 'e1000,netdev=net0');
-    push (@cmd, '-nographic') if $vga eq 'none';
-    push (@cmd, '-serial', 'stdio') if $serial && $vga ne 'none';
+    my (@cmd);
+    if ($arch eq 'riscv64') {
+	# RISC-V QEMU with OpenSBI and VirtIO
+	@cmd = ('qemu-system-riscv64');
+	push (@cmd, '-machine', 'virt');
+	push (@cmd, '-bios', 'default');  # Use QEMU's built-in OpenSBI
+
+	# Find and pass kernel directly (RISC-V doesn't use disk for kernel)
+	my $kernel_bin = find_file('kernel.bin');
+	if (defined $kernel_bin) {
+	    push (@cmd, '-kernel', $kernel_bin);
+	}
+
+	# Pass kernel arguments via -append (instead of embedding in disk)
+	if (@kern_args) {
+	    my $append_str = join(' ', @kern_args);
+	    push (@cmd, '-append', $append_str);
+	}
+
+	# VirtIO block devices for filesystem (skip first disk which is just kernel)
+	my $disk_idx = 0;
+	for my $i (1..7) {  # Skip disk 0 (kernel image), use 1+ for filesys
+	    if (defined $disks[$i]) {
+		push (@cmd, '-drive', "file=$disks[$i],format=raw,if=none,id=hd$disk_idx");
+		push (@cmd, '-device', "virtio-blk-device,drive=hd$disk_idx");
+		$disk_idx++;
+	    }
+	}
+
+	# RISC-V uses more memory by default (64-bit)
+	my $riscv_mem = $mem < 128 ? 128 : $mem;
+	push (@cmd, '-m', "${riscv_mem}M");
+
+	# Always use nographic for RISC-V (serial console)
+	push (@cmd, '-nographic');
+    } else {
+	# x86 QEMU (original behavior)
+	@cmd = ('qemu-system-i386');
+	push (@cmd, '-device', 'isa-debug-exit');
+
+	push (@cmd, '-hda', $disks[0]) if defined $disks[0];
+	push (@cmd, '-hdb', $disks[1]) if defined $disks[1];
+	push (@cmd, '-hdc', $disks[2]) if defined $disks[2];
+	push (@cmd, '-hdd', $disks[3]) if defined $disks[3];
+	push (@cmd, '-m', $mem);
+	push (@cmd, '-netdev', 'user,id=net0');
+	push (@cmd, '-device', 'e1000,netdev=net0');
+	push (@cmd, '-nographic') if $vga eq 'none';
+	push (@cmd, '-serial', 'stdio') if $serial && $vga ne 'none';
+    }
+
+    # Common debug options
     push (@cmd, '-S') if $debug eq 'monitor';
     push (@cmd, '-s', '-S') if $debug eq 'gdb';
     push (@cmd, '-monitor', 'null') if $vga eq 'none' && $debug eq 'none';

@@ -177,14 +177,83 @@ net_SRC += net/transport/udp.c		# UDP protocol (scaffold).
 net_SRC += net/transport/tcp.c		# TCP protocol (scaffold).
 net_SRC += net/socket/socket.c		# Socket API (scaffold).
 net_SRC += net/tests/net_tests.c	# Network stack tests.
-else
-# RISC-V: empty for now, will be populated in later phases
-userprog_SRC =
-vm_SRC =
-filesys_SRC =
+else ifeq ($(ARCH),riscv64)
+# =============================================================================
+# RISC-V Subsystems (Phase 7+)
+# =============================================================================
+# Note: arch-specific code is in arch/riscv64/, shared code uses same sources
+
+# Block device abstraction (needed for VirtIO)
+devices_SRC += devices/block.c		# Block device abstraction layer.
+devices_SRC += devices/partition.c	# Partition block device.
+
+# User process code (shared with i386, arch-specific in arch/riscv64/)
+userprog_SRC  = userprog/process.c	# Process loading.
+userprog_SRC += userprog/exception.c	# User exception handler.
+userprog_SRC += userprog/syscall.c	# System call handler.
+userprog_SRC += userprog/filedesc.c	# Global open file description table.
+# Note: gdt.c and tss.c are x86-only, not needed for RISC-V
+
+# Virtual memory code (portable)
+vm_SRC  = vm/vm.c			# VM initialization.
+vm_SRC += vm/page.c			# Supplemental page table.
+vm_SRC += vm/frame.c			# Frame table.
+vm_SRC += vm/swap.c			# Swap space.
+vm_SRC += vm/mmap.c			# Memory-mapped files.
+
+# Filesystem code (portable)
+filesys_SRC  = filesys/filesys.c	# Filesystem core.
+filesys_SRC += filesys/cache.c		# Buffer cache.
+filesys_SRC += filesys/cache_prefetch.c	# Prefetch subsystem.
+filesys_SRC += filesys/wal.c		# Write-Ahead Logging.
+filesys_SRC += filesys/free-map.c	# Free sector bitmap.
+filesys_SRC += filesys/file.c		# Files.
+filesys_SRC += filesys/directory.c	# Directories.
+filesys_SRC += filesys/inode.c		# File headers.
+filesys_SRC += filesys/fsutil.c		# Utilities.
+
+# Library additions for testing
+lib_SRC += lib/ustar.c			# Unix standard tar format utilities.
+lib/kernel_SRC += lib/kernel/test-lib.c	# Testing functions.
+
+# Thread tests (all test source files)
+tests/threads_SRC  = tests/threads/tests.c
+tests/threads_SRC += tests/threads/alarm-wait.c
+tests/threads_SRC += tests/threads/alarm-simultaneous.c
+tests/threads_SRC += tests/threads/alarm-priority.c
+tests/threads_SRC += tests/threads/alarm-zero.c
+tests/threads_SRC += tests/threads/alarm-negative.c
+tests/threads_SRC += tests/threads/priority-change.c
+tests/threads_SRC += tests/threads/priority-donate-one.c
+tests/threads_SRC += tests/threads/priority-donate-multiple.c
+tests/threads_SRC += tests/threads/priority-donate-multiple2.c
+tests/threads_SRC += tests/threads/priority-donate-nest.c
+tests/threads_SRC += tests/threads/priority-donate-sema.c
+tests/threads_SRC += tests/threads/priority-donate-lower.c
+tests/threads_SRC += tests/threads/priority-donate-chain.c
+tests/threads_SRC += tests/threads/priority-fifo.c
+tests/threads_SRC += tests/threads/priority-preempt.c
+tests/threads_SRC += tests/threads/priority-sema.c
+tests/threads_SRC += tests/threads/priority-condvar.c
+tests/threads_SRC += tests/threads/priority-sema-effective.c
+tests/threads_SRC += tests/threads/priority-starve.c
+tests/threads_SRC += tests/threads/priority-starve-sema.c
+tests/threads_SRC += tests/threads/mt-matmul.c
+tests/threads_SRC += tests/threads/mlfqs-load-1.c
+tests/threads_SRC += tests/threads/mlfqs-load-60.c
+tests/threads_SRC += tests/threads/mlfqs-load-avg.c
+tests/threads_SRC += tests/threads/mlfqs-recent-1.c
+tests/threads_SRC += tests/threads/mlfqs-fair.c
+tests/threads_SRC += tests/threads/mlfqs-block.c
+tests/threads_SRC += tests/threads/smfs-starve.c
+tests/threads_SRC += tests/threads/smfs-prio-change.c
+tests/threads_SRC += tests/threads/smfs-hierarchy.c
+tests/threads_SRC += tests/threads/fair-vruntime.c
+
+# Network not yet supported on RISC-V
 net_SRC =
-# Also clear test sources that have x86-specific code
-tests/threads_SRC =
+
+# These test sources have x86-specific code, skip for now
 tests/userprog/kernel_SRC =
 tests/filesys/kernel_SRC =
 endif
@@ -193,7 +262,8 @@ endif
 # Source Collection
 # =============================================================================
 # Add arch_SRC to sources for RISC-V builds
-SOURCES = $(arch_SRC) $(foreach dir,$(KERNEL_SUBDIRS),$($(dir)_SRC))
+# Include both KERNEL_SUBDIRS and TEST_SUBDIRS in source collection
+SOURCES = $(arch_SRC) $(foreach dir,$(KERNEL_SUBDIRS) $(TEST_SUBDIRS),$($(dir)_SRC))
 OBJECTS = $(patsubst %.c,%.o,$(patsubst %.S,%.o,$(SOURCES)))
 DEPENDS = $(patsubst %.o,%.d,$(OBJECTS))
 

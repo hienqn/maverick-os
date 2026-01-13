@@ -295,3 +295,6 @@ website/node_modules/
 
 node_modules/
 **/node_modules/
+
+src/riscv/*
+.claude/

@@ -87,54 +87,6 @@ static void detect_memory(void) {
 }
 
 /*
- * test_user_mode_infrastructure - Test Phase 6 user mode components.
- *
- * Tests user page table creation, page mapping, and ELF validation.
- */
-static void test_user_mode_infrastructure(void) {
-  console_puts("  Testing user page table creation...\n");
-
-  /* Create a user page table */
-  struct user_page_table* upt = upt_create();
-  if (!upt) {
-    console_puts("    ERROR: Failed to create user page table\n");
-    return;
-  }
-  console_puts("    User page table created\n");
-
-  /* Test mapping a page at USER_TEXT_START */
-  console_puts("  Testing page mapping...\n");
-  uint64_t test_va = USER_TEXT_START;
-
-  /* We can't easily allocate a page here without palloc, so we'll just
-   * verify the page table structure is working by checking lookup of
-   * unmapped address returns 0 */
-  uint64_t pa = upt_lookup(upt, test_va);
-  if (pa == 0) {
-    console_puts("    Unmapped address correctly returns 0\n");
-  } else {
-    console_puts("    ERROR: Unmapped address returned non-zero\n");
-  }
-
-  /* Test ELF validation with invalid header */
-  console_puts("  Testing ELF validation...\n");
-  struct elf64_ehdr bad_ehdr;
-  memset(&bad_ehdr, 0, sizeof(bad_ehdr));
-
-  if (!elf64_validate(&bad_ehdr)) {
-    console_puts("    Invalid ELF correctly rejected\n");
-  } else {
-    console_puts("    ERROR: Invalid ELF was accepted\n");
-  }
-
-  /* Clean up */
-  upt_destroy(upt);
-  console_puts("  User page table destroyed\n");
-
-  console_puts("  Phase 6 tests passed!\n");
-}
-
-/*
  * riscv_init - Main RISC-V initialization entry point.
  *
  * Called from start.S with:

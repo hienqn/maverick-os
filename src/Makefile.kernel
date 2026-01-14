@@ -1,20 +1,45 @@
 # -*- makefile -*-
+# Top-level kernel Makefile - orchestrates out-of-tree builds
+# This file delegates actual compilation to build/Makefile
 
+# Declare 'all' as default target (recipe defined below with other targets)
 all:
 
+# Import configuration variables:
+#   KERNEL_SUBDIRS - kernel source directories (threads, userprog, vm, etc.)
+#   TEST_SUBDIRS   - test source directories
 include Make.vars
 
+# Build list of output directories under build/
+# $(addprefix build/,...) - prepends "build/" to each subdirectory
+# $(sort ...)             - removes duplicates and sorts alphabetically
 DIRS = $(sort $(addprefix build/,$(KERNEL_SUBDIRS) $(TEST_SUBDIRS) lib/user))
 
+# Main targets: all (build kernel), grade (run grader), check (run tests)
+# Dependencies: create directories and copy Makefile first
+# Recipe: delegate to build/Makefile using recursive make
+# $@ = current target name (all, grade, or check)
 all grade check: $(DIRS) build/Makefile
 	cd build && $(MAKE) $@
+
+# Rule to create each directory in $(DIRS)
+# + prefix: run even during dry-run (make -n)
+# $@ = target directory being created
 $(DIRS):
 	+mkdir -p $@
+
+# Copy the build system's Makefile into the build directory
+# $< = first prerequisite (../Makefile.build)
+# $@ = target (build/Makefile)
 build/Makefile: ../Makefile.build
 	+cp $< $@
 
+# Pattern rule: handle any target like "build/kernel.o" or "build/tests"
+# % matches any string; $* expands to that matched string
+# Delegates to build/Makefile to do the actual work
 build/%: $(DIRS) build/Makefile
 	cd build && $(MAKE) $*
 
+# Clean target: remove entire build directory
 clean:
 	rm -rf build

@@ -1,33 +1,56 @@
+# -*- makefile -*-
+# =============================================================================
+# PintOS Example Programs Makefile
+# =============================================================================
+# Builds sample user programs that demonstrate PintOS functionality.
+# These are useful for testing and as templates for new programs.
+# =============================================================================
+
 SRCDIR = ..
 
-# Test programs to compile, and a list of sources for each.
-# To add a new test, put its name on the PROGS list
-# and then add a name_SRC line that lists its source files.
+# =============================================================================
+# Program Definitions
+# =============================================================================
+# To add a new program:
+#   1. Add program name to PROGS list
+#   2. Add programname_SRC = programname.c line
+
 PROGS = cat cmp cp echo halt hex-dump ls mcat mcp mkdir pwd rm shell \
 	bubsort lineup matmult recursor
 
-# Should work from project 2 onward.
-cat_SRC = cat.c
-cmp_SRC = cmp.c
-cp_SRC = cp.c
-echo_SRC = echo.c
-halt_SRC = halt.c
-hex-dump_SRC = hex-dump.c
-lineup_SRC = lineup.c
-ls_SRC = ls.c
-recursor_SRC = recursor.c
-rm_SRC = rm.c
+# -----------------------------------------------------------------------------
+# Project 2 (User Programs) - Basic utilities
+# -----------------------------------------------------------------------------
+cat_SRC = cat.c          # Print file contents
+cmp_SRC = cmp.c          # Compare two files
+cp_SRC = cp.c            # Copy file
+echo_SRC = echo.c        # Print arguments
+halt_SRC = halt.c        # Halt the system
+hex-dump_SRC = hex-dump.c # Hex dump of file
+lineup_SRC = lineup.c    # Print numbered lines
+ls_SRC = ls.c            # List directory contents
+recursor_SRC = recursor.c # Recursive process spawning
+rm_SRC = rm.c            # Remove file
 
-# Should work in project 3; also in project 4 if VM is included.
-bubsort_SRC = bubsort.c
-matmult_SRC = matmult.c
-mcat_SRC = mcat.c
-mcp_SRC = mcp.c
+# -----------------------------------------------------------------------------
+# Project 3 (Virtual Memory) - Memory-intensive programs
+# -----------------------------------------------------------------------------
+bubsort_SRC = bubsort.c  # Bubble sort (tests large memory)
+matmult_SRC = matmult.c  # Matrix multiplication (tests memory access)
+mcat_SRC = mcat.c        # Cat using mmap
+mcp_SRC = mcp.c          # Copy using mmap
 
-# Should work in project 4.
-mkdir_SRC = mkdir.c
-pwd_SRC = pwd.c
-shell_SRC = shell.c
+# -----------------------------------------------------------------------------
+# Project 4 (File System) - Directory operations
+# -----------------------------------------------------------------------------
+mkdir_SRC = mkdir.c      # Create directory
+pwd_SRC = pwd.c          # Print working directory
+shell_SRC = shell.c      # Interactive shell
 
+# =============================================================================
+# Build System
+# =============================================================================
+
+# Include shared configuration and user program build rules
 include $(SRCDIR)/Make.config
 include $(SRCDIR)/Makefile.userprog

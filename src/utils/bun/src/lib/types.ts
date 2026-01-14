@@ -2,6 +2,11 @@
  * PintOS utilities - shared type definitions
  */
 
+/**
+ * Target architecture
+ */
+export type Architecture = "i386" | "riscv64";
+
 // Number of bytes available for the loader at the beginning of the MBR.
 // Kernel command-line arguments follow the loader.
 export const LOADER_SIZE = 314;

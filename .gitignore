@@ -298,3 +298,4 @@ node_modules/
 
 # RISC-V build artifacts
 src/riscv/
+.claude/

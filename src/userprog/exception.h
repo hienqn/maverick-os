@@ -91,4 +91,14 @@ void exception_init(void);
 /* Prints exception statistics (number of page faults). */
 void exception_print_stats(void);
 
+#ifdef ARCH_RISCV64
+/* Forward declaration of RISC-V interrupt frame */
+struct intr_frame;
+
+/* RISC-V page fault handler - called from arch/riscv64/intr.c.
+   Handles SCAUSE_LOAD_PAGE_FAULT, SCAUSE_STORE_PAGE_FAULT, and
+   SCAUSE_INST_PAGE_FAULT exceptions. */
+void riscv_page_fault(struct intr_frame* f);
+#endif
+
 #endif /* userprog/exception.h */

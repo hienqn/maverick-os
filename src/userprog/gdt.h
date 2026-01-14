@@ -1,15 +1,23 @@
+/* userprog/gdt.h - Compatibility shim for arch-specific GDT.
+ *
+ * This header exists for backward compatibility.
+ * GDT (Global Descriptor Table) is x86-specific for segmentation.
+ * RISC-V doesn't have segmentation; uses page table U bit instead.
+ */
+
 #ifndef USERPROG_GDT_H
 #define USERPROG_GDT_H
 
-#include "threads/loader.h"
+#ifdef ARCH_I386
+#include "arch/i386/gdt.h"
+#elif defined(ARCH_RISCV64)
+/* RISC-V has no segmentation. Privilege is controlled via PTE.U bit
+   and sstatus.SPP. Provide stub declarations for code that conditionally
+   compiles. */
+static inline void gdt_init(void) { /* No-op on RISC-V */
+}
+#else
+#error "No architecture defined"
+#endif
 
-/* Segment selectors.
-   More selectors are defined by the loader in loader.h. */
-#define SEL_UCSEG 0x1B /* User code selector. */
-#define SEL_UDSEG 0x23 /* User data selector. */
-#define SEL_TSS 0x28   /* Task-state segment. */
-#define SEL_CNT 6      /* Number of segments. */
-
-void gdt_init(void);
-
-#endif /* userprog/gdt.h */
+#endif /* USERPROG_GDT_H */

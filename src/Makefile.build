@@ -8,25 +8,33 @@
 # Build flow: Makefile.kernel -> creates build/ -> copies this file -> runs it
 # =============================================================================
 
-# Path to source directory (two levels up from build/)
-SRCDIR = ../..
-
-# Default target: build both kernel and bootloader binaries
-all: kernel.bin loader.bin
+# Path to source directory (three levels up from build/$(ARCH)/)
+SRCDIR = ../../..
 
 # =============================================================================
 # Configuration Includes
 # =============================================================================
 
 # Make.config: Compiler settings, flags, toolchain detection
-include ../../Make.config
+include $(SRCDIR)/Make.config
 
 # Make.vars: Project-specific settings (KERNEL_SUBDIRS, DEFINES, etc.)
 # This file differs between threads/, userprog/, vm/, filesys/ builds
-include ../Make.vars
+include ../../Make.vars
 
 # Make.tests: Test program definitions and test running infrastructure
-include ../../tests/Make.tests
+include $(SRCDIR)/tests/Make.tests
+
+# =============================================================================
+# Build Targets
+# =============================================================================
+# For i386: build both kernel.bin and loader.bin
+# For riscv64: build only kernel.bin (OpenSBI handles boot)
+ifeq ($(NO_LOADER),1)
+all: kernel.bin
+else
+all: kernel.bin loader.bin
+endif
 
 # Add kernel-specific include path for kernel library headers
 kernel.bin: CPPFLAGS += -I$(SRCDIR)/lib/kernel
@@ -38,8 +46,12 @@ kernel.bin: CPPFLAGS += -I$(SRCDIR)/lib/kernel
 # These are combined based on KERNEL_SUBDIRS from Make.vars.
 # =============================================================================
 
+# =============================================================================
+# Architecture-Specific Sources
+# =============================================================================
+ifeq ($(ARCH),i386)
 # -----------------------------------------------------------------------------
-# Core Kernel (threads/)
+# i386 Core Kernel (threads/)
 # -----------------------------------------------------------------------------
 threads_SRC  = threads/start.S		# Startup code.
 threads_SRC += threads/init.c		# Main program.
@@ -53,9 +65,40 @@ threads_SRC += threads/malloc.c		# Subpage allocator.
 threads_SRC += threads/ioremap.c	# MMIO mapping.
 
 # -----------------------------------------------------------------------------
-# Device Drivers (devices/)
+# i386 Device Drivers (devices/)
 # -----------------------------------------------------------------------------
 devices_SRC  = devices/pit.c		# Programmable interrupt timer chip.
+
+else ifeq ($(ARCH),riscv64)
+# RISC-V core kernel (Phase 5: with VirtIO devices)
+arch_SRC  = arch/riscv64/start.S	# Entry point from OpenSBI.
+arch_SRC += arch/riscv64/init.c		# Early initialization.
+arch_SRC += arch/riscv64/sbi.c		# SBI call wrappers.
+arch_SRC += arch/riscv64/mmu.c		# Sv39 MMU implementation.
+arch_SRC += arch/riscv64/trap.S		# Trap entry/exit assembly.
+arch_SRC += arch/riscv64/intr.c		# Interrupt handling.
+arch_SRC += arch/riscv64/timer.c	# Timer via SBI.
+arch_SRC += arch/riscv64/plic.c		# External interrupt controller.
+arch_SRC += arch/riscv64/switch.S	# Context switching.
+arch_SRC += arch/riscv64/virtio.c	# VirtIO core.
+arch_SRC += arch/riscv64/virtio-blk.c	# VirtIO block device.
+arch_SRC += arch/riscv64/userprog.c	# User program support.
+arch_SRC += arch/riscv64/pagedir.c	# Page directory wrapper for Sv39.
+arch_SRC += arch/riscv64/devices.c	# Device stubs (serial, shutdown).
+
+# RISC-V uses portable threads sources (arch-specific parts in arch_SRC)
+threads_SRC  = threads/thread.c		# Thread management core.
+threads_SRC += threads/synch.c		# Synchronization primitives.
+threads_SRC += threads/palloc.c		# Page allocator.
+threads_SRC += threads/malloc.c		# Subpage allocator.
+
+# RISC-V doesn't use i386-specific device drivers
+devices_SRC =
+
+endif
+
+ifeq ($(ARCH),i386)
+# i386 device drivers (continued)
 devices_SRC += devices/timer.c		# Periodic timer device.
 devices_SRC += devices/kbd.c		# Keyboard device.
 devices_SRC += devices/vga.c		# Video device.
@@ -72,6 +115,13 @@ devices_SRC += devices/pci.c		# PCI configuration space access.
 devices_SRC += devices/e1000.c		# E1000 network device.
 devices_SRC += devices/raid.c		# Software RAID layer.
 
+endif
+
+# =============================================================================
+# Portable Sources (shared between architectures)
+# =============================================================================
+
+ifeq ($(ARCH),i386)
 # -----------------------------------------------------------------------------
 # Shared Library (lib/) - Used by both kernel and user programs
 # -----------------------------------------------------------------------------
@@ -93,7 +143,29 @@ lib/kernel_SRC += lib/kernel/bitmap.c	# Bitmaps.
 lib/kernel_SRC += lib/kernel/hash.c	# Hash tables.
 lib/kernel_SRC += lib/kernel/console.c	# printf(), putchar().
 lib/kernel_SRC += lib/kernel/test-lib.c # Testing functions
+else
+# RISC-V: Full library support (same as i386)
+lib_SRC  = lib/debug.c			# Debug helpers.
+lib_SRC += lib/random.c			# Pseudo-random numbers.
+lib_SRC += lib/stdio.c			# I/O library.
+lib_SRC += lib/stdlib.c			# Utility functions.
+lib_SRC += lib/string.c			# String functions.
 
+# -----------------------------------------------------------------------------
+# Kernel-Only Library (lib/kernel/)
+# -----------------------------------------------------------------------------
+lib/kernel_SRC  = lib/kernel/debug.c	# Debug helpers.
+lib/kernel_SRC += lib/kernel/list.c	# Doubly-linked lists.
+lib/kernel_SRC += lib/kernel/bitmap.c	# Bitmaps.
+lib/kernel_SRC += lib/kernel/hash.c	# Hash tables.
+lib/kernel_SRC += lib/kernel/console.c	# printf(), putchar().
+lib/kernel_SRC += lib/kernel/test-lib.c # Testing functions
+endif
+
+# =============================================================================
+# i386-only subsystems (not yet ported to RISC-V)
+# =============================================================================
+ifeq ($(ARCH),i386)
 # -----------------------------------------------------------------------------
 # User Program Support (userprog/)
 # -----------------------------------------------------------------------------
@@ -150,14 +222,62 @@ net_SRC += net/transport/udp.c		# UDP protocol (scaffold).
 net_SRC += net/transport/tcp.c		# TCP protocol (scaffold).
 net_SRC += net/socket/socket.c		# Socket API (scaffold).
 net_SRC += net/tests/net_tests.c	# Network stack tests.
+else ifeq ($(ARCH),riscv64)
+# =============================================================================
+# RISC-V Subsystems (Phase 7+)
+# =============================================================================
+# Note: arch-specific code is in arch/riscv64/, shared code uses same sources
+
+# Block device abstraction (needed for VirtIO)
+devices_SRC += devices/block.c		# Block device abstraction layer.
+devices_SRC += devices/partition.c	# Partition block device.
+
+# User process code (shared with i386, arch-specific in arch/riscv64/)
+userprog_SRC  = userprog/process.c	# Process loading.
+userprog_SRC += userprog/exception.c	# User exception handler.
+userprog_SRC += userprog/syscall.c	# System call handler.
+userprog_SRC += userprog/filedesc.c	# Global open file description table.
+# Note: gdt.c and tss.c are x86-only, not needed for RISC-V
+
+# Virtual memory code (portable)
+vm_SRC  = vm/vm.c			# VM initialization.
+vm_SRC += vm/page.c			# Supplemental page table.
+vm_SRC += vm/frame.c			# Frame table.
+vm_SRC += vm/swap.c			# Swap space.
+vm_SRC += vm/mmap.c			# Memory-mapped files.
+
+# Filesystem code (portable)
+filesys_SRC  = filesys/filesys.c	# Filesystem core.
+filesys_SRC += filesys/cache.c		# Buffer cache.
+filesys_SRC += filesys/cache_prefetch.c	# Prefetch subsystem.
+filesys_SRC += filesys/wal.c		# Write-Ahead Logging.
+filesys_SRC += filesys/free-map.c	# Free sector bitmap.
+filesys_SRC += filesys/file.c		# Files.
+filesys_SRC += filesys/directory.c	# Directories.
+filesys_SRC += filesys/inode.c		# File headers.
+filesys_SRC += filesys/fsutil.c		# Utilities.
+
+# Library additions for testing
+lib_SRC += lib/ustar.c			# Unix standard tar format utilities.
+# Note: test-lib.c already added above in lib/kernel_SRC
+# Note: tests/threads_SRC is defined in tests/threads/Make.tests (via TEST_SUBDIRS)
+
+# Network not yet supported on RISC-V
+net_SRC =
+
+# These test sources have x86-specific code, skip for now
+tests/userprog/kernel_SRC =
+tests/filesys/kernel_SRC =
+endif
 
 # =============================================================================
 # Build Rules
 # =============================================================================
 
 # Collect all source files from enabled subsystems (defined in Make.vars)
-# $(foreach dir,...) iterates over KERNEL_SUBDIRS and expands $(dir)_SRC
-SOURCES = $(foreach dir,$(KERNEL_SUBDIRS),$($(dir)_SRC))
+# arch_SRC contains architecture-specific sources (empty for i386, set for riscv64)
+# KERNEL_SUBDIRS includes all kernel source directories including tests compiled into kernel
+SOURCES = $(arch_SRC) $(foreach dir,$(KERNEL_SUBDIRS),$($(dir)_SRC))
 
 # Convert source files (.c, .S) to object files (.o)
 OBJECTS = $(patsubst %.c,%.o,$(patsubst %.S,%.o,$(SOURCES)))
@@ -169,14 +289,26 @@ DEPENDS = $(patsubst %.o,%.d,$(OBJECTS))
 # Kernel Linking
 # -----------------------------------------------------------------------------
 
+# =============================================================================
+# Linker Script (Architecture-Specific)
+# =============================================================================
+ifeq ($(ARCH),i386)
+KERNEL_LDS = threads/kernel.lds.s
 # Preprocess linker script (kernel.lds.S -> kernel.lds.s)
 # -P flag suppresses line markers in preprocessor output
-threads/kernel.lds.s: CPPFLAGS += -P
-threads/kernel.lds.s: threads/kernel.lds.S threads/loader.h
+threads/kernel.lds.s: $(SRCDIR)/threads/kernel.lds.S $(SRCDIR)/threads/loader.h
+	@mkdir -p threads
+	$(CC) -E $(CPPFLAGS) $(DEFINES) -P $< -o $@
+else ifeq ($(ARCH),riscv64)
+KERNEL_LDS = arch/riscv64/kernel.lds.s
+arch/riscv64/kernel.lds.s: $(SRCDIR)/arch/riscv64/kernel.lds.S $(SRCDIR)/arch/riscv64/memlayout.h
+	@mkdir -p arch/riscv64
+	$(CC) -E $(CPPFLAGS) $(DEFINES) -P $< -o $@
+endif
 
 # Link all object files into kernel.o using the linker script
 # -T specifies the linker script; $< is the first prerequisite (kernel.lds.s)
-kernel.o: threads/kernel.lds.s $(OBJECTS)
+kernel.o: $(KERNEL_LDS) $(OBJECTS)
 	$(LD) -T $< -o $@ $(OBJECTS)
 
 # Convert ELF to raw binary, stripping debug info
@@ -185,10 +317,10 @@ kernel.bin: kernel.o
 	$(OBJCOPY) -R .note -R .comment -S $< $@
 
 # -----------------------------------------------------------------------------
-# Bootloader
+# Bootloader (i386 only)
 # -----------------------------------------------------------------------------
-
 # Compile bootloader (first-stage loader, runs in real mode)
+ifneq ($(NO_LOADER),1)
 threads/loader.o: threads/loader.S
 	$(CC) -c $< -o $@ $(ASFLAGS) $(CPPFLAGS) $(DEFINES)
 
@@ -197,6 +329,7 @@ threads/loader.o: threads/loader.S
 # --oformat binary: output raw binary (not ELF)
 loader.bin: threads/loader.o
 	$(LD) -N -e 0 -Ttext 0x7c00 --oformat binary -o $@ $<
+endif
 
 # Combine into disk image (simple concatenation)
 os.dsk: kernel.bin
@@ -209,6 +342,7 @@ os.dsk: kernel.bin
 clean::
 	rm -f $(OBJECTS) $(DEPENDS)
 	rm -f threads/loader.o threads/kernel.lds.s threads/loader.d
+	rm -f arch/riscv64/kernel.lds.s
 	rm -f kernel.bin.tmp
 	rm -f kernel.o kernel.lds.s
 	rm -f kernel.bin loader.bin

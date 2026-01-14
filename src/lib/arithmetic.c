@@ -1,3 +1,12 @@
+/*
+ * 64-bit arithmetic support for i386.
+ *
+ * RISC-V 64-bit has native 64-bit division instructions (div/divu/rem/remu),
+ * so this file is only needed for i386.
+ */
+
+#ifdef ARCH_I386
+
 #include <stdint.h>
 
 /* On x86, division of one 64-bit integer by another cannot be
@@ -145,3 +154,5 @@ unsigned long long __udivdi3(unsigned long long n, unsigned long long d) { retur
 
 /* Unsigned 64-bit remainder. */
 unsigned long long __umoddi3(unsigned long long n, unsigned long long d) { return umod64(n, d); }
+
+#endif /* ARCH_I386 */

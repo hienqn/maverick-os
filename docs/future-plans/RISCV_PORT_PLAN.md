@@ -26,6 +26,8 @@ This document evaluates the effort required to port PintOS from the i386 (x86-32
 | `src/threads/switch.S` | 65 | Thread context switch (EBX, ESI, EDI, EBP) | Context switch (s0-s11, ra) |
 | `src/threads/kernel.lds.S` | 33 | ELF32-i386 linker script | ELF64-riscv linker script |
 
+**Note**: The existing `switch.S` saves only 4 callee-saved registers per x86 cdecl ABI. RISC-V requires saving 12 callee-saved registers (s0-s11) plus ra, resulting in a larger switch frame.
+
 ### 1.2 Inline Assembly in C Files
 
 | File | Functions | x86 Instructions | RISC-V Equivalent |
@@ -127,6 +129,51 @@ RISC-V:
     ecall
 ```
 
+### 2.6 Memory Ordering Models
+
+| Aspect | x86 (TSO) | RISC-V (RVWMO) |
+|--------|-----------|----------------|
+| **Model** | Total Store Order | Weak Memory Ordering |
+| **Store-Store** | Ordered | Requires `fence w,w` |
+| **Load-Load** | Ordered | Requires `fence r,r` |
+| **Load-Store** | Ordered | Requires `fence r,w` |
+| **Store-Load** | May reorder | Requires `fence w,r` |
+| **Acquire/Release** | Implicit | Explicit `.aq`/`.rl` suffixes |
+
+**Impact on PintOS**: Code that relies on x86's strong ordering may have subtle bugs on RISC-V. Key areas to audit:
+- Spinlock implementations in `synch.c`
+- Interrupt queue operations in `intq.c`
+- Page table updates in `pagedir.c`
+
+**Mitigation**: Use `fence` instructions in the HAL's `cpu_memory_barrier()` and review all lock-free code paths.
+
+### 2.7 Calling Convention Comparison
+
+| Aspect | x86 (cdecl) | RISC-V (LP64D) |
+|--------|-------------|----------------|
+| **Arguments** | Stack (right-to-left push) | a0-a7, then stack |
+| **Return value** | eax (32-bit) | a0-a1 (128-bit max) |
+| **Callee-saved** | ebx, esi, edi, ebp | s0-s11, ra |
+| **Caller-saved** | eax, ecx, edx | t0-t6, a0-a7 |
+| **Frame pointer** | ebp (optional) | s0/fp (optional) |
+| **Stack alignment** | 4 bytes (16 at call) | 16 bytes always |
+| **Red zone** | None | None (Linux ABI has 128B) |
+
+### 2.8 Floating Point Context
+
+| Aspect | x86 (x87/SSE) | RISC-V (F/D extensions) |
+|--------|---------------|-------------------------|
+| **Registers** | 8 × 80-bit x87 stack + 8 × 128-bit XMM | 32 × 64-bit f0-f31 |
+| **Save size** | 108 bytes (FSAVE) or 512 bytes (FXSAVE) | 256 bytes (f0-f31) + fcsr |
+| **Status** | x87 FPU status word | fcsr (8 bytes) |
+| **Save instruction** | FSAVE/FXSAVE | sd f0-f31 (manual) |
+| **Lazy save** | Via CR0.TS bit | Via sstatus.FS field |
+
+**PintOS FP Strategy**: Currently uses lazy FP context switching via `lib/float.h`. For RISC-V:
+- Check `sstatus.FS` field (0=Off, 1=Initial, 2=Clean, 3=Dirty)
+- Save f0-f31 + fcsr only when FS=Dirty
+- Restore and set FS=Clean on context switch
+
 ---
 
 ## 3. Portable Code (Reusable)
@@ -147,57 +194,94 @@ The following components require minimal or no changes:
 
 ## 4. Proposed Directory Structure
 
+### 4.1 File Relocation Table
+
+The following table shows exact source→destination mappings for existing i386 code:
+
+| Current Location | New Location | Notes |
+|-----------------|--------------|-------|
+| `threads/loader.S` | `arch/i386/loader.S` | x86-only, no RISC-V equivalent |
+| `threads/start.S` | `arch/i386/start.S` | Real→protected mode transition |
+| `threads/switch.S` | `arch/i386/switch.S` | x86 context switch |
+| `threads/intr-stubs.S` | `arch/i386/intr-stubs.S` | 256 IDT stubs |
+| `threads/kernel.lds.S` | `arch/i386/kernel.lds.S` | ELF32-i386 linker script |
+| `threads/interrupt.c` | `arch/i386/intr.c` | PIC/IDT initialization |
+| `threads/pte.h` | `arch/i386/pte.h` | x86 2-level PTE format |
+| `threads/vaddr.h` | Keep + abstract | Add arch-specific PHYS_BASE |
+| `threads/flags.h` | `arch/i386/flags.h` | EFLAGS bits |
+| `threads/io.h` | `arch/i386/io.h` | Port I/O (inb/outb) |
+| `threads/loader.h` | `arch/i386/loader.h` | Boot constants |
+| `threads/switch.h` | `arch/i386/switch.h` | x86 switch frame |
+| `userprog/pagedir.c` | `arch/i386/pagedir.c` | x86 2-level page tables |
+| `userprog/gdt.c` | `arch/i386/gdt.c` | x86 segmentation |
+| `userprog/gdt.h` | `arch/i386/gdt.h` | GDT selectors |
+| `userprog/tss.c` | `arch/i386/tss.c` | Task State Segment |
+| `userprog/tss.h` | `arch/i386/tss.h` | TSS structure |
+| `devices/pit.c` | `arch/i386/pit.c` | 8254 timer (x86-only) |
+| `devices/ide.c` | `arch/i386/ide.c` | ATA via port I/O (x86-only) |
+
+### 4.2 Directory Layout
+
 ```
 src/
 ├── arch/
+│   ├── common/                  # Shared HAL headers
+│   │   ├── cpu.h                # CPU control interface
+│   │   ├── intr.h               # Interrupt interface
+│   │   ├── mmu.h                # MMU interface
+│   │   ├── timer.h              # Timer interface
+│   │   └── io.h                 # I/O interface
+│   │
 │   ├── i386/                    # Existing code relocated
-│   │   ├── boot/
-│   │   │   ├── loader.S
-│   │   │   └── start.S
-│   │   ├── thread/
-│   │   │   ├── switch.S
-│   │   │   ├── intr-stubs.S
-│   │   │   └── interrupt.c
-│   │   ├── mm/
-│   │   │   ├── pte.h
-│   │   │   ├── pagedir.c
-│   │   │   └── vaddr.h
-│   │   ├── userprog/
-│   │   │   ├── gdt.c
-│   │   │   └── tss.c
-│   │   ├── devices/
-│   │   │   ├── pit.c
-│   │   │   ├── ide.c
-│   │   │   └── serial.c
-│   │   └── kernel.lds.S
+│   │   ├── loader.S             # BIOS bootloader
+│   │   ├── start.S              # Real→protected mode
+│   │   ├── switch.S             # Context switch
+│   │   ├── switch.h             # Switch frame structure
+│   │   ├── intr-stubs.S         # 256 IDT stubs
+│   │   ├── intr.c               # PIC/IDT setup
+│   │   ├── intr.h               # x86 intr_frame
+│   │   ├── kernel.lds.S         # ELF32-i386 linker script
+│   │   ├── pte.h                # x86 PTE format (10-10-12)
+│   │   ├── pagedir.c            # 2-level page tables
+│   │   ├── flags.h              # EFLAGS bits
+│   │   ├── io.h                 # Port I/O (inb/outb)
+│   │   ├── loader.h             # Boot constants
+│   │   ├── gdt.c                # GDT setup
+│   │   ├── gdt.h                # Segment selectors
+│   │   ├── tss.c                # TSS management
+│   │   ├── tss.h                # TSS structure
+│   │   ├── pit.c                # 8254 PIT timer
+│   │   └── ide.c                # ATA disk driver
 │   │
 │   └── riscv64/                 # New RISC-V implementation
-│       ├── boot/
-│       │   └── start.S          # OpenSBI entry
-│       ├── thread/
-│       │   ├── switch.S         # Context switch
-│       │   ├── trap.S           # Trap entry/exit
-│       │   └── interrupt.c      # CSR operations
-│       ├── mm/
-│       │   ├── pte.h            # Sv39 format
-│       │   ├── pagedir.c        # SATP management
-│       │   └── vaddr.h          # 64-bit addresses
-│       ├── include/
-│       │   ├── csr.h            # CSR definitions
-│       │   ├── sbi.h            # SBI interface
-│       │   └── interrupt.h      # RISC-V intr_frame
-│       ├── devices/
-│       │   ├── clint.c          # Timer
-│       │   ├── plic.c           # Interrupt controller
-│       │   ├── virtio.c         # VirtIO core
-│       │   ├── virtio_blk.c     # Block device
-│       │   └── ns16550a.c       # UART
-│       └── kernel.lds           # Linker script
+│       ├── start.S              # OpenSBI entry, BSS clear
+│       ├── switch.S             # Context switch (s0-s11, ra)
+│       ├── switch.h             # RISC-V switch frame
+│       ├── trap.S               # Unified trap entry/exit
+│       ├── intr.c               # Trap dispatch, CSR ops
+│       ├── intr.h               # RISC-V intr_frame
+│       ├── kernel.lds.S         # ELF64-riscv linker script
+│       ├── pte.h                # Sv39 PTE format (9-9-9-12)
+│       ├── pagedir.c            # 3-level page tables, SATP
+│       ├── csr.h                # CSR read/write macros
+│       ├── sbi.h                # SBI extension IDs
+│       ├── sbi.c                # SBI ecall wrappers
+│       ├── timer.c              # CLINT timer via SBI
+│       ├── plic.c               # PLIC interrupt controller
+│       ├── virtio.c             # VirtIO core (virtqueue)
+│       ├── virtio.h             # VirtIO structures
+│       └── virtio_blk.c         # VirtIO block device
 │
-├── include/arch/                # Architecture abstraction
-│   ├── arch.h
-│   ├── types.h
-│   └── cpu.h
+├── devices/                     # Platform-agnostic drivers
+│   ├── timer.c                  # Calls arch_timer_*()
+│   ├── serial.c                 # Abstracted (MMIO or port I/O)
+│   ├── block.c                  # Block device abstraction
+│   ├── partition.c              # Partition table parsing
+│   └── ns16550a.c               # UART (RISC-V, MMIO)
+│
+├── threads/
+│   ├── vaddr.h                  # Kept, includes arch PHYS_BASE
+│   └── ...                      # Other portable code
 ```
 
 ---
@@ -664,7 +748,92 @@ static inline void mmu_invalidate_all(void) {
 #endif /* ARCH_RISCV64_MMU_H */
 ```
 
-### 5.5 Using the HAL in Portable Code
+### 5.5 RISC-V Interrupt Frame Structure
+
+The RISC-V `intr_frame` must save all 31 general-purpose registers plus relevant CSRs:
+
+```c
+/* arch/riscv64/intr.h - RISC-V interrupt/trap frame */
+struct intr_frame {
+    /* General purpose registers (31 total, x0 is hardwired to 0) */
+    uint64_t ra;       /* x1:  Return address */
+    uint64_t sp;       /* x2:  Stack pointer (user's, if from U-mode) */
+    uint64_t gp;       /* x3:  Global pointer */
+    uint64_t tp;       /* x4:  Thread pointer */
+    uint64_t t0;       /* x5:  Temporary */
+    uint64_t t1;       /* x6:  Temporary */
+    uint64_t t2;       /* x7:  Temporary */
+    uint64_t s0;       /* x8:  Saved register / frame pointer */
+    uint64_t s1;       /* x9:  Saved register */
+    uint64_t a0;       /* x10: Argument / return value */
+    uint64_t a1;       /* x11: Argument / return value */
+    uint64_t a2;       /* x12: Argument */
+    uint64_t a3;       /* x13: Argument */
+    uint64_t a4;       /* x14: Argument */
+    uint64_t a5;       /* x15: Argument */
+    uint64_t a6;       /* x16: Argument */
+    uint64_t a7;       /* x17: Argument / syscall number */
+    uint64_t s2;       /* x18: Saved register */
+    uint64_t s3;       /* x19: Saved register */
+    uint64_t s4;       /* x20: Saved register */
+    uint64_t s5;       /* x21: Saved register */
+    uint64_t s6;       /* x22: Saved register */
+    uint64_t s7;       /* x23: Saved register */
+    uint64_t s8;       /* x24: Saved register */
+    uint64_t s9;       /* x25: Saved register */
+    uint64_t s10;      /* x26: Saved register */
+    uint64_t s11;      /* x27: Saved register */
+    uint64_t t3;       /* x28: Temporary */
+    uint64_t t4;       /* x29: Temporary */
+    uint64_t t5;       /* x30: Temporary */
+    uint64_t t6;       /* x31: Temporary */
+
+    /* Supervisor CSRs saved on trap */
+    uint64_t sepc;     /* Exception program counter */
+    uint64_t sstatus;  /* Status register */
+    uint64_t scause;   /* Trap cause */
+    uint64_t stval;    /* Trap value (faulting address or instruction) */
+};
+
+/* Size: 35 × 8 = 280 bytes (must be 16-byte aligned) */
+#define INTR_FRAME_SIZE  288  /* Rounded up for alignment */
+
+/* scause values */
+#define CAUSE_MISALIGNED_FETCH      0
+#define CAUSE_FETCH_ACCESS          1
+#define CAUSE_ILLEGAL_INSTRUCTION   2
+#define CAUSE_BREAKPOINT            3
+#define CAUSE_MISALIGNED_LOAD       4
+#define CAUSE_LOAD_ACCESS           5
+#define CAUSE_MISALIGNED_STORE      6
+#define CAUSE_STORE_ACCESS          7
+#define CAUSE_USER_ECALL            8
+#define CAUSE_SUPERVISOR_ECALL      9
+#define CAUSE_INSTRUCTION_PAGE_FAULT 12
+#define CAUSE_LOAD_PAGE_FAULT       13
+#define CAUSE_STORE_PAGE_FAULT      15
+
+/* Interrupt bit (bit 63 of scause) */
+#define CAUSE_INTERRUPT_FLAG        (1UL << 63)
+#define CAUSE_IS_INTERRUPT(c)       ((c) & CAUSE_INTERRUPT_FLAG)
+
+/* Interrupt causes (with bit 63 set) */
+#define CAUSE_SUPERVISOR_SOFTWARE   (CAUSE_INTERRUPT_FLAG | 1)
+#define CAUSE_SUPERVISOR_TIMER      (CAUSE_INTERRUPT_FLAG | 5)
+#define CAUSE_SUPERVISOR_EXTERNAL   (CAUSE_INTERRUPT_FLAG | 9)
+```
+
+**Comparison with x86 intr_frame**:
+
+| Aspect | x86 (PintOS current) | RISC-V |
+|--------|---------------------|--------|
+| Size | 76 bytes | 280 bytes |
+| GP registers saved | 8 (edi, esi, ebp, esp_dummy, ebx, edx, ecx, eax) | 31 (all except x0) |
+| Error code | Hardware-provided for some exceptions | None (use stval) |
+| Return address | cs:eip from stack | sepc CSR |
+| Privilege info | cs selector bits | sstatus.SPP |
+
+### 5.6 Using the HAL in Portable Code
 
 #### Before (x86-specific):
 ```c
@@ -722,6 +891,65 @@ void thread_block(void) {
 - RISC-V toolchain detection (`riscv64-unknown-elf-gcc`)
 - Conditional source file inclusion
 - QEMU launch script for RISC-V
+
+**Key Make.config Changes**:
+```makefile
+# Architecture selection (default to i386 for backward compatibility)
+ARCH ?= i386
+
+ifeq ($(ARCH),i386)
+    # Existing i386 configuration
+    CC = gcc -m32
+    LD = ld -melf_i386
+    OBJCOPY = objcopy
+    ARCH_CFLAGS = -march=i686 -m32
+    ARCH_LDFLAGS = -melf_i386
+    KERNEL_FORMAT = elf32-i386
+
+else ifeq ($(ARCH),riscv64)
+    # RISC-V 64-bit configuration
+    CROSS_COMPILE ?= riscv64-unknown-elf-
+    CC = $(CROSS_COMPILE)gcc
+    LD = $(CROSS_COMPILE)ld
+    OBJCOPY = $(CROSS_COMPILE)objcopy
+
+    # RV64GC: General + Compressed + FP
+    ARCH_CFLAGS = -march=rv64gc -mabi=lp64d -mcmodel=medany
+    ARCH_ASFLAGS = -march=rv64gc -mabi=lp64d
+    ARCH_LDFLAGS = -melf64lriscv
+    KERNEL_FORMAT = elf64-littleriscv
+
+    # No loader.bin for RISC-V (OpenSBI handles boot)
+    NO_LOADER = 1
+
+else
+    $(error Unknown ARCH=$(ARCH). Use i386 or riscv64)
+endif
+
+# Architecture define for conditional compilation
+DEFINES += -DARCH_$(shell echo $(ARCH) | tr a-z A-Z)
+```
+
+**Makefile.build Conditional Sources**:
+```makefile
+# Architecture-specific sources
+ARCH_DIR = arch/$(ARCH)
+
+ifeq ($(ARCH),i386)
+    arch_SRC = $(ARCH_DIR)/loader.S $(ARCH_DIR)/start.S
+    arch_SRC += $(ARCH_DIR)/switch.S $(ARCH_DIR)/intr-stubs.S
+    arch_SRC += $(ARCH_DIR)/intr.c $(ARCH_DIR)/pagedir.c
+    arch_SRC += $(ARCH_DIR)/gdt.c $(ARCH_DIR)/tss.c
+    devices_ARCH_SRC = $(ARCH_DIR)/pit.c $(ARCH_DIR)/ide.c
+else ifeq ($(ARCH),riscv64)
+    arch_SRC = $(ARCH_DIR)/start.S $(ARCH_DIR)/switch.S
+    arch_SRC += $(ARCH_DIR)/trap.S $(ARCH_DIR)/intr.c
+    arch_SRC += $(ARCH_DIR)/pagedir.c $(ARCH_DIR)/sbi.c
+    arch_SRC += $(ARCH_DIR)/timer.c $(ARCH_DIR)/plic.c
+    devices_ARCH_SRC = $(ARCH_DIR)/virtio.c $(ARCH_DIR)/virtio_blk.c
+    devices_ARCH_SRC += devices/ns16550a.c
+endif
+```
 
 ### Phase 0.5: HAL Infrastructure
 **Duration**: 1 week | **LOC**: ~1,010
@@ -876,11 +1104,45 @@ Start with hardcoded QEMU virt addresses:
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|------------|--------|------------|
-| Sv39 3-level paging bugs | High | High | Extensive printf debugging in page table setup |
-| VirtIO driver complexity | Medium | High | Start with polling, add interrupts later |
-| 64-bit pointer issues | Medium | Medium | Use uintptr_t consistently |
-| RISC-V toolchain issues | Low | High | Use standard riscv-gnu-toolchain |
-| SBI compatibility | Low | Medium | Target OpenSBI 1.0+ |
+| Sv39 3-level paging bugs | High | High | Extensive printf debugging in page table setup; verify each level separately |
+| VirtIO driver complexity | Medium | High | Start with polling mode; use ramdisk as fallback; reference Linux driver |
+| 64-bit pointer issues | Medium | Medium | Use `uintptr_t` consistently; audit all casts; enable `-Wpointer-arith` |
+| RISC-V toolchain issues | Low | High | Use standard riscv-gnu-toolchain; document exact version requirements |
+| SBI compatibility | Low | Medium | Target OpenSBI 1.0+; use only base extension initially |
+| **Memory ordering bugs** | **Medium** | **High** | **Audit spinlocks and intq.c; add fence instructions in HAL barriers** |
+| **FP context not saved** | **Low** | **Medium** | **Start with FP disabled (sstatus.FS=0); add lazy save later** |
+| **sscratch handling errors** | **Medium** | **High** | **Carefully distinguish S-mode re-entry from U-mode entry in trap.S** |
+| **PLIC priority/threshold** | **Low** | **Medium** | **Start with all priorities=1, threshold=0; tune if needed** |
+
+### 9.1 Detailed Risk Mitigations
+
+**Sv39 Paging Debugging Strategy**:
+1. Implement identity mapping first (VA=PA for kernel)
+2. Add extensive `printf` at each page table level creation
+3. Dump full page table hierarchy before enabling SATP
+4. Use QEMU `-d mmu` flag to trace translations
+5. Test with single page mapping before full memory map
+
+**Memory Ordering Audit Checklist**:
+- [ ] `threads/synch.c`: lock_acquire/release need acquire/release semantics
+- [ ] `devices/intq.c`: ring buffer head/tail updates need proper ordering
+- [ ] `userprog/pagedir.c`: PTE writes before SFENCE.VMA
+- [ ] `threads/thread.c`: thread_current() after any stack switch
+
+**sscratch Trap Entry Logic**:
+```asm
+trap_entry:
+    csrrw sp, sscratch, sp    # Swap sp with sscratch
+    beqz sp, trap_from_kernel # If sp==0, was already in S-mode
+    # ... save user context using kernel sp ...
+    j trap_common
+trap_from_kernel:
+    csrrw sp, sscratch, sp    # Restore original sp
+    addi sp, sp, -FRAME_SIZE  # Allocate frame on kernel stack
+    # ... save kernel context ...
+trap_common:
+    # ... call C handler ...
+```
 
 ---
 

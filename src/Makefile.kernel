@@ -1,26 +1,32 @@
 # -*- makefile -*-
 # Top-level kernel Makefile - orchestrates out-of-tree builds
-# This file delegates actual compilation to build/Makefile
+# This file delegates actual compilation to build/$(ARCH)/Makefile
 
 # Declare 'all' as default target (recipe defined below with other targets)
 all:
+
+# Architecture selection (default: i386, override with ARCH=riscv64)
+ARCH ?= i386
+
+# Architecture-specific build directory
+BUILD_DIR = build/$(ARCH)
 
 # Import configuration variables:
 #   KERNEL_SUBDIRS - kernel source directories (threads, userprog, vm, etc.)
 #   TEST_SUBDIRS   - test source directories
 include Make.vars
 
-# Build list of output directories under build/
-# $(addprefix build/,...) - prepends "build/" to each subdirectory
-# $(sort ...)             - removes duplicates and sorts alphabetically
-DIRS = $(sort $(addprefix build/,$(KERNEL_SUBDIRS) $(TEST_SUBDIRS) lib/user))
+# Build list of output directories under $(BUILD_DIR)/
+# $(addprefix $(BUILD_DIR)/,...) - prepends build dir to each subdirectory
+# $(sort ...)                    - removes duplicates and sorts alphabetically
+DIRS = $(sort $(addprefix $(BUILD_DIR)/,$(KERNEL_SUBDIRS) $(TEST_SUBDIRS) lib/user))
 
 # Main targets: all (build kernel), grade (run grader), check (run tests)
 # Dependencies: create directories and copy Makefile first
-# Recipe: delegate to build/Makefile using recursive make
+# Recipe: delegate to $(BUILD_DIR)/Makefile using recursive make
 # $@ = current target name (all, grade, or check)
-all grade check: $(DIRS) build/Makefile
-	cd build && $(MAKE) $@
+all grade check: $(DIRS) $(BUILD_DIR)/Makefile
+	cd $(BUILD_DIR) && $(MAKE) ARCH=$(ARCH) $@
 
 # Rule to create each directory in $(DIRS)
 # + prefix: run even during dry-run (make -n)
@@ -30,16 +36,21 @@ $(DIRS):
 
 # Copy the build system's Makefile into the build directory
 # $< = first prerequisite (../Makefile.build)
-# $@ = target (build/Makefile)
-build/Makefile: ../Makefile.build
+# $@ = target ($(BUILD_DIR)/Makefile)
+$(BUILD_DIR)/Makefile: ../Makefile.build
+	+mkdir -p $(BUILD_DIR)
 	+cp $< $@
 
-# Pattern rule: handle any target like "build/kernel.o" or "build/tests"
+# Pattern rule: handle any target like "build/$(ARCH)/kernel.o"
 # % matches any string; $* expands to that matched string
-# Delegates to build/Makefile to do the actual work
-build/%: $(DIRS) build/Makefile
-	cd build && $(MAKE) $*
+# Delegates to $(BUILD_DIR)/Makefile to do the actual work
+$(BUILD_DIR)/%: $(DIRS) $(BUILD_DIR)/Makefile
+	cd $(BUILD_DIR) && $(MAKE) ARCH=$(ARCH) $*
 
-# Clean target: remove entire build directory
+# Clean target: remove build directory for current architecture
 clean:
+	rm -rf $(BUILD_DIR)
+
+# Clean all architectures
+clean-all:
 	rm -rf build

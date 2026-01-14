@@ -19,7 +19,13 @@ $(PROGS): CPPFLAGS += -I$(SRCDIR)/lib/user -I. $(DEFINES)
 #   -static: Create static executable (no dynamic linking)
 #   -Wl,-T: Pass linker script to ld
 $(PROGS): LDFLAGS += -nostdlib -static -Wl,-T,$(LDSCRIPT)
+
+# Architecture-specific user linker script
+ifeq ($(ARCH),riscv64)
+$(PROGS): LDSCRIPT = $(SRCDIR)/lib/user/user-riscv64.lds
+else
 $(PROGS): LDSCRIPT = $(SRCDIR)/lib/user/user.lds
+endif
 
 # =============================================================================
 # User Library Source Files

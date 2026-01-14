@@ -8,10 +8,21 @@
 #   - Checking output against expected results
 #   - Generating grade reports
 #
+# ARCHITECTURE SUPPORT:
+# --------------------
+# - i386:    Uses QEMU with IDE disks, loader.bin for boot
+# - riscv64: Uses QEMU with OpenSBI firmware, VirtIO devices, no loader needed
+#
 # Usage:
-#   make check  - Run all tests and show pass/fail summary
-#   make grade  - Generate detailed grade report
+#   make check                    # i386 (default)
+#   make check ARCH=riscv64       # RISC-V
+#   make grade                    # Generate detailed grade report
 # =============================================================================
+
+# For RISC-V, skip user programs until user mode is fully ported
+ifeq ($(ARCH),riscv64)
+TEST_SUBDIRS := $(filter-out tests/userprog tests/userprog/kernel tests/userprog/multithreading tests/filesys/base,$(TEST_SUBDIRS))
+endif
 
 # Include test definitions from each test subdirectory
 # Each Make.tests file defines:
@@ -23,19 +34,23 @@ include $(patsubst %,$(SRCDIR)/%/Make.tests,$(TEST_SUBDIRS))
 # Special Compilation Rules
 # =============================================================================
 
-# Stack alignment tests must use clang, not gcc.
+# Stack alignment tests must use clang, not gcc (i386 only).
 # GCC defensively auto-aligns the stack in main(), which would make these
 # tests pass even if the kernel doesn't properly align the stack.
 # See: https://stackoverflow.com/questions/40307193
+ifeq ($(ARCH),i386)
 tests/userprog/stack-align.o: tests/userprog/stack-align.c
-	clang -target i386-pc-linux-elf  -m32 -c $< -o $@ $(CFLAGS) $(CPPFLAGS) -fomit-frame-pointer $(WARNINGS) $(DEFINES) $(DEPS)
+	clang -target i386-pc-linux-elf  -m32 -c $< -o $@ $(CFLAGS) $(CPPFLAGS) -I$(SRCDIR)/lib/user -I. -fomit-frame-pointer $(WARNINGS) $(DEFINES) $(DEPS)
+endif
 
+ifeq ($(ARCH),i386)
 tests/userprog/stack-align-0.o: tests/userprog/stack-align-0.c
-	$(CC) -m32 -c $< -o $@ $(CFLAGS) $(CPPFLAGS) -fomit-frame-pointer $(WARNINGS) $(DEFINES) $(DEPS)
+	$(CC) -m32 -c $< -o $@ $(CFLAGS) $(CPPFLAGS) -I$(SRCDIR)/lib/user -I. -fomit-frame-pointer $(WARNINGS) $(DEFINES) $(DEPS)
 
 # dir-vine needs optimization to avoid stack overflow from deep recursion
 tests/filesys/extended/dir-vine.o: tests/filesys/extended/dir-vine.c
 	$(CC) -m32 -c $< -o $@ $(subst -O0,-O1,$(CFLAGS)) $(CPPFLAGS) $(WARNINGS) $(DEFINES) $(DEPS)
+endif
 
 # =============================================================================
 # Test Collection
@@ -53,7 +68,7 @@ RESULTS = $(addsuffix .result,$(TESTS) $(EXTRA_GRADES))
 
 # Include user program build rules if there are programs to build
 ifdef PROGS
-include ../../Makefile.userprog
+include $(SRCDIR)/Makefile.userprog
 endif
 
 # Default timeout for each test (seconds)
@@ -70,7 +85,7 @@ clean::
 
 # Generate detailed grade report using grading rubric
 grade:: results
-	$(SRCDIR)/tests/make-grade $(SRCDIR) $< $(GRADING_FILE) | tee $@
+	$(MAKE_GRADE) $(SRCDIR) $< $(GRADING_FILE) | tee $@
 
 # Run all tests and show summary
 # Counts passes and failures, exits with error if any tests failed
@@ -132,6 +147,12 @@ RUNCMD = run
 # Note: $(PINTOS) is defined in Make.config (supports USE_BUN=1 toggle)
 TESTCMD = $(PINTOS) -v -k $(if ${PINTOS_DEBUG},--gdb,-T $(TIMEOUT))
 
+# Pass architecture to pintos script (only for non-default architectures)
+# i386 is the default, so we only pass --arch for riscv64
+ifeq ($(ARCH),riscv64)
+TESTCMD += --arch=$(ARCH)
+endif
+
 # Simulator selection (can be overridden with FORCE_SIMULATOR)
 TESTCMD += $(or ${FORCE_SIMULATOR},$(SIMULATOR))
 
@@ -147,9 +168,12 @@ endif
 # If VM is enabled, add swap space (unless test disables it)
 ifeq ($(filter vm, $(KERNEL_SUBDIRS)), vm)
 # Add swap unless the test has _NO_SWAP set (e.g., for multi-oom OOM testing)
+# Skip for RISC-V until disk infrastructure is fully ported
 # Use $(if ...) instead of ifeq because TEST is a target-specific variable
 # that's only available at build time, not parse time
+ifneq ($(ARCH),riscv64)
 TESTCMD += $(if $($(TEST)_NO_SWAP),,--swap-size=4)
+endif
 endif
 
 # Separator between pintos options and kernel arguments
@@ -177,8 +201,14 @@ TESTCMD += $(if ${PINTOS_DEBUG},,2> $(TEST).errors $(if $(VERBOSE),|tee,>) $(TES
 # =============================================================================
 
 # Run a test: requires kernel and loader binaries
+# RISC-V doesn't use loader.bin (OpenSBI handles boot)
+ifeq ($(ARCH),riscv64)
+%.output: kernel.bin
+	$(TESTCMD)
+else
 %.output: kernel.bin loader.bin
 	$(TESTCMD)
+endif
 
 # Check test output against expected results
 # $< = checker script (.ck), $* = test name (stem)

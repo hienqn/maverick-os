@@ -188,8 +188,8 @@ void __vprintf(const char* format, va_list args, void (*output)(char, void*), vo
             break;
           case SIZET:
             value = va_arg(args, size_t);
-            if (value > SIZE_MAX / 2)
-              value = value - SIZE_MAX - 1;
+            if ((uintmax_t)value > SIZE_MAX / 2)
+              value = value - (intmax_t)SIZE_MAX - 1;
             break;
           default:
             NOT_REACHED();
@@ -578,7 +578,7 @@ void hex_dump(uintptr_t ofs, const void* buf_, size_t size, bool ascii) {
     n = end - start;
 
     /* Print line. */
-    printf("%08jx  ", (uintmax_t)ROUND_DOWN(ofs, per_line));
+    printf("%08llx  ", (unsigned long long)ROUND_DOWN(ofs, per_line));
     for (i = 0; i < start; i++)
       printf("   ");
     for (; i < end; i++)

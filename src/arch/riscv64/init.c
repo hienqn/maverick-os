@@ -568,9 +568,12 @@ static char** parse_options(char** argv) {
  *   run PROG           - Run user program PROG
  *   threads-test NAME  - Run threads kernel test NAME
  */
+/* Weak stub for run_threads_test - overridden by tests/threads/tests.c when linked */
+__attribute__((weak)) void run_threads_test(const char* name) {
+  printf("Test '%s' not available (threads tests not linked)\n", name);
+}
+
 static void run_actions(char** argv) {
-  /* External test runner from tests/threads/tests.c */
-  extern void run_threads_test(const char* name);
 
   while (*argv != NULL) {
     const char* action = *argv++;

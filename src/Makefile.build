@@ -259,41 +259,8 @@ filesys_SRC += filesys/fsutil.c		# Utilities.
 
 # Library additions for testing
 lib_SRC += lib/ustar.c			# Unix standard tar format utilities.
-lib/kernel_SRC += lib/kernel/test-lib.c	# Testing functions.
-
-# Thread tests (all test source files)
-tests/threads_SRC  = tests/threads/tests.c
-tests/threads_SRC += tests/threads/alarm-wait.c
-tests/threads_SRC += tests/threads/alarm-simultaneous.c
-tests/threads_SRC += tests/threads/alarm-priority.c
-tests/threads_SRC += tests/threads/alarm-zero.c
-tests/threads_SRC += tests/threads/alarm-negative.c
-tests/threads_SRC += tests/threads/priority-change.c
-tests/threads_SRC += tests/threads/priority-donate-one.c
-tests/threads_SRC += tests/threads/priority-donate-multiple.c
-tests/threads_SRC += tests/threads/priority-donate-multiple2.c
-tests/threads_SRC += tests/threads/priority-donate-nest.c
-tests/threads_SRC += tests/threads/priority-donate-sema.c
-tests/threads_SRC += tests/threads/priority-donate-lower.c
-tests/threads_SRC += tests/threads/priority-donate-chain.c
-tests/threads_SRC += tests/threads/priority-fifo.c
-tests/threads_SRC += tests/threads/priority-preempt.c
-tests/threads_SRC += tests/threads/priority-sema.c
-tests/threads_SRC += tests/threads/priority-condvar.c
-tests/threads_SRC += tests/threads/priority-sema-effective.c
-tests/threads_SRC += tests/threads/priority-starve.c
-tests/threads_SRC += tests/threads/priority-starve-sema.c
-tests/threads_SRC += tests/threads/mt-matmul.c
-tests/threads_SRC += tests/threads/mlfqs-load-1.c
-tests/threads_SRC += tests/threads/mlfqs-load-60.c
-tests/threads_SRC += tests/threads/mlfqs-load-avg.c
-tests/threads_SRC += tests/threads/mlfqs-recent-1.c
-tests/threads_SRC += tests/threads/mlfqs-fair.c
-tests/threads_SRC += tests/threads/mlfqs-block.c
-tests/threads_SRC += tests/threads/smfs-starve.c
-tests/threads_SRC += tests/threads/smfs-prio-change.c
-tests/threads_SRC += tests/threads/smfs-hierarchy.c
-tests/threads_SRC += tests/threads/fair-vruntime.c
+# Note: test-lib.c already added above in lib/kernel_SRC
+# Note: tests/threads_SRC is defined in tests/threads/Make.tests (via TEST_SUBDIRS)
 
 # Network not yet supported on RISC-V
 net_SRC =
@@ -308,12 +275,9 @@ endif
 # =============================================================================
 
 # Collect all source files from enabled subsystems (defined in Make.vars)
-# For RISC-V: also include arch_SRC and TEST_SUBDIRS sources
-ifeq ($(ARCH),riscv64)
-SOURCES = $(arch_SRC) $(foreach dir,$(KERNEL_SUBDIRS) $(TEST_SUBDIRS),$($(dir)_SRC))
-else
+# arch_SRC contains architecture-specific sources (empty for i386, set for riscv64)
+# KERNEL_SUBDIRS includes all kernel source directories including tests compiled into kernel
 SOURCES = $(arch_SRC) $(foreach dir,$(KERNEL_SUBDIRS),$($(dir)_SRC))
-endif
 
 # Convert source files (.c, .S) to object files (.o)
 OBJECTS = $(patsubst %.c,%.o,$(patsubst %.S,%.o,$(SOURCES)))

@@ -295,3 +295,6 @@ website/node_modules/
 
 node_modules/
 **/node_modules/
+
+# RISC-V build artifacts
+src/riscv/

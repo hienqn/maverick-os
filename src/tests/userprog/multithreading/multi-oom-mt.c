@@ -1,4 +1,4 @@
-/* This test is exactly the same as tests/userprog/no-vm/multi-oom.c
+/* This test is exactly the same as tests/userprog/multi-oom.c
    except it also consumes lock & semaphore resources. */
 
 #include <debug.h>

@@ -11,7 +11,8 @@
 # =============================================================================
 
 # Add user library include paths
-$(PROGS): CPPFLAGS += -I$(SRCDIR)/lib/user -I.
+# Also pass kernel DEFINES (e.g., -DVM) so tests can use #ifdef conditionals
+$(PROGS): CPPFLAGS += -I$(SRCDIR)/lib/user -I. $(DEFINES)
 
 # Linker flags for user programs:
 #   -nostdlib: Don't link standard library (we provide our own)

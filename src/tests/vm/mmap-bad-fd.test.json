@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "source": "tests/vm/mmap-bad-fd.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(mmap-bad-fd) begin",
+    "(mmap-bad-fd) try to mmap invalid fd",
+    "(mmap-bad-fd) end",
+    "mmap-bad-fd: exit(0)"
+  ],
+  "expected_variants": [
+    [
+      "(mmap-bad-fd) begin",
+      "(mmap-bad-fd) try to mmap invalid fd",
+      "(mmap-bad-fd) end",
+      "mmap-bad-fd: exit(0)"
+    ],
+    [
+      "(mmap-bad-fd) begin",
+      "(mmap-bad-fd) try to mmap invalid fd",
+      "mmap-bad-fd: exit(-1)"
+    ]
+  ]
+}

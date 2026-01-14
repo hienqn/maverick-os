@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/userprog/multithreading/file-join.ck",
+  "type": "expected",
+  "options": {
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(file-join) begin",
+    "(file-join) Main starting",
+    "(file-join) All threads complete",
+    "file-join: exit(0)"
+  ]
+}

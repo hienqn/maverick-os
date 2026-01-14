@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/vm/mmap-misalign.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(mmap-misalign) begin",
+    "(mmap-misalign) open \"sample.txt\"",
+    "(mmap-misalign) try to mmap at misaligned address",
+    "(mmap-misalign) end"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "source": "tests/userprog/fork-file.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(fork-file) begin",
+    "fork-file: exit(0)",
+    "(fork-file) end",
+    "fork-file: exit(0)"
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "source": "tests/vm/page-linear.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(page-linear) begin",
+    "(page-linear) initialize",
+    "(page-linear) read pass",
+    "(page-linear) read/modify/write pass one",
+    "(page-linear) read/modify/write pass two",
+    "(page-linear) read pass",
+    "(page-linear) end"
+  ]
+}

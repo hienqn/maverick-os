@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "source": "tests/userprog/stdio/stdio-fscanf.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(stdio-fscanf) begin",
+    "(stdio-fscanf) create testfile.txt",
+    "(stdio-fscanf) fopen succeeds",
+    "(stdio-fscanf) fscanf %d returns 1",
+    "(stdio-fscanf) parsed integer is 42",
+    "(stdio-fscanf) fscanf %s returns 1",
+    "(stdio-fscanf) parsed string is 'hello'",
+    "(stdio-fscanf) fscanf %c returns 1",
+    "(stdio-fscanf) parsed char is 'X'",
+    "(stdio-fscanf) fscanf two ints returns 2",
+    "(stdio-fscanf) parsed 100 and 200",
+    "(stdio-fscanf) fscanf at EOF returns EOF",
+    "(stdio-fscanf) fscanf tests passed",
+    "(stdio-fscanf) end",
+    "stdio-fscanf: exit(0)"
+  ]
+}

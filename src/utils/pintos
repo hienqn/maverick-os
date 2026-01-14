@@ -687,6 +687,10 @@ sub run_qemu {
     my (@cmd) = ('qemu-system-i386');
     push (@cmd, '-device', 'isa-debug-exit');
 
+    # Performance optimizations
+    push (@cmd, '-accel', 'tcg,thread=multi');  # Multi-threaded TCG
+    push (@cmd, '-cpu', 'qemu32');              # Simpler CPU = faster emulation
+
     push (@cmd, '-hda', $disks[0]) if defined $disks[0];
     push (@cmd, '-hdb', $disks[1]) if defined $disks[1];
     push (@cmd, '-hdc', $disks[2]) if defined $disks[2];

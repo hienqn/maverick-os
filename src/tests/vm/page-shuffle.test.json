@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "source": "tests/vm/page-shuffle.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(page-shuffle) begin",
+    "(page-shuffle) init: cksum=3115322833",
+    "(page-shuffle) shuffle 0: cksum=1691062564",
+    "(page-shuffle) shuffle 1: cksum=1973575879",
+    "(page-shuffle) shuffle 2: cksum=1647619479",
+    "(page-shuffle) shuffle 3: cksum=96566261",
+    "(page-shuffle) shuffle 4: cksum=3885786467",
+    "(page-shuffle) shuffle 5: cksum=3022003332",
+    "(page-shuffle) shuffle 6: cksum=3614934266",
+    "(page-shuffle) shuffle 7: cksum=2704001777",
+    "(page-shuffle) shuffle 8: cksum=735775156",
+    "(page-shuffle) shuffle 9: cksum=1864109763",
+    "(page-shuffle) end"
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "source": "tests/userprog/read-bad-ptr.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(read-bad-ptr) begin",
+    "(read-bad-ptr) open \"sample.txt\"",
+    "(read-bad-ptr) end",
+    "read-bad-ptr: exit(0)"
+  ],
+  "expected_variants": [
+    [
+      "(read-bad-ptr) begin",
+      "(read-bad-ptr) open \"sample.txt\"",
+      "(read-bad-ptr) end",
+      "read-bad-ptr: exit(0)"
+    ],
+    [
+      "(read-bad-ptr) begin",
+      "(read-bad-ptr) open \"sample.txt\"",
+      "read-bad-ptr: exit(-1)"
+    ]
+  ]
+}

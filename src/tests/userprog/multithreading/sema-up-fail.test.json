@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "source": "tests/userprog/multithreading/sema-up-fail.ck",
+  "type": "expected",
+  "options": {
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(sema-up-fail) begin",
+    "sema-up-fail: exit(1)"
+  ]
+}

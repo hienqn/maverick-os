@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "source": "tests/userprog/close-stdin.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(close-stdin) begin",
+    "(close-stdin) end",
+    "close-stdin: exit(0)"
+  ],
+  "expected_variants": [
+    [
+      "(close-stdin) begin",
+      "(close-stdin) end",
+      "close-stdin: exit(0)"
+    ],
+    [
+      "(close-stdin) begin",
+      "close-stdin: exit(-1)"
+    ]
+  ]
+}

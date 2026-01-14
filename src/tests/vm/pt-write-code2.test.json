@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "source": "tests/vm/pt-write-code2.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(pt-write-code2) begin",
+    "(pt-write-code2) open \"sample.txt\"",
+    "pt-write-code2: exit(-1)"
+  ]
+}

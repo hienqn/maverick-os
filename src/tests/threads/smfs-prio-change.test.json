@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "source": "tests/threads/smfs-prio-change.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(smfs-prio-change) begin",
+    "(smfs-prio-change) Waking up alice.",
+    "(smfs-prio-change) Thread alice woke up.",
+    "(smfs-prio-change) Waking up bob.",
+    "(smfs-prio-change) Thread bob woke up.",
+    "(smfs-prio-change) Thread main exiting.",
+    "(smfs-prio-change) end"
+  ]
+}

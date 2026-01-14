@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/vm/mmap-null.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(mmap-null) begin",
+    "(mmap-null) open \"sample.txt\"",
+    "(mmap-null) try to mmap at address 0",
+    "(mmap-null) end"
+  ]
+}

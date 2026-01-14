@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/userprog/pipe/pipe-fk-mul.ck",
+  "type": "multi_check",
+  "options": {},
+  "checks": [
+    {"type": "regex", "pattern": "\\(pipe-fk-mul\\) begin", "message": "Test did not begin properly"},
+    {"type": "regex", "pattern": "\\(pipe-fk-mul\\) end", "message": "Test did not end properly"},
+    {"type": "regex", "pattern": "\\(pipe-fk-mul\\) all children finished", "message": "Not all children finished"},
+    {"type": "regex", "pattern": "child \\d+ read: A", "message": "Child did not read A"},
+    {"type": "regex", "pattern": "child \\d+ read: B", "message": "Child did not read B"},
+    {"type": "regex", "pattern": "child \\d+ read: C", "message": "Child did not read C"}
+  ]
+}

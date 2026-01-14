@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "source": "tests/userprog/pipe/pipe-eof-pt.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(pipe-eof-pt) begin",
+    "(pipe-eof-pt) pipe()",
+    "(pipe-eof-pt) read 1: 3 bytes",
+    "(pipe-eof-pt) read 2: 3 bytes",
+    "(pipe-eof-pt) read 3: 2 bytes (remaining)",
+    "(pipe-eof-pt) read 4: 0 (EOF)",
+    "(pipe-eof-pt) end",
+    "pipe-eof-pt: exit(0)"
+  ]
+}

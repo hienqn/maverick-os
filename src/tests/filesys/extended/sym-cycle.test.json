@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "source": "tests/filesys/extended/sym-cycle.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(sym-cycle) begin",
+    "(sym-cycle) symlink \"link2\" -> \"link1\"",
+    "(sym-cycle) symlink \"link1\" -> \"link2\"",
+    "(sym-cycle) open \"link1\" (must fail - cycle)",
+    "(sym-cycle) open \"link2\" (must fail - cycle)",
+    "(sym-cycle) symlink \"self\" -> \"self\"",
+    "(sym-cycle) open \"self\" (must fail - self-reference)",
+    "(sym-cycle) readlink \"link1\" length correct",
+    "(sym-cycle) readlink \"link1\" returns \"link2\"",
+    "(sym-cycle) end"
+  ]
+}

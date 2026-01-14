@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "source": "tests/userprog/fork-offset.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(fork-offset) begin",
+    "fork-offset: exit(0)",
+    "(fork-offset) end",
+    "fork-offset: exit(0)"
+  ]
+}

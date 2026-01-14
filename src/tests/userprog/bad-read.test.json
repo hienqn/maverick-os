@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "source": "tests/userprog/bad-read.ck",
+  "type": "expected",
+  "options": {
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(bad-read) begin",
+    "bad-read: exit(-1)"
+  ]
+}

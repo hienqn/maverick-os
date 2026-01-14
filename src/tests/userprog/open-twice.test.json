@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "source": "tests/userprog/open-twice.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(open-twice) begin",
+    "(open-twice) open \"sample.txt\" once",
+    "(open-twice) open \"sample.txt\" again",
+    "(open-twice) end",
+    "open-twice: exit(0)"
+  ]
+}

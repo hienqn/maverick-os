@@ -1,8 +1,23 @@
 # -*- makefile -*-
+# =============================================================================
+# PintOS User Program Build System (Makefile.userprog)
+# =============================================================================
+# Builds user-space programs (test programs, examples, shell, etc.)
+# These programs run in user mode and use system calls to interact with kernel.
+#
+# Key outputs:
+#   - libc.a: Static C library for user programs
+#   - Individual executables defined in $(PROGS)
+# =============================================================================
 
-$(PROGS): CPPFLAGS += -I$(SRCDIR)/lib/user -I.
+# Add user library include paths
+# Also pass kernel DEFINES (e.g., -DVM) so tests can use #ifdef conditionals
+$(PROGS): CPPFLAGS += -I$(SRCDIR)/lib/user -I. $(DEFINES)
 
-# Linker flags.
+# Linker flags for user programs:
+#   -nostdlib: Don't link standard library (we provide our own)
+#   -static: Create static executable (no dynamic linking)
+#   -Wl,-T: Pass linker script to ld
 $(PROGS): LDFLAGS += -nostdlib -static -Wl,-T,$(LDSCRIPT)
 
 # Architecture-specific user linker script
@@ -12,7 +27,13 @@ else
 $(PROGS): LDSCRIPT = $(SRCDIR)/lib/user/user.lds
 endif
 
-# Library code shared between kernel and user programs.
+# =============================================================================
+# User Library Source Files
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Shared Library (lib/) - Same code used by kernel
+# -----------------------------------------------------------------------------
 lib_SRC  = lib/debug.c			# Debug code.
 lib_SRC += lib/random.c			# Pseudo-random numbers.
 lib_SRC += lib/stdio.c			# I/O library.
@@ -22,13 +43,15 @@ lib_SRC += lib/arithmetic.c		# 64-bit arithmetic for GCC.
 lib_SRC += lib/float.c			# Floating point functions
 lib_SRC += lib/ustar.c			# Unix standard tar format utilities.
 
-# User level only library code.
+# -----------------------------------------------------------------------------
+# User-Only Library (lib/user/) - System call wrappers and user utilities
+# -----------------------------------------------------------------------------
 lib/user_SRC  = lib/user/debug.c	# Debug helpers.
 lib/user_SRC += lib/user/syscall.c	# System calls.
 lib/user_SRC += lib/user/pthread.c	# pthread Library
 lib/user_SRC += lib/user/console.c	# Console code.
 
-# stdio library (buffered I/O with FILE streams)
+# stdio library (buffered I/O with FILE streams, like glibc)
 lib/user_SRC += lib/user/stdio_file.c	# fopen, fclose, global streams
 lib/user_SRC += lib/user/stdio_buf.c	# fread, fwrite, fflush, buffer mgmt
 lib/user_SRC += lib/user/stdio_char.c	# fgetc, fputc, ungetc
@@ -41,33 +64,61 @@ lib/user_SRC += lib/user/stdio_err.c	# feof, ferror, clearerr, perror
 # Memory allocation (uses mmap for anonymous memory)
 lib/user_SRC += lib/user/malloc.c	# malloc, free, calloc, realloc
 
+# =============================================================================
+# Build Variables
+# =============================================================================
+
+# Convert library sources to object files
 LIB_OBJ = $(patsubst %.c,%.o,$(patsubst %.S,%.o,$(lib_SRC) $(lib/user_SRC)))
 LIB_DEP = $(patsubst %.o,%.d,$(LIB_OBJ))
+
+# User programs link against entry.o (contains _start) and libc.a
 LIB = lib/user/entry.o libc.a
 
+# Collect all program sources and convert to objects
 PROGS_SRC = $(foreach prog,$(PROGS),$($(prog)_SRC))
 PROGS_OBJ = $(patsubst %.c,%.o,$(patsubst %.S,%.o,$(PROGS_SRC)))
 PROGS_DEP = $(patsubst %.o,%.d,$(PROGS_OBJ))
 
+# =============================================================================
+# Build Rules
+# =============================================================================
+
+# Default: build all user programs
 all: $(PROGS)
 
+# Template macro: generates build rule for each program
+# For each program 'foo', creates:
+#   foo_OBJ = foo.o (object files for this program)
+#   foo: foo_OBJ libc.a user.lds
+#       gcc -nostdlib ... foo.o libc.a -o foo
 define TEMPLATE
 $(1)_OBJ = $(patsubst %.c,%.o,$(patsubst %.S,%.o,$($(1)_SRC)))
 $(1): $$($(1)_OBJ) $$(LIB) $$(LDSCRIPT)
 	$$(CC) $$(LDFLAGS) $$($(1)_OBJ) $$(LIB) -o $$@
 endef
 
+# Expand template for each program (generates rules at parse time)
 $(foreach prog,$(PROGS),$(eval $(call TEMPLATE,$(prog))))
 
+# Build static C library from all library objects
+# ar r: create archive and insert files
+# ranlib: generate index for faster linking
 libc.a: $(LIB_OBJ)
 	rm -f $@
 	ar r $@ $^
 	ranlib $@
 
+# =============================================================================
+# Clean Target
+# =============================================================================
+
 clean::
 	rm -f $(PROGS) $(PROGS_OBJ) $(PROGS_DEP)
 	rm -f $(LIB_DEP) $(LIB_OBJ) lib/user/entry.[do] libc.a
 
+# Declare phony targets (always run, not file-based)
 .PHONY: all clean
 
+# Include auto-generated dependency files
 -include $(LIB_DEP) $(PROGS_DEP)

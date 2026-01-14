@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "source": "tests/filesys/base/lg-full.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(lg-full) begin",
+    "(lg-full) create \"quux\"",
+    "(lg-full) open \"quux\"",
+    "(lg-full) writing \"quux\"",
+    "(lg-full) close \"quux\"",
+    "(lg-full) open \"quux\" for verification",
+    "(lg-full) verified contents of \"quux\"",
+    "(lg-full) close \"quux\"",
+    "(lg-full) end"
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "source": "tests/userprog/halt.ck",
+  "type": "halt",
+  "options": {}
+}

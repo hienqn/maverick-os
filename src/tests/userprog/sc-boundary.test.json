@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "source": "tests/userprog/sc-boundary.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(sc-boundary) begin",
+    "sc-boundary: exit(42)"
+  ]
+}

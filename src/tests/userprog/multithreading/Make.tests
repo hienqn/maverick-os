@@ -36,6 +36,11 @@ tests/userprog/multithreading_TESTS += tests/userprog/multithreading/exit-clean-
 tests/userprog/multithreading_TESTS += tests/userprog/multithreading/multi-oom-mt
 tests/userprog/multithreading_TESTS += tests/userprog/multithreading/pcb-syn
 
+# multi-oom-mt only works without VM (same as multi-oom)
+ifeq ($(filter vm, $(KERNEL_SUBDIRS)), vm)
+tests/userprog/multithreading_TESTS := $(filter-out tests/userprog/multithreading/multi-oom-mt,$(tests/userprog/multithreading_TESTS))
+endif
+
 tests/userprog/multithreading_PROGS = $(tests/userprog/multithreading_TESTS) $(addprefix \
 tests/userprog/multithreading/,child-simple)
 
@@ -87,6 +92,7 @@ tests/userprog/multithreading/pcb-syn_PUTFILES += tests/userprog/sample.txt
 
 # Exceptions
 tests/userprog/multithreading/multi-oom-mt.output: TIMEOUT = 360
+tests/userprog/multithreading/multi-oom-mt_NO_SWAP = 1
 tests/userprog/multithreading/multi-oom-mt_SRC := $(filter-out tests/main.c,$(tests/userprog/multithreading/multi-oom-mt_SRC))
 tests/userprog/multithreading/child-simple_SRC := $(filter-out tests/main.c,$(tests/userprog/multithreading/child-simple_SRC))
 tests/userprog/multithreading/exec-thread-1_SRC := $(filter-out tests/main.c,$(tests/userprog/multithreading/exec-thread-1_SRC))

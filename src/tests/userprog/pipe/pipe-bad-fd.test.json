@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "source": "tests/userprog/pipe/pipe-bad-fd.ck",
+  "type": "multi_check",
+  "options": {},
+  "checks": [
+    {"type": "regex", "pattern": "read on closed fd returned", "message": "read on closed fd not tested"},
+    {"type": "regex", "pattern": "write on closed fd returned", "message": "write on closed fd not tested"}
+  ]
+}

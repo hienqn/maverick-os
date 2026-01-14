@@ -14,6 +14,7 @@
 #include "userprog/process.h"
 #include "vm/frame.h"
 #include "vm/page.h"
+#include "vm/swap.h"
 
 /* ============================================================================
  * HELPER FUNCTIONS
@@ -51,7 +52,6 @@ static uint32_t* get_pagedir(void) {
 /* Forward declarations for static functions. */
 static struct mmap_region* mmap_find_region_locked(void* addr);
 static bool mmap_range_available(void* addr, size_t length);
-static bool mmap_writeback_page(struct mmap_region* region, void* upage);
 static void* find_free_address(size_t length);
 
 /* Base address for mmap allocations when addr hint is NULL.
@@ -59,7 +59,21 @@ static void* find_free_address(size_t length);
 #define MMAP_BASE ((void*)0x40000000)
 
 /* Clean up all pages in a region: writeback dirty pages, free frames, remove SPT entries.
-   Does NOT free the region struct or close the file - caller handles that. */
+   Does NOT free the region struct or close the file - caller handles that.
+
+   SYNCHRONIZATION:
+   ----------------
+   This function must synchronize with frame_evict() to prevent concurrent writeback
+   of the same mmap page, which would corrupt file data.
+
+   Lock ordering constraint: frame_evict() acquires frame_lock then spt_lock.
+   To avoid deadlock, we use a two-phase approach:
+   - Phase 1: Under spt_lock, get kpage snapshot
+   - Phase 2: Without locks, pin the frame (acquires frame_lock)
+   - Phase 3: Under spt_lock, validate and do cleanup with frame pinned
+   - Phase 4: Outside locks, free resources
+
+   If pinning fails (frame was evicted), eviction already handled writeback. */
 static void mmap_cleanup_pages(struct mmap_region* region) {
   struct spt* spt = get_spt();
   uint32_t* pd = get_pagedir();
@@ -67,21 +81,87 @@ static void mmap_cleanup_pages(struct mmap_region* region) {
   for (size_t i = 0; i < region->page_count; i++) {
     void* upage = (uint8_t*)region->start_addr + i * PGSIZE;
 
-    struct spt_entry* entry = spt_find(spt, upage);
-    if (entry == NULL) {
-      continue; /* Defensive check */
-    }
+    bool done = false;
+    while (!done) {
+      void* kpage_snapshot = NULL;
+      bool frame_pinned = false;
 
-    if (entry->status == PAGE_FRAME) {
-      /* Only writeback file-backed pages, not anonymous */
-      if (!region->is_anonymous && pagedir_is_dirty(pd, upage)) {
-        mmap_writeback_page(region, upage);
+      /* Phase 1: Get kpage snapshot under spt_lock. */
+      lock_acquire(&spt->spt_lock);
+      struct spt_entry* entry = spt_find(spt, upage);
+      if (entry == NULL) {
+        lock_release(&spt->spt_lock);
+        done = true;
+        continue;
       }
-      frame_free(entry->kpage);
-      pagedir_clear_page(pd, upage);
-    }
+      if (entry->status == PAGE_FRAME && entry->kpage != NULL) {
+        kpage_snapshot = entry->kpage;
+      }
+      lock_release(&spt->spt_lock);
 
-    spt_remove(spt, upage);
+      /* Phase 2: Pin the frame without holding spt_lock (avoids deadlock). */
+      if (kpage_snapshot != NULL) {
+        frame_pinned = frame_pin_if_present(kpage_snapshot);
+      }
+
+      /* Phase 3: Validate and do cleanup under spt_lock. */
+      lock_acquire(&spt->spt_lock);
+      entry = spt_find(spt, upage);
+      if (entry == NULL) {
+        /* Entry removed (shouldn't happen, but defensive). */
+        lock_release(&spt->spt_lock);
+        if (frame_pinned)
+          frame_unpin(kpage_snapshot);
+        done = true;
+        continue;
+      }
+
+      void* kpage_to_free = NULL;
+      bool do_writeback = false;
+      size_t read_bytes = entry->read_bytes;
+      size_t swap_slot = entry->swap_slot;
+      enum page_status status = entry->status;
+
+      if (status == PAGE_FRAME && entry->kpage != NULL) {
+        if (frame_pinned && entry->kpage == kpage_snapshot) {
+          /* Successfully pinned the correct frame. Eviction cannot touch it now. */
+          kpage_to_free = entry->kpage;
+          do_writeback = !region->is_anonymous && pagedir_is_dirty(pd, upage);
+          pagedir_clear_page(pd, upage);
+          done = true;
+        } else {
+          /* Either didn't pin (frame evicted) or pinned wrong frame (evicted & reused).
+             In the first case, eviction handled writeback. In the second case, the page
+             was faulted back in with a new kpage. Retry to handle the new frame. */
+          lock_release(&spt->spt_lock);
+          if (frame_pinned)
+            frame_unpin(kpage_snapshot);
+          continue; /* Retry */
+        }
+      } else {
+        /* Page not in frame (PAGE_FILE, PAGE_SWAP, PAGE_ZERO, PAGE_COW). */
+        done = true;
+      }
+
+      /* Remove entry from SPT. */
+      hash_delete(&spt->pages, &entry->hash_elem);
+      lock_release(&spt->spt_lock);
+
+      /* Phase 4: Perform I/O and free resources outside of locks. */
+      if (do_writeback && kpage_to_free != NULL) {
+        off_t page_offset = region->offset + ((uintptr_t)upage - (uintptr_t)region->start_addr);
+        file_write_at(region->file, kpage_to_free, read_bytes, page_offset);
+      }
+
+      if (frame_pinned)
+        frame_unpin(kpage_snapshot);
+      if (kpage_to_free != NULL)
+        frame_free(kpage_to_free);
+      if (status == PAGE_SWAP)
+        swap_free(swap_slot);
+
+      free(entry);
+    }
   }
 }
 
@@ -185,10 +265,15 @@ void* mmap_create(void* addr, size_t length, int fd, off_t offset) {
   region->inode_sector = inode_get_inumber(file_get_inode(map_file));
   region->writable = true;
 
-  /* Create SPT entries for each page */
+  /* Create SPT entries for each page.
+     IMPORTANT: Hold spt_lock during all SPT operations to prevent race
+     condition with frame_evict() which does spt_find() under spt_lock.
+     Without this lock, hash_insert and hash_find could run concurrently,
+     corrupting the hash table. */
   struct spt* spt = get_spt();
   size_t remaining = length;
 
+  lock_acquire(&spt->spt_lock);
   for (size_t i = 0; i < page_count; i++) {
     void* upage = (uint8_t*)addr + i * PGSIZE;
     off_t file_ofs = offset + i * PGSIZE;
@@ -201,6 +286,7 @@ void* mmap_create(void* addr, size_t length, int fd, off_t offset) {
         void* cleanup_page = (uint8_t*)addr + j * PGSIZE;
         spt_remove(spt, cleanup_page);
       }
+      lock_release(&spt->spt_lock);
       file_close(map_file);
       free(region);
       lock_release(mmap_lock);
@@ -213,6 +299,7 @@ void* mmap_create(void* addr, size_t length, int fd, off_t offset) {
     }
     remaining -= read_bytes;
   }
+  lock_release(&spt->spt_lock);
 
   /* Add region to mmap_list (while holding lock) */
   list_push_back(get_mmap_list(), &region->elem);
@@ -297,9 +384,12 @@ void* mmap_create_anon(void* addr, size_t length, int flags) {
   region->inode_sector = 0;
   region->writable = true;
 
-  /* Create SPT entries for each page (zero-filled on demand) */
+  /* Create SPT entries for each page (zero-filled on demand).
+     IMPORTANT: Hold spt_lock during all SPT operations to prevent race
+     condition with frame_evict() which does spt_find() under spt_lock. */
   struct spt* spt = get_spt();
 
+  lock_acquire(&spt->spt_lock);
   for (size_t i = 0; i < page_count; i++) {
     void* upage = (uint8_t*)addr + i * PGSIZE;
 
@@ -309,6 +399,7 @@ void* mmap_create_anon(void* addr, size_t length, int flags) {
         void* cleanup_page = (uint8_t*)addr + j * PGSIZE;
         spt_remove(spt, cleanup_page);
       }
+      lock_release(&spt->spt_lock);
       free(region);
       lock_release(mmap_lock);
       return MAP_FAILED;
@@ -319,6 +410,7 @@ void* mmap_create_anon(void* addr, size_t length, int flags) {
       entry->is_mmap = true;
     }
   }
+  lock_release(&spt->spt_lock);
 
   /* Add region to mmap_list */
   list_push_back(get_mmap_list(), &region->elem);
@@ -475,7 +567,11 @@ static bool mmap_range_available(void* addr, size_t length) {
     return false;
   }
 
-  /* Check for SPT conflicts */
+  /* Check for SPT conflicts.
+     NOTE: We don't hold spt_lock here because:
+     1. mmap_lock prevents concurrent mmaps to the same address range
+     2. Stack growth only happens for the current thread
+     3. The subsequent page creation loop holds spt_lock for the insert */
   struct spt* spt = get_spt();
   size_t page_count = DIV_ROUND_UP(length, PGSIZE);
 
@@ -499,43 +595,5 @@ static bool mmap_range_available(void* addr, size_t length) {
   }
 
   /* All checks passed */
-  return true;
-}
-
-/* Write back a single mmap page to file if dirty. */
-static bool mmap_writeback_page(struct mmap_region* region, void* upage) {
-  /* Get page directory and SPT */
-  uint32_t* pd = get_pagedir();
-  struct spt* spt = get_spt();
-
-  /* Look up the SPT entry */
-  struct spt_entry* entry = spt_find(spt, upage);
-  if (entry == NULL || entry->status != PAGE_FRAME) {
-    return true; /* Nothing to write back */
-  }
-
-  /* Kernel page must be valid for a loaded frame */
-  ASSERT(entry->kpage != NULL);
-
-  /* Check if page is dirty */
-  if (!pagedir_is_dirty(pd, upage)) {
-    return true; /* Not modified, nothing to do */
-  }
-
-  /* Calculate file offset for this page */
-  off_t page_offset = region->offset + ((uintptr_t)upage - (uintptr_t)region->start_addr);
-
-  /* Calculate bytes to write: use read_bytes from SPT entry (original file data portion) */
-  size_t write_bytes = entry->read_bytes;
-
-  /* Write to file */
-  off_t bytes_written = file_write_at(region->file, entry->kpage, write_bytes, page_offset);
-  if (bytes_written != (off_t)write_bytes) {
-    return false; /* Write failed */
-  }
-
-  /* Clear dirty bit */
-  pagedir_set_dirty(pd, upage, false);
-
   return true;
 }

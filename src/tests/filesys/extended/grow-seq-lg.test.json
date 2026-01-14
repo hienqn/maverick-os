@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "source": "tests/filesys/extended/grow-seq-lg.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(grow-seq-lg) begin",
+    "(grow-seq-lg) create \"testme\"",
+    "(grow-seq-lg) open \"testme\"",
+    "(grow-seq-lg) writing \"testme\"",
+    "(grow-seq-lg) close \"testme\"",
+    "(grow-seq-lg) open \"testme\" for verification",
+    "(grow-seq-lg) verified contents of \"testme\"",
+    "(grow-seq-lg) close \"testme\"",
+    "(grow-seq-lg) end"
+  ]
+}

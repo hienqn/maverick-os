@@ -1,0 +1,85 @@
+name: PintOS CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - '.github/workflows/ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [threads, userprog, vm, filesys]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-multilib \
+            g++-multilib \
+            qemu-system-x86 \
+            perl
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install Bun dependencies
+        run: bun install --frozen-lockfile
+        working-directory: src/utils/bun
+
+      - name: Build ${{ matrix.component }}
+        run: make
+        working-directory: src/${{ matrix.component }}
+
+      - name: Run ${{ matrix.component }} tests
+        run: make check
+        working-directory: src/${{ matrix.component }}
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.component }}
+          path: |
+            src/${{ matrix.component }}/build/tests/**/*.output
+            src/${{ matrix.component }}/build/tests/**/*.result
+          retention-days: 7
+
+  # Summary job that depends on all test jobs
+  test-summary:
+    needs: build-and-test
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check test results
+        run: |
+          if [ "${{ needs.build-and-test.result }}" == "success" ]; then
+            echo "✅ All PintOS tests passed!"
+            exit 0
+          else
+            echo "❌ Some tests failed"
+            exit 1
+          fi

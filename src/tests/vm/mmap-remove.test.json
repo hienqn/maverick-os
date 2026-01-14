@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "source": "tests/vm/mmap-remove.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(mmap-remove) begin",
+    "(mmap-remove) open \"sample.txt\"",
+    "(mmap-remove) mmap \"sample.txt\"",
+    "(mmap-remove) remove \"sample.txt\"",
+    "(mmap-remove) try to open \"sample.txt\"",
+    "(mmap-remove) create \"another\"",
+    "(mmap-remove) end"
+  ]
+}

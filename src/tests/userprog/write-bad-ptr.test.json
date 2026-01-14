@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "source": "tests/userprog/write-bad-ptr.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(write-bad-ptr) begin",
+    "(write-bad-ptr) open \"sample.txt\"",
+    "(write-bad-ptr) end",
+    "write-bad-ptr: exit(0)"
+  ],
+  "expected_variants": [
+    [
+      "(write-bad-ptr) begin",
+      "(write-bad-ptr) open \"sample.txt\"",
+      "(write-bad-ptr) end",
+      "write-bad-ptr: exit(0)"
+    ],
+    [
+      "(write-bad-ptr) begin",
+      "(write-bad-ptr) open \"sample.txt\"",
+      "write-bad-ptr: exit(-1)"
+    ]
+  ]
+}

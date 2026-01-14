@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "source": "tests/userprog/create-bound.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(create-bound) begin",
+    "(create-bound) create(\"quux.dat\"): 1",
+    "(create-bound) end",
+    "create-bound: exit(0)"
+  ]
+}

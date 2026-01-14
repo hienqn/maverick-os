@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/filesys/extended/dir-rm-root.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(dir-rm-root) begin",
+    "(dir-rm-root) remove \"/\" (must fail)",
+    "(dir-rm-root) create \"/a\"",
+    "(dir-rm-root) end"
+  ]
+}

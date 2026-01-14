@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "source": "tests/userprog/bad-jump.ck",
+  "type": "expected",
+  "options": {
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(bad-jump) begin",
+    "bad-jump: exit(-1)"
+  ]
+}

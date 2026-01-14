@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "source": "tests/userprog/pipe/pipe-bad-ptr.ck",
+  "type": "multi_check",
+  "options": {},
+  "checks": [
+    {
+      "type": "regex",
+      "pattern": "exit\\(-1\\)|pipe with bad pointer returned",
+      "message": "pipe with bad pointer should have failed or killed process"
+    }
+  ]
+}

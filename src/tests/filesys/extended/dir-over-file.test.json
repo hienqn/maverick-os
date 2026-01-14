@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/filesys/extended/dir-over-file.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(dir-over-file) begin",
+    "(dir-over-file) mkdir \"abc\"",
+    "(dir-over-file) create \"abc\" (must return false)",
+    "(dir-over-file) end"
+  ]
+}

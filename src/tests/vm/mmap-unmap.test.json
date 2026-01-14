@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "source": "tests/vm/mmap-unmap.ck",
+  "type": "process_death",
+  "options": {},
+  "process_name": "mmap-unmap"
+}

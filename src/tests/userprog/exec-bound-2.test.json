@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "source": "tests/userprog/exec-bound-2.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(exec-bound-2) begin",
+    "exec-bound-2: exit(-1)"
+  ]
+}

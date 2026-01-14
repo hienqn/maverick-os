@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "source": "tests/userprog/open-null.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(open-null) begin",
+    "(open-null) end",
+    "open-null: exit(0)"
+  ],
+  "expected_variants": [
+    [
+      "(open-null) begin",
+      "(open-null) end",
+      "open-null: exit(0)"
+    ],
+    [
+      "(open-null) begin",
+      "open-null: exit(-1)"
+    ]
+  ]
+}

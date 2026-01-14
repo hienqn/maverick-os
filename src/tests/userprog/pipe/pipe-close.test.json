@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/userprog/pipe/pipe-close.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(pipe-close) begin",
+    "(pipe-close) pipe()",
+    "(pipe-close) closed read end",
+    "(pipe-close) closed write end",
+    "(pipe-close) end",
+    "pipe-close: exit(0)"
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "source": "tests/userprog/multithreading/exit-simple.ck",
+  "type": "expected",
+  "options": {
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(exit-simple) begin",
+    "(exit-simple) Main started.",
+    "(exit-simple) Thread ran.",
+    "(exit-simple) Main finished.",
+    "(exit-simple) end",
+    "exit-simple: exit(0)"
+  ]
+}

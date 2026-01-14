@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/userprog/multithreading/lock-simple.ck",
+  "type": "expected",
+  "options": {
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(lock-simple) begin",
+    "(lock-simple) PASS",
+    "(lock-simple) end",
+    "lock-simple: exit(0)"
+  ]
+}

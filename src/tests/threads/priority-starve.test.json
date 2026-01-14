@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "source": "tests/threads/priority-starve.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(priority-starve) begin",
+    "(priority-starve) The medium-priority thread has been given a chance to run!",
+    "(priority-starve) The medium-priority thread has been preempted.",
+    "(priority-starve) Thread main done!",
+    "(priority-starve) end"
+  ]
+}

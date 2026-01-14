@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "source": "tests/userprog/fp-asm.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(fp-asm) begin",
+    "(fp-asm) Starting...",
+    "fp-asm-helper: exit(0)",
+    "fp-asm: exit(162)"
+  ]
+}

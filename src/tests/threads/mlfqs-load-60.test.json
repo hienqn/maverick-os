@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "source": "tests/threads/mlfqs-load-60.ck",
+  "type": "mlfqs_load_avg",
+  "options": {}
+}

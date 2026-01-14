@@ -1,0 +1,6 @@
+#!/bin/bash
+# PintOS test checker - Bun/TypeScript version
+# Drop-in replacement for: perl -I$(SRCDIR) $< $* $@
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec bun run "$SCRIPT_DIR/../src/check-test.ts" "$@"

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "source": "tests/filesys/extended/dir-empty-name.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(dir-empty-name) begin",
+    "(dir-empty-name) mkdir \"\" (must return false)",
+    "(dir-empty-name) end"
+  ]
+}

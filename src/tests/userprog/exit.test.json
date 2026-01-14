@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "source": "tests/userprog/exit.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(exit) begin",
+    "exit: exit(57)"
+  ]
+}

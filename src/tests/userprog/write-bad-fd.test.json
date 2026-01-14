@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "source": "tests/userprog/write-bad-fd.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(write-bad-fd) begin",
+    "(write-bad-fd) end",
+    "write-bad-fd: exit(0)"
+  ],
+  "expected_variants": [
+    [
+      "(write-bad-fd) begin",
+      "(write-bad-fd) end",
+      "write-bad-fd: exit(0)"
+    ],
+    [
+      "(write-bad-fd) begin",
+      "write-bad-fd: exit(-1)"
+    ]
+  ]
+}

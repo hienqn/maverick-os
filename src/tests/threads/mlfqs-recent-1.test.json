@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "source": "tests/threads/mlfqs-recent-1.ck",
+  "type": "mlfqs_recent",
+  "options": {},
+  "ticks": 100,
+  "maxdiff": 2.5
+}

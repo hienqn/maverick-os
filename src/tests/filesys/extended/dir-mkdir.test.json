@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "source": "tests/filesys/extended/dir-mkdir.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(dir-mkdir) begin",
+    "(dir-mkdir) mkdir \"a\"",
+    "(dir-mkdir) create \"a/b\"",
+    "(dir-mkdir) chdir \"a\"",
+    "(dir-mkdir) open \"b\"",
+    "(dir-mkdir) end"
+  ]
+}

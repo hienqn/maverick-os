@@ -1,0 +1,6 @@
+#!/bin/bash
+# Drop-in replacement for the Perl pintos script
+# Runs the Bun/TypeScript version
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec bun run "$SCRIPT_DIR/../src/pintos.ts" "$@"

@@ -147,8 +147,9 @@ RUNCMD = run
 # Note: $(PINTOS) is defined in Make.config (supports USE_BUN=1 toggle)
 TESTCMD = $(PINTOS) -v -k $(if ${PINTOS_DEBUG},--gdb,-T $(TIMEOUT))
 
-# Pass architecture to pintos script
-ifneq ($(ARCH),)
+# Pass architecture to pintos script (only for non-default architectures)
+# i386 is the default, so we only pass --arch for riscv64
+ifeq ($(ARCH),riscv64)
 TESTCMD += --arch=$(ARCH)
 endif
 

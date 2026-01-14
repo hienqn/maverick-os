@@ -138,16 +138,19 @@ bool vm_handle_fault(void* fault_addr, bool user UNUSED, bool write, bool not_pr
   }
 
   if (spte == NULL) {
-    lock_release(&spt->spt_lock);
-
-    /* Page not in SPT. Check if this is valid stack growth. */
+    /* Page not in SPT. Check if this is valid stack growth.
+       IMPORTANT: We hold spt_lock during spt_create_zero_page to prevent
+       a race condition with frame_evict. If we released the lock here,
+       frame_evict could call spt_find (hash_find) while spt_create_zero_page
+       does hash_insert, corrupting the hash table. */
     if (vm_is_stack_access(fault_addr, esp)) {
-      /* Create a zero page for stack growth. */
-      if (!spt_create_zero_page(spt, fault_page, true))
+      /* Create a zero page for stack growth while holding SPT lock. */
+      if (!spt_create_zero_page(spt, fault_page, true)) {
+        lock_release(&spt->spt_lock);
         return false;
+      }
 
-      /* Look it up again now that we created it. */
-      lock_acquire(&spt->spt_lock);
+      /* Look it up now that we created it (still holding lock). */
       spte = spt_find(spt, fault_page);
       if (spte == NULL) {
         lock_release(&spt->spt_lock);
@@ -155,6 +158,7 @@ bool vm_handle_fault(void* fault_addr, bool user UNUSED, bool write, bool not_pr
       }
     } else {
       /* Not a valid access. */
+      lock_release(&spt->spt_lock);
       return false;
     }
   }

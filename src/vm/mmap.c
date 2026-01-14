@@ -265,10 +265,15 @@ void* mmap_create(void* addr, size_t length, int fd, off_t offset) {
   region->inode_sector = inode_get_inumber(file_get_inode(map_file));
   region->writable = true;
 
-  /* Create SPT entries for each page */
+  /* Create SPT entries for each page.
+     IMPORTANT: Hold spt_lock during all SPT operations to prevent race
+     condition with frame_evict() which does spt_find() under spt_lock.
+     Without this lock, hash_insert and hash_find could run concurrently,
+     corrupting the hash table. */
   struct spt* spt = get_spt();
   size_t remaining = length;
 
+  lock_acquire(&spt->spt_lock);
   for (size_t i = 0; i < page_count; i++) {
     void* upage = (uint8_t*)addr + i * PGSIZE;
     off_t file_ofs = offset + i * PGSIZE;
@@ -281,6 +286,7 @@ void* mmap_create(void* addr, size_t length, int fd, off_t offset) {
         void* cleanup_page = (uint8_t*)addr + j * PGSIZE;
         spt_remove(spt, cleanup_page);
       }
+      lock_release(&spt->spt_lock);
       file_close(map_file);
       free(region);
       lock_release(mmap_lock);
@@ -293,6 +299,7 @@ void* mmap_create(void* addr, size_t length, int fd, off_t offset) {
     }
     remaining -= read_bytes;
   }
+  lock_release(&spt->spt_lock);
 
   /* Add region to mmap_list (while holding lock) */
   list_push_back(get_mmap_list(), &region->elem);
@@ -377,9 +384,12 @@ void* mmap_create_anon(void* addr, size_t length, int flags) {
   region->inode_sector = 0;
   region->writable = true;
 
-  /* Create SPT entries for each page (zero-filled on demand) */
+  /* Create SPT entries for each page (zero-filled on demand).
+     IMPORTANT: Hold spt_lock during all SPT operations to prevent race
+     condition with frame_evict() which does spt_find() under spt_lock. */
   struct spt* spt = get_spt();
 
+  lock_acquire(&spt->spt_lock);
   for (size_t i = 0; i < page_count; i++) {
     void* upage = (uint8_t*)addr + i * PGSIZE;
 
@@ -389,6 +399,7 @@ void* mmap_create_anon(void* addr, size_t length, int flags) {
         void* cleanup_page = (uint8_t*)addr + j * PGSIZE;
         spt_remove(spt, cleanup_page);
       }
+      lock_release(&spt->spt_lock);
       free(region);
       lock_release(mmap_lock);
       return MAP_FAILED;
@@ -399,6 +410,7 @@ void* mmap_create_anon(void* addr, size_t length, int flags) {
       entry->is_mmap = true;
     }
   }
+  lock_release(&spt->spt_lock);
 
   /* Add region to mmap_list */
   list_push_back(get_mmap_list(), &region->elem);
@@ -555,7 +567,11 @@ static bool mmap_range_available(void* addr, size_t length) {
     return false;
   }
 
-  /* Check for SPT conflicts */
+  /* Check for SPT conflicts.
+     NOTE: We don't hold spt_lock here because:
+     1. mmap_lock prevents concurrent mmaps to the same address range
+     2. Stack growth only happens for the current thread
+     3. The subsequent page creation loop holds spt_lock for the insert */
   struct spt* spt = get_spt();
   size_t page_count = DIV_ROUND_UP(length, PGSIZE);
 

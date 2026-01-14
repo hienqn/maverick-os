@@ -1,17 +1,46 @@
 # -*- makefile -*-
+# =============================================================================
+# PintOS Kernel Build System (Makefile.build)
+# =============================================================================
+# This is the main build file that compiles the kernel. It runs inside the
+# build/ directory and is copied there by Makefile.kernel.
+#
+# Build flow: Makefile.kernel -> creates build/ -> copies this file -> runs it
+# =============================================================================
 
+# Path to source directory (two levels up from build/)
 SRCDIR = ../..
 
+# Default target: build both kernel and bootloader binaries
 all: kernel.bin loader.bin
 
+# =============================================================================
+# Configuration Includes
+# =============================================================================
+
+# Make.config: Compiler settings, flags, toolchain detection
 include ../../Make.config
+
+# Make.vars: Project-specific settings (KERNEL_SUBDIRS, DEFINES, etc.)
+# This file differs between threads/, userprog/, vm/, filesys/ builds
 include ../Make.vars
+
+# Make.tests: Test program definitions and test running infrastructure
 include ../../tests/Make.tests
 
-# Compiler and assembler options.
+# Add kernel-specific include path for kernel library headers
 kernel.bin: CPPFLAGS += -I$(SRCDIR)/lib/kernel
 
-# Core kernel.
+# =============================================================================
+# Kernel Source Files
+# =============================================================================
+# Each subsystem defines a <name>_SRC variable listing its source files.
+# These are combined based on KERNEL_SUBDIRS from Make.vars.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Core Kernel (threads/)
+# -----------------------------------------------------------------------------
 threads_SRC  = threads/start.S		# Startup code.
 threads_SRC += threads/init.c		# Main program.
 threads_SRC += threads/thread.c		# Thread management core.
@@ -23,7 +52,9 @@ threads_SRC += threads/palloc.c		# Page allocator.
 threads_SRC += threads/malloc.c		# Subpage allocator.
 threads_SRC += threads/ioremap.c	# MMIO mapping.
 
-# Device driver code.
+# -----------------------------------------------------------------------------
+# Device Drivers (devices/)
+# -----------------------------------------------------------------------------
 devices_SRC  = devices/pit.c		# Programmable interrupt timer chip.
 devices_SRC += devices/timer.c		# Periodic timer device.
 devices_SRC += devices/kbd.c		# Keyboard device.
@@ -41,7 +72,9 @@ devices_SRC += devices/pci.c		# PCI configuration space access.
 devices_SRC += devices/e1000.c		# E1000 network device.
 devices_SRC += devices/raid.c		# Software RAID layer.
 
-# Library code shared between kernel and user programs.
+# -----------------------------------------------------------------------------
+# Shared Library (lib/) - Used by both kernel and user programs
+# -----------------------------------------------------------------------------
 lib_SRC  = lib/debug.c			# Debug helpers.
 lib_SRC += lib/random.c			# Pseudo-random numbers.
 lib_SRC += lib/stdio.c			# I/O library.
@@ -51,7 +84,9 @@ lib_SRC += lib/arithmetic.c		# 64-bit arithmetic for GCC.
 lib_SRC += lib/float.c			# Floating point functions
 lib_SRC += lib/ustar.c			# Unix standard tar format utilities.
 
-# Kernel-specific library code.
+# -----------------------------------------------------------------------------
+# Kernel-Only Library (lib/kernel/)
+# -----------------------------------------------------------------------------
 lib/kernel_SRC  = lib/kernel/debug.c	# Debug helpers.
 lib/kernel_SRC += lib/kernel/list.c	# Doubly-linked lists.
 lib/kernel_SRC += lib/kernel/bitmap.c	# Bitmaps.
@@ -59,7 +94,9 @@ lib/kernel_SRC += lib/kernel/hash.c	# Hash tables.
 lib/kernel_SRC += lib/kernel/console.c	# printf(), putchar().
 lib/kernel_SRC += lib/kernel/test-lib.c # Testing functions
 
-# User process code.
+# -----------------------------------------------------------------------------
+# User Program Support (userprog/)
+# -----------------------------------------------------------------------------
 userprog_SRC  = userprog/process.c	# Process loading.
 userprog_SRC += userprog/pagedir.c	# Page directories.
 userprog_SRC += userprog/exception.c	# User exception handler.
@@ -68,14 +105,18 @@ userprog_SRC += userprog/filedesc.c	# Global open file description table.
 userprog_SRC += userprog/gdt.c		# GDT initialization.
 userprog_SRC += userprog/tss.c		# TSS management.
 
-# Virtual memory code.
+# -----------------------------------------------------------------------------
+# Virtual Memory (vm/)
+# -----------------------------------------------------------------------------
 vm_SRC  = vm/vm.c			# VM initialization.
 vm_SRC += vm/page.c			# Supplemental page table.
 vm_SRC += vm/frame.c			# Frame table.
 vm_SRC += vm/swap.c			# Swap space.
 vm_SRC += vm/mmap.c			# Memory-mapped files.
 
-# Filesystem code.
+# -----------------------------------------------------------------------------
+# File System (filesys/)
+# -----------------------------------------------------------------------------
 filesys_SRC  = filesys/filesys.c	# Filesystem core.
 filesys_SRC += filesys/cache.c		# Buffer cache.
 filesys_SRC += filesys/cache_prefetch.c	# Prefetch subsystem.
@@ -86,12 +127,14 @@ filesys_SRC += filesys/directory.c	# Directories.
 filesys_SRC += filesys/inode.c		# File headers.
 filesys_SRC += filesys/fsutil.c		# Utilities.
 
-# Filesys kernel tests.
+# Filesys kernel tests (run in kernel mode, not user mode)
 filesys_SRC += tests/filesys/kernel/tests.c
 filesys_SRC += tests/filesys/kernel/cache-tests.c
 filesys_SRC += tests/filesys/kernel/wal-tests.c
 
-# Network stack code.
+# -----------------------------------------------------------------------------
+# Network Stack (net/) - TCP/IP implementation
+# -----------------------------------------------------------------------------
 net_SRC  = net/net.c			# Network subsystem init.
 net_SRC += net/util/checksum.c		# Internet checksums.
 net_SRC += net/buf/pbuf.c		# Packet buffers.
@@ -108,27 +151,60 @@ net_SRC += net/transport/tcp.c		# TCP protocol (scaffold).
 net_SRC += net/socket/socket.c		# Socket API (scaffold).
 net_SRC += net/tests/net_tests.c	# Network stack tests.
 
+# =============================================================================
+# Build Rules
+# =============================================================================
+
+# Collect all source files from enabled subsystems (defined in Make.vars)
+# $(foreach dir,...) iterates over KERNEL_SUBDIRS and expands $(dir)_SRC
 SOURCES = $(foreach dir,$(KERNEL_SUBDIRS),$($(dir)_SRC))
+
+# Convert source files (.c, .S) to object files (.o)
 OBJECTS = $(patsubst %.c,%.o,$(patsubst %.S,%.o,$(SOURCES)))
+
+# Dependency files for automatic header tracking
 DEPENDS = $(patsubst %.o,%.d,$(OBJECTS))
 
+# -----------------------------------------------------------------------------
+# Kernel Linking
+# -----------------------------------------------------------------------------
+
+# Preprocess linker script (kernel.lds.S -> kernel.lds.s)
+# -P flag suppresses line markers in preprocessor output
 threads/kernel.lds.s: CPPFLAGS += -P
 threads/kernel.lds.s: threads/kernel.lds.S threads/loader.h
 
+# Link all object files into kernel.o using the linker script
+# -T specifies the linker script; $< is the first prerequisite (kernel.lds.s)
 kernel.o: threads/kernel.lds.s $(OBJECTS)
 	$(LD) -T $< -o $@ $(OBJECTS)
 
+# Convert ELF to raw binary, stripping debug info
+# -R removes sections (.note, .comment), -S strips symbols
 kernel.bin: kernel.o
 	$(OBJCOPY) -R .note -R .comment -S $< $@
 
+# -----------------------------------------------------------------------------
+# Bootloader
+# -----------------------------------------------------------------------------
+
+# Compile bootloader (first-stage loader, runs in real mode)
 threads/loader.o: threads/loader.S
 	$(CC) -c $< -o $@ $(ASFLAGS) $(CPPFLAGS) $(DEFINES)
 
+# Link bootloader to load at 0x7c00 (BIOS boot sector address)
+# -N: don't page-align sections; -e 0: entry point at address 0
+# --oformat binary: output raw binary (not ELF)
 loader.bin: threads/loader.o
 	$(LD) -N -e 0 -Ttext 0x7c00 --oformat binary -o $@ $<
 
+# Combine into disk image (simple concatenation)
 os.dsk: kernel.bin
 	cat $^ > $@
+
+# =============================================================================
+# Clean Target
+# =============================================================================
 
 clean::
 	rm -f $(OBJECTS) $(DEPENDS)
@@ -139,7 +215,10 @@ clean::
 	rm -f bochsout.txt bochsrc.txt
 	rm -f results grade
 
+# Self-update: re-copy Makefile if source changes
 Makefile: $(SRCDIR)/Makefile.build
 	cp $< $@
 
+# Include auto-generated dependency files (header dependencies)
+# Leading - suppresses errors if files don't exist yet
 -include $(DEPENDS)

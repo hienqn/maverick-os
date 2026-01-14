@@ -1,41 +1,78 @@
 # -*- makefile -*-
+# =============================================================================
+# PintOS Test Infrastructure (Make.tests)
+# =============================================================================
+# Central test running system. Handles:
+#   - Building test programs
+#   - Running tests in QEMU/Bochs
+#   - Checking output against expected results
+#   - Generating grade reports
+#
+# Usage:
+#   make check  - Run all tests and show pass/fail summary
+#   make grade  - Generate detailed grade report
+# =============================================================================
 
+# Include test definitions from each test subdirectory
+# Each Make.tests file defines:
+#   - <subdir>_PROGS: Test programs to build
+#   - <subdir>_TESTS: Tests to run
 include $(patsubst %,$(SRCDIR)/%/Make.tests,$(TEST_SUBDIRS))
 
-# Special rule: use clang instead of gcc for stack-align-* tests.
-# This is necessary because gcc defensively auto-aligns the stack in main,
-# which will cause the stack-align-* tests to always pass even if the kernel
-# does not properly align the stack.
-# See https://stackoverflow.com/questions/40307193/responsibility-of-stack-alignment-in-32-bit-x86-assembly.
+# =============================================================================
+# Special Compilation Rules
+# =============================================================================
+
+# Stack alignment tests must use clang, not gcc.
+# GCC defensively auto-aligns the stack in main(), which would make these
+# tests pass even if the kernel doesn't properly align the stack.
+# See: https://stackoverflow.com/questions/40307193
 tests/userprog/stack-align.o: tests/userprog/stack-align.c
 	clang -target i386-pc-linux-elf  -m32 -c $< -o $@ $(CFLAGS) $(CPPFLAGS) -fomit-frame-pointer $(WARNINGS) $(DEFINES) $(DEPS)
 
 tests/userprog/stack-align-0.o: tests/userprog/stack-align-0.c
 	$(CC) -m32 -c $< -o $@ $(CFLAGS) $(CPPFLAGS) -fomit-frame-pointer $(WARNINGS) $(DEFINES) $(DEPS)
 
+# dir-vine needs optimization to avoid stack overflow from deep recursion
 tests/filesys/extended/dir-vine.o: tests/filesys/extended/dir-vine.c
 	$(CC) -m32 -c $< -o $@ $(subst -O0,-O1,$(CFLAGS)) $(CPPFLAGS) $(WARNINGS) $(DEFINES) $(DEPS)
 
+# =============================================================================
+# Test Collection
+# =============================================================================
+
+# Collect all programs, tests, and extra grade items from all test subdirs
 PROGS = $(foreach subdir,$(TEST_SUBDIRS),$($(subdir)_PROGS))
 TESTS = $(foreach subdir,$(TEST_SUBDIRS),$($(subdir)_TESTS))
 EXTRA_GRADES = $(foreach subdir,$(TEST_SUBDIRS),$($(subdir)_EXTRA_GRADES))
 
+# Generated files for each test
 OUTPUTS = $(addsuffix .output,$(TESTS) $(EXTRA_GRADES))
 ERRORS = $(addsuffix .errors,$(TESTS) $(EXTRA_GRADES))
 RESULTS = $(addsuffix .result,$(TESTS) $(EXTRA_GRADES))
 
+# Include user program build rules if there are programs to build
 ifdef PROGS
 include ../../Makefile.userprog
 endif
 
+# Default timeout for each test (seconds)
 TIMEOUT = 60
 
+# =============================================================================
+# Test Targets
+# =============================================================================
+
+# Clean test artifacts
 clean::
 	rm -f $(OUTPUTS) $(ERRORS) $(RESULTS)
 
+# Generate detailed grade report using grading rubric
 grade:: results
 	$(SRCDIR)/tests/make-grade $(SRCDIR) $< $(GRADING_FILE) | tee $@
 
+# Run all tests and show summary
+# Counts passes and failures, exits with error if any tests failed
 check:: results
 	@cat $<
 	@COUNT="`egrep '^(pass|FAIL) ' $< | wc -l | sed 's/[ 	]//g;'`"; \
@@ -47,6 +84,8 @@ check:: results
 		exit 1;							  \
 	fi
 
+# Aggregate all .result files into a single results file
+# Compares each .result to "PASS" to determine pass/fail
 results: $(RESULTS)
 	@for d in $(TESTS) $(EXTRA_GRADES); do			\
 		if echo PASS | cmp -s $$d.result -; then	\
@@ -56,44 +95,90 @@ results: $(RESULTS)
 		fi;						\
 	done > $@
 
+# Build all test outputs (useful for debugging)
 outputs:: $(OUTPUTS)
 
+# =============================================================================
+# Dynamic Rule Generation
+# =============================================================================
+# These $(eval) calls generate rules at parse time for each test
+
+# Each program's output depends on the program binary
 $(foreach prog,$(PROGS),$(eval $(prog).output: $(prog)))
+
+# Each test's output depends on files that need to be copied to the VM
 $(foreach test,$(TESTS),$(eval $(test).output: $($(test)_PUTFILES)))
+
+# Set TEST variable for each test's output rule
 $(foreach test,$(TESTS),$(eval $(test).output: TEST = $(test)))
+
+# Each result depends on output and checker script (.ck file)
 $(foreach test,$(TESTS),$(eval $(test).result: $(test).output $(test).ck))
 
-# Prevent an environment variable VERBOSE from surprising us.
+# =============================================================================
+# Test Execution Command
+# =============================================================================
+
+# Prevent environment variable from affecting build
 VERBOSE =
 
-# Use rukt/rtkt to run kernel-only tests for userprog/threads, respectively
+# Command to run inside PintOS (default: "run")
 RUNCMD = run
 
+# Build the pintos command line piece by piece
+# -v: verbose; -k: kill on kernel panic
+# --gdb or -T: either enable GDB or set timeout
 TESTCMD = pintos -v -k $(if ${PINTOS_DEBUG},--gdb,-T $(TIMEOUT))
+
+# Simulator selection (can be overridden with FORCE_SIMULATOR)
 TESTCMD += $(or ${FORCE_SIMULATOR},$(SIMULATOR))
+
+# Additional pintos options
 TESTCMD += $(PINTOSOPTS)
+
+# If userprog is enabled, set up filesystem and copy test files
 ifeq ($(filter userprog, $(KERNEL_SUBDIRS)), userprog)
 TESTCMD += $(FILESYSSOURCE)
 TESTCMD += $(foreach file,$(PUTFILES),-p $(file) -a $(notdir $(file)))
 endif
+
+# If VM is enabled, add swap space (unless test disables it)
 ifeq ($(filter vm, $(KERNEL_SUBDIRS)), vm)
 # Add swap unless the test has _NO_SWAP set (e.g., for multi-oom OOM testing)
-ifeq ($($(TEST)_NO_SWAP),)
-TESTCMD += --swap-size=4
+# Use $(if ...) instead of ifeq because TEST is a target-specific variable
+# that's only available at build time, not parse time
+TESTCMD += $(if $($(TEST)_NO_SWAP),,--swap-size=4)
 endif
-endif
+
+# Separator between pintos options and kernel arguments
 TESTCMD += -- -q
+
+# Kernel flags and test-specific arguments
 TESTCMD += $(KERNELFLAGS)
 TESTCMD += $($(TEST)_KERNELARGS)
 
+# Format filesystem if userprog is enabled
 ifeq ($(filter userprog, $(KERNEL_SUBDIRS)), userprog)
 TESTCMD += -f
 endif
+
+# Run the test: either with arguments or just the test name
+# $(*F) extracts just the filename from the test path
 TESTCMD += $(if $($(TEST)_ARGS),$(RUNCMD) '$(*F) $($(TEST)_ARGS)',$(RUNCMD) $(*F))
+
+# Redirect stdin/stdout unless debugging
 TESTCMD += $(if ${PINTOS_DEBUG},,< /dev/null)
 TESTCMD += $(if ${PINTOS_DEBUG},,2> $(TEST).errors $(if $(VERBOSE),|tee,>) $(TEST).output)
+
+# =============================================================================
+# Pattern Rules
+# =============================================================================
+
+# Run a test: requires kernel and loader binaries
 %.output: kernel.bin loader.bin
 	$(TESTCMD)
 
+# Check test output against expected results using Perl checker script
+# $< = checker script (.ck), $* = test name (stem)
 %.result: %.ck %.output
 	perl -I$(SRCDIR) $< $* $@

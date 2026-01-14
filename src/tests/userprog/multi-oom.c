@@ -24,7 +24,13 @@
 #include <random.h>
 #include "tests/lib.h"
 
+/* VM uses more memory per process (SPT, frame table entries), so fewer
+   concurrent processes can run before OOM. Adjust threshold accordingly. */
+#ifdef VM
+static const int EXPECTED_DEPTH_TO_PASS = 20;
+#else
 static const int EXPECTED_DEPTH_TO_PASS = 30;
+#endif
 static const int EXPECTED_REPETITIONS = 10;
 
 enum child_termination_mode { RECURSE, CRASH };

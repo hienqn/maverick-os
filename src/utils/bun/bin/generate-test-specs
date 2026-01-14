@@ -1,0 +1,8 @@
+#!/bin/bash
+# Generate .test.json files from .ck files
+# Usage: generate-test-specs [tests-dir]
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BUN_DIR="$(dirname "$SCRIPT_DIR")"
+
+exec bun run "$BUN_DIR/src/generate-test-specs.ts" "$@"

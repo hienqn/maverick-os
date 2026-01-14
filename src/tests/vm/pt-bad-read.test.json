@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "source": "tests/vm/pt-bad-read.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(pt-bad-read) begin",
+    "(pt-bad-read) open \"sample.txt\"",
+    "pt-bad-read: exit(-1)"
+  ]
+}

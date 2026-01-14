@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "source": "tests/userprog/stdio/stdio-ungetc.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(stdio-ungetc) begin",
+    "(stdio-ungetc) create testfile.txt",
+    "(stdio-ungetc) fopen succeeds",
+    "(stdio-ungetc) first fgetc returns 'A'",
+    "(stdio-ungetc) ungetc returns pushed char",
+    "(stdio-ungetc) fgetc after ungetc returns 'A'",
+    "(stdio-ungetc) ungetc 'X' succeeds",
+    "(stdio-ungetc) fgetc returns pushed 'X'",
+    "(stdio-ungetc) EOF is set",
+    "(stdio-ungetc) ungetc after EOF succeeds",
+    "(stdio-ungetc) ungetc clears EOF flag",
+    "(stdio-ungetc) fgetc returns pushed 'Z'",
+    "(stdio-ungetc) ungetc tests passed",
+    "(stdio-ungetc) end",
+    "stdio-ungetc: exit(0)"
+  ]
+}

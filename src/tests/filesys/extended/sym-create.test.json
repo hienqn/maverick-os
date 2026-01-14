@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "source": "tests/filesys/extended/sym-create.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(sym-create) begin",
+    "(sym-create) create \"target-file\"",
+    "(sym-create) symlink \"target-file\" -> \"symlink\"",
+    "(sym-create) readlink \"symlink\" length correct",
+    "(sym-create) readlink \"symlink\" returns \"target-file\"",
+    "(sym-create) end"
+  ]
+}

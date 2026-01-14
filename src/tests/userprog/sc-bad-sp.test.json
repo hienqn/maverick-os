@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "source": "tests/userprog/sc-bad-sp.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(sc-bad-sp) begin",
+    "sc-bad-sp: exit(-1)"
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "source": "tests/vm/page-parallel.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(page-parallel) begin",
+    "(page-parallel) exec \"child-linear\"",
+    "(page-parallel) exec \"child-linear\"",
+    "(page-parallel) exec \"child-linear\"",
+    "(page-parallel) exec \"child-linear\"",
+    "(page-parallel) wait for child 0",
+    "(page-parallel) wait for child 1",
+    "(page-parallel) wait for child 2",
+    "(page-parallel) wait for child 3",
+    "(page-parallel) end"
+  ]
+}

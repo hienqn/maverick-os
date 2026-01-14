@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "source": "tests/threads/mlfqs-load-1.ck",
+  "type": "contains_pass",
+  "options": {},
+  "process_name": "mlfqs-load-1"
+}

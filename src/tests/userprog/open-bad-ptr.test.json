@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "source": "tests/userprog/open-bad-ptr.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(open-bad-ptr) begin",
+    "(open-bad-ptr) end",
+    "open-bad-ptr: exit(0)"
+  ],
+  "expected_variants": [
+    [
+      "(open-bad-ptr) begin",
+      "(open-bad-ptr) end",
+      "open-bad-ptr: exit(0)"
+    ],
+    [
+      "(open-bad-ptr) begin",
+      "open-bad-ptr: exit(-1)"
+    ]
+  ]
+}

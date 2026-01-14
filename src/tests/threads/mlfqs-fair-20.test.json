@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "source": "tests/threads/mlfqs-fair-20.ck",
+  "type": "mlfqs_fair",
+  "options": {},
+  "nice": [
+    null
+  ],
+  "maxdiff": 20
+}

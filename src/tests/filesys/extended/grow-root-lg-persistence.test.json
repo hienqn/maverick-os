@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "source": "tests/filesys/extended/grow-root-lg-persistence.ck",
+  "type": "archive",
+  "options": {},
+  "archive_tree": {
+    "file$_": [
+      "random_bytes (512)"
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/vm/mmap-close.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(mmap-close) begin",
+    "(mmap-close) open \"sample.txt\"",
+    "(mmap-close) mmap \"sample.txt\"",
+    "(mmap-close) end"
+  ]
+}

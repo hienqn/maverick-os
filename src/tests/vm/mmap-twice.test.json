@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "source": "tests/vm/mmap-twice.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(mmap-twice) begin",
+    "(mmap-twice) open \"sample.txt\" #0",
+    "(mmap-twice) mmap \"sample.txt\" #0 at 0x10000000",
+    "(mmap-twice) open \"sample.txt\" #1",
+    "(mmap-twice) mmap \"sample.txt\" #1 at 0x20000000",
+    "(mmap-twice) compare mmap'd file 0 against data",
+    "(mmap-twice) compare mmap'd file 1 against data",
+    "(mmap-twice) end"
+  ]
+}

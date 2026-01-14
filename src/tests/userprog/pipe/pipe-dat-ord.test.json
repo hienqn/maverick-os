@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "source": "tests/userprog/pipe/pipe-dat-ord.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(pipe-dat-ord) begin",
+    "(pipe-dat-ord) pipe()",
+    "(pipe-dat-ord) byte 0 is '0'",
+    "(pipe-dat-ord) byte 1 is '1'",
+    "(pipe-dat-ord) byte 2 is '2'",
+    "(pipe-dat-ord) byte 3 is '3'",
+    "(pipe-dat-ord) byte 4 is '4'",
+    "(pipe-dat-ord) byte 5 is '5'",
+    "(pipe-dat-ord) byte 6 is '6'",
+    "(pipe-dat-ord) byte 7 is '7'",
+    "(pipe-dat-ord) byte 8 is '8'",
+    "(pipe-dat-ord) byte 9 is '9'",
+    "(pipe-dat-ord) FIFO order verified",
+    "(pipe-dat-ord) end",
+    "pipe-dat-ord: exit(0)"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "source": "tests/threads/st-matmul.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(st-matmul) begin",
+    "(st-matmul) Executing single-threaded matmul...",
+    "(st-matmul) Matrix results match expected values.",
+    "(st-matmul) end"
+  ]
+}

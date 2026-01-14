@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "source": "tests/userprog/multithreading/pcb-syn.ck",
+  "type": "expected",
+  "options": {
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(pcb-syn) begin",
+    "(pcb-syn) Main starting",
+    "(pcb-syn) Main finished",
+    "(pcb-syn) end",
+    "pcb-syn: exit(0)"
+  ]
+}

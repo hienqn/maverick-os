@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "source": "tests/userprog/pipe/pipe-fk-chn.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(pipe-fk-chn) begin",
+    "(pipe-fk-chn) pipe1()",
+    "(pipe-fk-chn) pipe2()",
+    "(pipe-fk-chn) end",
+    "pipe-fk-chn: exit(0)",
+    "(pipe-fk-chn) end",
+    "pipe-fk-chn: exit(0)",
+    "(pipe-fk-chn) pipeline result: data",
+    "(pipe-fk-chn) pipeline transformation correct",
+    "(pipe-fk-chn) end",
+    "pipe-fk-chn: exit(0)"
+  ]
+}

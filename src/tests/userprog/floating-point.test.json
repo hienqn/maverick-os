@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "source": "tests/userprog/floating-point.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(floating-point) begin",
+    "(floating-point) Computing e...",
+    "(floating-point) Success!",
+    "floating-point: exit(162)"
+  ]
+}

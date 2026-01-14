@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "source": "tests/userprog/multithreading/lock-acq-fail.ck",
+  "type": "expected",
+  "options": {
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(lock-acq-fail) begin",
+    "lock-acq-fail: exit(1)"
+  ]
+}

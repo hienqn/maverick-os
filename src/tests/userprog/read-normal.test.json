@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/userprog/read-normal.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(read-normal) begin",
+    "(read-normal) open \"sample.txt\" for verification",
+    "(read-normal) verified contents of \"sample.txt\"",
+    "(read-normal) close \"sample.txt\"",
+    "(read-normal) end",
+    "read-normal: exit(0)"
+  ]
+}

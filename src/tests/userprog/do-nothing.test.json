@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "source": "tests/userprog/do-nothing.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "do-nothing: exit(162)"
+  ]
+}

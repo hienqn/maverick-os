@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "source": "tests/userprog/pipe/pipe-blk-rd.ck",
+  "type": "multi_check",
+  "options": {},
+  "checks": [
+    {"type": "regex", "pattern": "parent about to read", "message": "parent about to read not seen"},
+    {"type": "regex", "pattern": "child wrote data", "message": "child did not write"},
+    {"type": "regex", "pattern": "parent read: X", "message": "parent did not read"}
+  ]
+}

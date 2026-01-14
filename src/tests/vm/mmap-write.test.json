@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "source": "tests/vm/mmap-write.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(mmap-write) begin",
+    "(mmap-write) create \"sample.txt\"",
+    "(mmap-write) open \"sample.txt\"",
+    "(mmap-write) mmap \"sample.txt\"",
+    "(mmap-write) compare read data against written data",
+    "(mmap-write) end"
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "source": "tests/filesys/base/sm-full.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(sm-full) begin",
+    "(sm-full) create \"quux\"",
+    "(sm-full) open \"quux\"",
+    "(sm-full) writing \"quux\"",
+    "(sm-full) close \"quux\"",
+    "(sm-full) open \"quux\" for verification",
+    "(sm-full) verified contents of \"quux\"",
+    "(sm-full) close \"quux\"",
+    "(sm-full) end"
+  ]
+}

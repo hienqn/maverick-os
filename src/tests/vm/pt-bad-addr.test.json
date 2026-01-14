@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "source": "tests/vm/pt-bad-addr.ck",
+  "type": "process_death",
+  "options": {},
+  "process_name": "pt-bad-addr"
+}

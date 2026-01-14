@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "source": "tests/threads/alarm-negative.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(alarm-negative) begin",
+    "(alarm-negative) PASS",
+    "(alarm-negative) end"
+  ]
+}

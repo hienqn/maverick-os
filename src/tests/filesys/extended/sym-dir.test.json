@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "source": "tests/filesys/extended/sym-dir.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(sym-dir) begin",
+    "(sym-dir) mkdir \"mydir\"",
+    "(sym-dir) create \"mydir/file\"",
+    "(sym-dir) symlink \"mydir\" -> \"dirlink\"",
+    "(sym-dir) open \"dirlink/file\"",
+    "(sym-dir) close \"dirlink/file\"",
+    "(sym-dir) chdir \"dirlink\"",
+    "(sym-dir) open \"file\"",
+    "(sym-dir) close \"file\"",
+    "(sym-dir) end"
+  ]
+}

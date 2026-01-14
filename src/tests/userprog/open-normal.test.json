@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "source": "tests/userprog/open-normal.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(open-normal) begin",
+    "(open-normal) end",
+    "open-normal: exit(0)"
+  ]
+}

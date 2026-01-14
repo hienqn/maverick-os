@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "source": "tests/vm/malloc-simple.ck",
+  "type": "multi_check",
+  "options": {},
+  "checks": [
+    {"type": "regex", "pattern": "\\(malloc-simple\\) begin", "message": "Missing begin message"},
+    {"type": "regex", "pattern": "\\(malloc-simple\\) small allocation write succeeded", "message": "Missing small allocation message"},
+    {"type": "regex", "pattern": "\\(malloc-simple\\) large allocation write succeeded", "message": "Missing large allocation message"},
+    {"type": "regex", "pattern": "\\(malloc-simple\\) calloc returned zeroed memory", "message": "Missing calloc message"},
+    {"type": "regex", "pattern": "\\(malloc-simple\\) realloc preserved original data", "message": "Missing realloc message"},
+    {"type": "regex", "pattern": "\\(malloc-simple\\) allocated 20 blocks of 64 bytes", "message": "Missing block allocation message"},
+    {"type": "regex", "pattern": "\\(malloc-simple\\) freed all 20 blocks", "message": "Missing freed blocks message"},
+    {"type": "regex", "pattern": "\\(malloc-simple\\) malloc\\(0\\) handled correctly", "message": "Missing malloc(0) message"},
+    {"type": "regex", "pattern": "\\(malloc-simple\\) free\\(NULL\\) succeeded", "message": "Missing free(NULL) message"},
+    {"type": "regex", "pattern": "\\(malloc-simple\\) realloc\\(NULL, n\\) works like malloc", "message": "Missing realloc(NULL) message"},
+    {"type": "regex", "pattern": "\\(malloc-simple\\) realloc shrink preserved data", "message": "Missing realloc shrink message"},
+    {"type": "regex", "pattern": "\\(malloc-simple\\) realloc\\(ptr, 0\\) handled correctly", "message": "Missing realloc(ptr,0) message"},
+    {"type": "regex", "pattern": "\\(malloc-simple\\) all allocations properly aligned", "message": "Missing alignment message"},
+    {"type": "regex", "pattern": "\\(malloc-simple\\) page-size allocation succeeded", "message": "Missing page-size allocation message"},
+    {"type": "regex", "pattern": "\\(malloc-simple\\) memory reuse test completed", "message": "Missing memory reuse message"},
+    {"type": "regex", "pattern": "\\(malloc-simple\\) end", "message": "Missing end message"}
+  ]
+}

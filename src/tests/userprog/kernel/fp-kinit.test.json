@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "source": "tests/userprog/kernel/fp-kinit.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(fp-kinit) begin",
+    "(fp-kinit) PASS",
+    "(fp-kinit) end"
+  ]
+}

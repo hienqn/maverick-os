@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "source": "tests/userprog/pipe/pipe-two-pipes.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(pipe-two-pipes) begin",
+    "(pipe-two-pipes) first pipe()",
+    "(pipe-two-pipes) second pipe()",
+    "(pipe-two-pipes) all fds are unique",
+    "(pipe-two-pipes) pipe1 data correct",
+    "(pipe-two-pipes) pipe2 data correct",
+    "(pipe-two-pipes) end",
+    "pipe-two-pipes: exit(0)"
+  ]
+}

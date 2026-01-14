@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "source": "tests/filesys/extended/dir-rm-tree.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(dir-rm-tree) begin",
+    "(dir-rm-tree) creating /0/0/0/0 through /3/2/2/3...",
+    "(dir-rm-tree) open \"/0/2/0/3\"",
+    "(dir-rm-tree) close \"/0/2/0/3\"",
+    "(dir-rm-tree) removing /0/0/0/0 through /3/2/2/3...",
+    "(dir-rm-tree) open \"/3/0/2/0\" (must return -1)",
+    "(dir-rm-tree) end"
+  ]
+}

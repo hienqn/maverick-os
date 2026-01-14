@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "source": "tests/vm/pt-write-code.ck",
+  "type": "process_death",
+  "options": {},
+  "process_name": "pt-write-code"
+}

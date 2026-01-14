@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "source": "tests/vm/mmap-zero.ck",
+  "type": "expected",
+  "options": {
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(mmap-zero) begin",
+    "(mmap-zero) create empty file \"empty\"",
+    "(mmap-zero) open \"empty\"",
+    "(mmap-zero) mmap \"empty\"",
+    "mmap-zero: exit(-1)"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/userprog/wait-killed.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(wait-killed) begin",
+    "(child-bad) begin",
+    "child-bad: exit(-1)",
+    "(wait-killed) wait(exec()) = -1",
+    "(wait-killed) end",
+    "wait-killed: exit(0)"
+  ]
+}

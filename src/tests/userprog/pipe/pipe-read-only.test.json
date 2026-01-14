@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "source": "tests/userprog/pipe/pipe-read-only.ck",
+  "type": "multi_check",
+  "options": {},
+  "checks": [
+    {"type": "regex", "pattern": "write to read fd returned", "message": "write to read fd not tested"},
+    {"type": "regex", "pattern": "read from write fd returned", "message": "read from write fd not tested"}
+  ]
+}

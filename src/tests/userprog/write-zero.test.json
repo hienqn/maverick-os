@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "source": "tests/userprog/write-zero.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(write-zero) begin",
+    "(write-zero) open \"sample.txt\"",
+    "(write-zero) end",
+    "write-zero: exit(0)"
+  ]
+}

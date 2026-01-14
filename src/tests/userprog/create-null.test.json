@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "source": "tests/userprog/create-null.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(create-null) begin",
+    "create-null: exit(-1)"
+  ]
+}

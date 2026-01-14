@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "source": "tests/userprog/read-bad-fd.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(read-bad-fd) begin",
+    "(read-bad-fd) end",
+    "read-bad-fd: exit(0)"
+  ],
+  "expected_variants": [
+    [
+      "(read-bad-fd) begin",
+      "(read-bad-fd) end",
+      "read-bad-fd: exit(0)"
+    ],
+    [
+      "(read-bad-fd) begin",
+      "read-bad-fd: exit(-1)"
+    ]
+  ]
+}

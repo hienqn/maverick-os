@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "source": "tests/userprog/close-stdout.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(close-stdout) begin",
+    "(close-stdout) end",
+    "close-stdout: exit(0)"
+  ],
+  "expected_variants": [
+    [
+      "(close-stdout) begin",
+      "(close-stdout) end",
+      "close-stdout: exit(0)"
+    ],
+    [
+      "(close-stdout) begin",
+      "close-stdout: exit(-1)"
+    ],
+    [
+      "(close-stdout) begin",
+      "close-stdout: exit(0)"
+    ]
+  ]
+}

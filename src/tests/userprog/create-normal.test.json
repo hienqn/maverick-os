@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "source": "tests/userprog/create-normal.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(create-normal) begin",
+    "(create-normal) create quux.dat",
+    "(create-normal) end",
+    "create-normal: exit(0)"
+  ]
+}

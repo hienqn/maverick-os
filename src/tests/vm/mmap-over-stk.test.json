@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/vm/mmap-over-stk.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(mmap-over-stk) begin",
+    "(mmap-over-stk) open \"sample.txt\"",
+    "(mmap-over-stk) try to mmap over stack segment",
+    "(mmap-over-stk) end"
+  ]
+}

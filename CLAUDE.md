@@ -19,8 +19,8 @@ src/
 ├── tests/        # Test suites for each component
 ├── examples/     # Sample user programs
 └── utils/        # Build and test utilities
-    ├── pintos, Pintos.pm   # Perl utilities (default)
-    └── bun/                # Bun/TypeScript ports (USE_BUN=1)
+    ├── pintos, Pintos.pm   # Perl utilities (legacy, USE_BUN=0)
+    └── bun/                # Bun/TypeScript ports (default)
 ```
 
 ## Build Commands
@@ -57,25 +57,24 @@ pintos --qemu -- run alarm-multiple
 # View test output
 cat tests/threads/alarm-multiple.output
 
-# Use Bun/TypeScript tooling with colored output
-make check USE_BUN=1
-make check USE_BUN=1 -j20  # Parallel + colored output
+# Use Perl tooling (legacy)
+make check USE_BUN=0
 ```
 
-### Tooling Toggle (Perl vs Bun)
+### Tooling Toggle (Bun vs Perl)
 
-The build system supports both Perl and Bun/TypeScript implementations of utilities:
+The build system supports both Bun/TypeScript and Perl implementations of utilities:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `USE_BUN=0` | Yes | Use original Perl scripts (`utils/pintos`) |
-| `USE_BUN=1` | No | Use Bun/TypeScript ports (`utils/bun/bin/pintos`) |
+| `USE_BUN=1` | Yes | Use Bun/TypeScript ports (`utils/bun/bin/pintos`) |
+| `USE_BUN=0` | No | Use original Perl scripts (`utils/pintos`) |
 
 **Affected components:**
 - `pintos` - Simulator launcher
 - `pintos-mkdisk` - Disk image creation
 - `backtrace` - Stack trace translation
-- `check-test` - Test verification (parses `.ck` files)
+- `check-test` - Test verification (supports `.test.json` and `.ck` files)
 - `pintos-test` - Interactive test runner (fuzzy search with fzf)
 
 Note: Complex tests (MLFQS, archive/persistence) fall back to Perl automatically.

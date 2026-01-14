@@ -77,8 +77,6 @@ The build system supports both Bun/TypeScript and Perl implementations of utilit
 - `check-test` - Test verification (supports `.test.json` and `.ck` files)
 - `pintos-test` - Interactive test runner (fuzzy search with fzf)
 
-Note: Complex tests (MLFQS, archive/persistence) fall back to Perl automatically.
-
 ## Code Style
 
 - **Indentation**: 2 spaces (no tabs)

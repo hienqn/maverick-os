@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "source": "tests/userprog/pipe/pipe-wr-cls.ck",
+  "type": "multi_check",
+  "options": {},
+  "checks": [
+    {"type": "regex", "pattern": "read end closed", "message": "read end not closed"},
+    {"type": "regex", "pattern": "write to broken pipe returned", "message": "write to broken pipe not tested"}
+  ]
+}

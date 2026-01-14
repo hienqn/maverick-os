@@ -8,7 +8,7 @@
  *
  * It supports two formats:
  * 1. .test.json - Native JSON format (preferred, faster)
- * 2. .ck - Perl checker files (fallback, parsed at runtime)
+ * 2. .ck - Perl checker files (parsed at runtime, no Perl needed)
  *
  * The .test.json files can be generated from .ck files using:
  *   bun run src/generate-test-specs.ts
@@ -25,6 +25,11 @@ import {
   fail,
   pass,
   getPrereqTests,
+  checkProcessDeath,
+  checkHalt,
+  checkContainsPass,
+  checkFlexibleOrder,
+  checkMultiRule,
 } from "./tests/tests";
 import { checkAlarm } from "./tests/alarm";
 import {
@@ -35,6 +40,15 @@ import {
   checkMlfqsBlock,
 } from "./tests/mlfqs";
 import { checkArchive } from "./tests/archive";
+
+/**
+ * Check rule for multi_check tests
+ */
+interface CheckRule {
+  type: "contains" | "not_contains" | "regex" | "not_regex" | "equals";
+  pattern: string;
+  message?: string;
+}
 
 /**
  * Test spec from .test.json file
@@ -54,6 +68,11 @@ interface TestSpec {
   maxdiff?: number;
   ticks?: number;
   archive_tree?: any;
+  // New fields for custom check types
+  process_name?: string;
+  checks?: CheckRule[];
+  thread_count?: number;
+  iter_count?: number;
 }
 
 /**
@@ -103,6 +122,18 @@ function loadTestSpec(jsonPath: string): ParsedChecker | null {
     }
     if (spec.archive_tree !== undefined) {
       parsed.archiveTree = spec.archive_tree;
+    }
+    if (spec.process_name !== undefined) {
+      parsed.processName = spec.process_name;
+    }
+    if (spec.checks !== undefined) {
+      parsed.checks = spec.checks;
+    }
+    if (spec.thread_count !== undefined) {
+      parsed.threadCount = spec.thread_count;
+    }
+    if (spec.iter_count !== undefined) {
+      parsed.iterCount = spec.iter_count;
     }
 
     return parsed;
@@ -226,37 +257,49 @@ function main() {
       }
       break;
 
-    case "custom":
-      // Custom tests need Perl execution
-      fallbackToPerl(ckFile, testName, resultFile, srcDir);
+    case "process_death":
+      if (parsed.processName) {
+        checkProcessDeath(parsed.processName);
+      } else {
+        fail("Could not parse process name for process_death test");
+      }
+      break;
+
+    case "halt":
+      checkHalt();
+      break;
+
+    case "contains_pass":
+      if (parsed.processName) {
+        checkContainsPass(parsed.processName);
+      } else {
+        fail("Could not parse process name for contains_pass test");
+      }
+      break;
+
+    case "flexible_order":
+      if (
+        parsed.processName &&
+        parsed.threadCount !== undefined &&
+        parsed.iterCount !== undefined
+      ) {
+        checkFlexibleOrder(parsed.processName, parsed.threadCount, parsed.iterCount);
+      } else {
+        fail("Could not parse flexible_order parameters");
+      }
+      break;
+
+    case "multi_check":
+      if (parsed.checks && parsed.checks.length > 0) {
+        checkMultiRule(parsed.checks);
+      } else {
+        fail("Could not parse check rules for multi_check test");
+      }
       break;
 
     default:
       fail(`Unknown test type: ${parsed.type}`);
   }
-}
-
-/**
- * Fall back to Perl for tests we can't handle yet
- */
-function fallbackToPerl(
-  ckFile: string,
-  testName: string,
-  resultFile: string,
-  srcDir: string
-): never {
-  const { spawnSync } = require("child_process");
-
-  const result = spawnSync(
-    "perl",
-    ["-I" + srcDir, ckFile, testName, resultFile],
-    {
-      stdio: "inherit",
-      cwd: process.cwd(),
-    }
-  );
-
-  process.exit(result.status ?? 1);
 }
 
 main();

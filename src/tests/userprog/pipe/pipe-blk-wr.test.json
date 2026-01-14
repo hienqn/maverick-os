@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "source": "tests/userprog/pipe/pipe-blk-wr.ck",
+  "type": "multi_check",
+  "options": {},
+  "checks": [
+    {"type": "regex", "pattern": "child wrote \\d+ bytes", "message": "child did not write"},
+    {"type": "regex", "pattern": "parent read \\d+ bytes", "message": "parent did not read"},
+    {"type": "regex", "pattern": "bytes match", "message": "bytes written and read don't match"}
+  ]
+}

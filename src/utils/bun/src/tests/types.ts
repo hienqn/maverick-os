@@ -18,13 +18,36 @@ export interface DiffHunk {
 }
 
 /**
+ * Check rule for custom test logic
+ */
+export interface CheckRule {
+  type: "contains" | "not_contains" | "regex" | "not_regex" | "equals";
+  pattern: string;
+  message?: string; // Custom failure message
+}
+
+/**
  * Parsed .ck file structure
  */
 export interface ParsedChecker {
-  type: "expected" | "alarm" | "mlfqs" | "archive" | "custom";
+  type:
+    | "expected"
+    | "alarm"
+    | "mlfqs"
+    | "archive"
+    | "process_death"
+    | "halt"
+    | "contains_pass"
+    | "flexible_order"
+    | "multi_check"
+    | "custom";
   options: CheckOptions;
   expected?: string[]; // For expected output tests
   iterations?: number; // For alarm tests
+  processName?: string; // For process_death tests
+  checks?: CheckRule[]; // For multi_check tests
+  threadCount?: number; // For flexible_order tests
+  iterCount?: number; // For flexible_order tests
   // Add more fields as needed for other test types
 }
 

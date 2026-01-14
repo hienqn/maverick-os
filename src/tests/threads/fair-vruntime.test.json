@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "source": "tests/threads/fair-vruntime.ck",
+  "type": "multi_check",
+  "options": {},
+  "checks": [
+    {
+      "type": "not_regex",
+      "pattern": "FAIL:.*vruntime",
+      "message": "CFS/EEVDF partial accounting test failed - I/O thread has >= vruntime than CPU thread"
+    },
+    {
+      "type": "regex",
+      "pattern": "(PASS|MARGINAL):.*vruntime",
+      "message": "Could not determine test result from output"
+    }
+  ]
+}

@@ -6,7 +6,7 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { execSync } from "child_process";
 import { diff, formatDiff, arraysEqual } from "./diff";
-import type { TestResult, CheckOptions } from "./types";
+import type { TestResult, CheckOptions, CheckRule } from "./types";
 
 // ANSI color codes for terminal output
 const isTerminal = process.stdout.isTTY;
@@ -340,4 +340,169 @@ function compareOutput(
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/**
+ * Check for process death - verifies process started, exited with -1, and didn't complete
+ */
+export function checkProcessDeath(processName: string): void {
+  const output = readTextFile(`${testName}.output`);
+  commonChecks("run", output);
+  const coreOutput = getCoreOutput("run", output);
+
+  // Check for begin message
+  if (coreOutput[0] !== `(${processName}) begin`) {
+    fail(`First line of output is not '(${processName}) begin' message.`);
+  }
+
+  // Check for exit(-1)
+  if (!coreOutput.some((line) => line === `${processName}: exit(-1)`)) {
+    fail(`Output missing '${processName}: exit(-1)' message.`);
+  }
+
+  // Check that end message is NOT present
+  if (coreOutput.some((line) => line.includes(`(${processName}) end`))) {
+    fail(`Output contains '(${processName}) end' message.`);
+  }
+
+  pass();
+}
+
+/**
+ * Check for halt test - verifies halt stopped before completion
+ */
+export function checkHalt(): void {
+  const output = readTextFile(`${testName}.output`);
+  commonChecks("run", output);
+
+  // Check for begin message
+  if (!output.some((line) => line === "(halt) begin")) {
+    fail("missing 'begin' message");
+  }
+
+  // Check that complete message is NOT present
+  if (output.some((line) => line === "Execution of 'halt' complete.")) {
+    fail("found 'complete' message--halt didn't really halt");
+  }
+
+  // Check that fail message is NOT present
+  if (output.some((line) => line === "(halt) fail")) {
+    fail("found 'fail' message--halt didn't really halt");
+  }
+
+  pass();
+}
+
+/**
+ * Check for PASS in output (for simple self-validating tests)
+ */
+export function checkContainsPass(processName: string): void {
+  const output = readTextFile(`${testName}.output`);
+  commonChecks("run", output);
+  const coreOutput = getCoreOutput("run", output);
+
+  if (!coreOutput.some((line) => line === `(${processName}) PASS`)) {
+    fail(`missing PASS in output`);
+  }
+
+  pass();
+}
+
+/**
+ * Check for flexible ordering (priority-fifo style)
+ * All iterations must have same order, but any permutation of 0..threadCount-1 is valid
+ */
+export function checkFlexibleOrder(
+  processName: string,
+  threadCount: number,
+  iterCount: number
+): void {
+  const output = readTextFile(`${testName}.output`);
+  commonChecks("run", output);
+  const coreOutput = getCoreOutput("run", output);
+
+  const iterations = coreOutput.filter((line) => line.includes("iteration:"));
+
+  if (iterations.length === 0) {
+    fail("No iterations found in output.");
+  }
+
+  // Extract numbers from first iteration
+  const firstMatch = iterations[0].match(/(\d+)/g);
+  if (!firstMatch || firstMatch.length !== threadCount) {
+    fail(`First iteration does not list exactly ${threadCount} threads.`);
+  }
+
+  const numbering = firstMatch.map(Number);
+
+  // Verify it's a permutation of 0..threadCount-1
+  const sorted = [...numbering].sort((a, b) => a - b);
+  for (let i = 0; i < sorted.length; i++) {
+    if (sorted[i] !== i) {
+      fail(`First iteration does not list all threads 0...${threadCount - 1}`);
+    }
+  }
+
+  // Verify all iterations are identical
+  for (let i = 1; i < iterations.length; i++) {
+    if (iterations[i] !== iterations[0]) {
+      fail(`Iteration ${i} differs from iteration 0`);
+    }
+  }
+
+  // Verify iteration count
+  if (iterations.length !== iterCount) {
+    fail(`${iterCount} iterations expected but ${iterations.length} found`);
+  }
+
+  pass();
+}
+
+/**
+ * Multi-check: run multiple check rules against output
+ */
+export function checkMultiRule(checks: CheckRule[]): void {
+  const output = readTextFile(`${testName}.output`);
+  commonChecks("run", output);
+  const coreOutput = getCoreOutput("run", output);
+  const allOutput = output.join("\n");
+  const coreStr = coreOutput.join("\n");
+
+  for (const check of checks) {
+    const target = coreStr;
+
+    switch (check.type) {
+      case "contains":
+        if (!target.includes(check.pattern)) {
+          fail(check.message || `Output does not contain: ${check.pattern}`);
+        }
+        break;
+
+      case "not_contains":
+        if (target.includes(check.pattern)) {
+          fail(check.message || `Output should not contain: ${check.pattern}`);
+        }
+        break;
+
+      case "regex":
+        if (!new RegExp(check.pattern).test(target)) {
+          fail(check.message || `Output does not match pattern: ${check.pattern}`);
+        }
+        break;
+
+      case "not_regex":
+        if (new RegExp(check.pattern).test(target)) {
+          fail(check.message || `Output should not match pattern: ${check.pattern}`);
+        }
+        break;
+
+      case "equals":
+        if (!coreOutput.some((line) => line === check.pattern)) {
+          fail(check.message || `Output does not have exact line: ${check.pattern}`);
+        }
+        break;
+    }
+  }
+
+  pass();
 }

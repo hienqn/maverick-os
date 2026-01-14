@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "source": "tests/threads/priority-fifo.ck",
+  "type": "flexible_order",
+  "options": {},
+  "process_name": "priority-fifo",
+  "thread_count": 16,
+  "iter_count": 16
+}

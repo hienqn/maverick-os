@@ -68,7 +68,7 @@ RESULTS = $(addsuffix .result,$(TESTS) $(EXTRA_GRADES))
 
 # Include user program build rules if there are programs to build
 ifdef PROGS
-include ../../Makefile.userprog
+include $(SRCDIR)/Makefile.userprog
 endif
 
 # Default timeout for each test (seconds)
@@ -85,7 +85,7 @@ clean::
 
 # Generate detailed grade report using grading rubric
 grade:: results
-	$(SRCDIR)/tests/make-grade $(SRCDIR) $< $(GRADING_FILE) | tee $@
+	$(MAKE_GRADE) $(SRCDIR) $< $(GRADING_FILE) | tee $@
 
 # Run all tests and show summary
 # Counts passes and failures, exits with error if any tests failed

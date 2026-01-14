@@ -4,7 +4,7 @@ This file provides guidance for AI assistants working with the PintOS codebase.
 
 ## Project Overview
 
-PintOS is an educational operating system for x86 (i686) architecture, developed at Stanford University and used in UC Berkeley's CS162 course. This repository contains a complete implementation of all four major projects: Threads, User Programs, Virtual Memory, and File System.
+PintOS is an educational operating system developed at Stanford University and used in UC Berkeley's CS162 course. This repository contains a complete implementation of all four major projects: Threads, User Programs, Virtual Memory, and File System. It supports two architectures: x86 (i386) and RISC-V (riscv64, experimental).
 
 ## Directory Structure
 
@@ -15,12 +15,18 @@ src/
 ├── vm/           # Virtual memory, paging, swap, mmap
 ├── filesys/      # File system, buffer cache, directories, WAL
 ├── devices/      # Hardware drivers (timer, disk, keyboard, etc.)
+├── arch/         # Architecture-specific code (riscv64/)
 ├── lib/          # C library (kernel/ and user/ subdirectories)
 ├── tests/        # Test suites for each component
 ├── examples/     # Sample user programs
-└── utils/        # Build and test utilities
-    ├── pintos, Pintos.pm   # Perl utilities (legacy, USE_BUN=0)
-    └── bun/                # Bun/TypeScript ports (default)
+└── utils/        # Build and test utilities (Bun/TypeScript)
+```
+
+Build artifacts are placed in architecture-specific directories:
+```
+<component>/build/
+├── i386/         # x86 build artifacts (kernel.bin, loader.bin, etc.)
+└── riscv64/      # RISC-V build artifacts (kernel.bin, etc.)
 ```
 
 ## Build Commands
@@ -32,8 +38,14 @@ cd userprog && make     # Add user program support
 cd vm && make           # Add virtual memory
 cd filesys && make      # Add file system
 
+# Build for a specific architecture (default: i386)
+make                    # Build for i386
+make ARCH=riscv64       # Build for RISC-V
+
 # Clean build
-make clean
+make clean              # Clean current architecture (default: i386)
+make clean ARCH=riscv64 # Clean RISC-V build
+make clean-all          # Clean all architectures
 
 # Format code
 make format
@@ -47,35 +59,20 @@ cd src/userprog && make check
 cd src/vm && make check
 cd src/filesys && make check
 
+# Run tests for a specific architecture
+make check                    # Test i386 (default)
+make check ARCH=riscv64       # Test RISC-V
+
 # Run tests in parallel (much faster)
 make check -j$(nproc)    # Use all CPU cores
 make check -j20          # Or specify core count
 
-# Run single test (from build directory)
+# Run single test (from build/i386 or build/riscv64 directory)
 pintos --qemu -- run alarm-multiple
 
 # View test output
 cat tests/threads/alarm-multiple.output
-
-# Use Perl tooling (legacy)
-make check USE_BUN=0
 ```
-
-### Tooling Toggle (Bun vs Perl)
-
-The build system supports both Bun/TypeScript and Perl implementations of utilities:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `USE_BUN=1` | Yes | Use Bun/TypeScript ports (`utils/bun/bin/pintos`) |
-| `USE_BUN=0` | No | Use original Perl scripts (`utils/pintos`) |
-
-**Affected components:**
-- `pintos` - Simulator launcher
-- `pintos-mkdisk` - Disk image creation
-- `backtrace` - Stack trace translation
-- `check-test` - Test verification (supports `.test.json` and `.ck` files)
-- `pintos-test` - Interactive test runner (fuzzy search with fzf)
 
 ## Code Style
 
@@ -163,7 +160,7 @@ while (hash_next(&i)) {
 - Use `printf()` or `PANIC()` for debugging
 - Run with `--qemu` flag: `pintos --qemu -- run test-name`
 - GDB support: `pintos-gdb` wrapper script
-- Backtrace utility: `utils/backtrace`
+- Backtrace utility: `utils/bun/bin/backtrace`
 
 ## Commit Guidelines
 
@@ -174,4 +171,4 @@ while (hash_next(&i)) {
 Each test has:
 - `.c` file: Test source code
 - `.ck` file: Expected output checker script
-- Tests run in QEMU/Bochs emulator via `pintos` Perl script
+- Tests run in QEMU/Bochs emulator via `pintos` utility

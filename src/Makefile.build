@@ -8,22 +8,22 @@
 # Build flow: Makefile.kernel -> creates build/ -> copies this file -> runs it
 # =============================================================================
 
-# Path to source directory (two levels up from build/)
-SRCDIR = ../..
+# Path to source directory (three levels up from build/$(ARCH)/)
+SRCDIR = ../../..
 
 # =============================================================================
 # Configuration Includes
 # =============================================================================
 
 # Make.config: Compiler settings, flags, toolchain detection
-include ../../Make.config
+include $(SRCDIR)/Make.config
 
 # Make.vars: Project-specific settings (KERNEL_SUBDIRS, DEFINES, etc.)
 # This file differs between threads/, userprog/, vm/, filesys/ builds
-include ../Make.vars
+include ../../Make.vars
 
 # Make.tests: Test program definitions and test running infrastructure
-include ../../tests/Make.tests
+include $(SRCDIR)/tests/Make.tests
 
 # =============================================================================
 # Build Targets

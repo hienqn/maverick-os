@@ -1,0 +1,19 @@
+{
+  "name": "pintos-utils",
+  "version": "1.0.0",
+  "description": "PintOS utilities rewritten in TypeScript for Bun",
+  "type": "module",
+  "scripts": {
+    "pintos": "bun run src/pintos.ts",
+    "mkdisk": "bun run src/mkdisk.ts",
+    "backtrace": "bun run src/backtrace.ts",
+    "set-cmdline": "bun run src/set-cmdline.ts"
+  },
+  "dependencies": {
+    "commander": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.0.0"
+  }
+}

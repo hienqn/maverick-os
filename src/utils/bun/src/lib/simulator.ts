@@ -7,6 +7,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { xsystem, runCommand, findInPath, type XSystemOptions } from "./subprocess";
+import type { Architecture } from "./types";
 
 export type Simulator = "bochs" | "qemu" | "player";
 export type Debugger = "none" | "monitor" | "gdb";
@@ -14,6 +15,7 @@ export type VgaMode = "window" | "terminal" | "none";
 
 export interface SimulatorOptions {
   sim: Simulator;
+  arch: Architecture;
   debug: Debugger;
   mem: number; // Memory in MB
   serial: boolean;
@@ -23,6 +25,8 @@ export interface SimulatorOptions {
   timeout?: number;
   killOnFailure?: boolean;
   disks: (string | undefined)[];
+  kernelBin?: string; // For RISC-V: path to kernel.bin
+  kernelArgs?: string[]; // For RISC-V: kernel command line arguments
 }
 
 /**
@@ -56,6 +60,16 @@ export function diskGeometry(file: string): {
  * Run the selected simulator
  */
 export async function runVm(options: SimulatorOptions): Promise<void> {
+  // RISC-V only supports QEMU
+  if (options.arch === "riscv64") {
+    if (options.sim !== "qemu") {
+      console.log(`warning: RISC-V only supports QEMU, ignoring --${options.sim}`);
+    }
+    await runQemuRiscv(options);
+    return;
+  }
+
+  // i386 supports all simulators
   switch (options.sim) {
     case "bochs":
       await runBochs(options);
@@ -199,6 +213,54 @@ async function runQemu(options: SimulatorOptions): Promise<void> {
   }
   if (vga === "none" && debug === "none") {
     cmd.push("-monitor", "null");
+  }
+
+  await runCommand(cmd, { timeout, killOnFailure });
+}
+
+/**
+ * Run QEMU simulator for RISC-V
+ */
+async function runQemuRiscv(options: SimulatorOptions): Promise<void> {
+  const { debug, mem, vga, jitter, timeout, killOnFailure, kernelBin, kernelArgs } = options;
+
+  if (vga === "terminal") {
+    console.log("warning: qemu doesn't support --terminal");
+  }
+  if (jitter !== undefined) {
+    console.log("warning: qemu doesn't support jitter");
+  }
+
+  if (!kernelBin) {
+    throw new Error("RISC-V mode requires kernel.bin");
+  }
+
+  const cmd: string[] = ["qemu-system-riscv64"];
+
+  // Machine configuration
+  cmd.push("-machine", "virt");
+  cmd.push("-bios", "default"); // Use OpenSBI
+
+  // Memory
+  cmd.push("-m", String(mem));
+
+  // Kernel binary (loaded by OpenSBI)
+  cmd.push("-kernel", kernelBin);
+
+  // Kernel command line arguments
+  if (kernelArgs && kernelArgs.length > 0) {
+    cmd.push("-append", kernelArgs.join(" "));
+  }
+
+  // Display settings
+  cmd.push("-nographic"); // RISC-V uses serial console
+
+  // Debug settings
+  if (debug === "monitor") {
+    cmd.push("-S");
+  }
+  if (debug === "gdb") {
+    cmd.push("-s", "-S");
   }
 
   await runCommand(cmd, { timeout, killOnFailure });

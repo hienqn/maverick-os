@@ -12,6 +12,7 @@ import {
   ROLE_ORDER,
   DEFAULT_GEOMETRY,
   ZIP_GEOMETRY,
+  type Architecture,
   type DiskGeometry,
   type PartitionSource,
   type PartitionRole,
@@ -38,6 +39,7 @@ import { runVm, type Simulator, type Debugger, type VgaMode } from "./lib/simula
 // ============================================================================
 
 const startTime = Date.now() / 1000;
+let arch: Architecture = "i386";
 let sim: Simulator = "bochs";
 let debug: Debugger = "none";
 let mem = 4;
@@ -196,6 +198,8 @@ function usage(exitCode: number): never {
 Usage: pintos [OPTION...] -- [ARGUMENT...]
 where each OPTION is one of the following options
   and each ARGUMENT is passed to Pintos kernel verbatim.
+Architecture selection:
+  --arch=ARCH              Target architecture: i386 (default) or riscv64
 Simulator selection:
   --bochs                  (default) Use Bochs as simulator
   --qemu                   Use QEMU as simulator
@@ -266,8 +270,17 @@ function parseCommandLine(): void {
   while (i < optArgs.length) {
     const arg = optArgs[i];
 
+    // Architecture selection
+    if (arg.startsWith("--arch=")) {
+      const archVal = arg.substring(7);
+      if (archVal !== "i386" && archVal !== "riscv64") {
+        throw new Error(`Unknown architecture: ${archVal}. Use i386 or riscv64.`);
+      }
+      arch = archVal;
+    }
+
     // Simulator selection
-    if (arg === "--bochs") setSim("bochs");
+    else if (arg === "--bochs") setSim("bochs");
     else if (arg === "--qemu") setSim("qemu");
     else if (arg === "--player") setSim("player");
     else if (arg.startsWith("--sim=")) setSim(arg.substring(6) as Simulator);
@@ -578,11 +591,44 @@ function finishScratchDisk(): void {
 
 async function main(): Promise<void> {
   parseCommandLine();
+
+  // RISC-V mode: run kernel.bin directly without disk setup
+  if (arch === "riscv64") {
+    // For RISC-V, we need kernel.bin in the current directory
+    const kernelBin = findFile("kernel.bin");
+    if (!kernelBin) {
+      throw new Error("Cannot find kernel.bin for RISC-V mode");
+    }
+
+    // Force QEMU for RISC-V
+    sim = "qemu";
+    mem = Math.max(mem, 128); // RISC-V needs more memory
+
+    await runVm({
+      sim,
+      arch,
+      debug,
+      mem,
+      serial,
+      vga: vga ?? "none",
+      jitter,
+      realtime,
+      timeout,
+      killOnFailure,
+      disks: [],
+      kernelBin,
+      kernelArgs,
+    });
+    return;
+  }
+
+  // i386 mode: traditional disk-based setup
   prepareScratchDisk();
   findDisks();
 
   await runVm({
     sim,
+    arch,
     debug,
     mem,
     serial,

@@ -145,9 +145,9 @@ endif
 # If VM is enabled, add swap space (unless test disables it)
 ifeq ($(filter vm, $(KERNEL_SUBDIRS)), vm)
 # Add swap unless the test has _NO_SWAP set (e.g., for multi-oom OOM testing)
-ifeq ($($(TEST)_NO_SWAP),)
-TESTCMD += --swap-size=4
-endif
+# Use $(if ...) instead of ifeq because TEST is a target-specific variable
+# that's only available at build time, not parse time
+TESTCMD += $(if $($(TEST)_NO_SWAP),,--swap-size=4)
 endif
 
 # Separator between pintos options and kernel arguments

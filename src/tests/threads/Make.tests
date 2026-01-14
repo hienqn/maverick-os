@@ -108,5 +108,11 @@ $(MLFQS_OUTPUTS): TIMEOUT = 480
 # Force native threads tests to use bochs simulator
 tests/threads/%.output: SIMULATOR = --qemu
 
+# Provide filesystem disk (required since FILESYS is enabled in threads builds)
+tests/threads/%.output: FILESYSSOURCE = --filesys-size=2
+
+# Threads tests are kernel-mode tests that don't need swap
+$(foreach test,$(tests/threads_TESTS),$(eval $(test)_NO_SWAP = 1))
+
 tests/threads/%.output: RUNCMD = rtkt
 

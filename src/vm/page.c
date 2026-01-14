@@ -149,18 +149,23 @@ void spt_init(void* spt) {
 }
 
 /* Destroy a supplemental page table and free all entries.
-   
+
    Iterates through all entries in the hash table and calls spt_destroy_func()
    for each one, which frees associated resources (frames, swap slots) and
    the entry structure itself. Then destroys the hash table structure.
-   
+
    Implementation: Calls hash_destroy() which automatically calls our
    destroy function for each entry, ensuring proper cleanup of all resources.
-   
+
+   SYNCHRONIZATION: Must hold spt_lock during destruction to prevent
+   frame_evict() from accessing the hash table while we're freeing entries.
+
    After this call, the SPT should not be used again unless re-initialized. */
 void spt_destroy(void* spt) {
   struct spt* s = (struct spt*)spt;
+  lock_acquire(&s->spt_lock);
   hash_destroy(&s->pages, spt_destroy_func);
+  lock_release(&s->spt_lock);
 }
 
 /* ============================================================================

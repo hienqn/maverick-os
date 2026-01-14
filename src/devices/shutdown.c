@@ -4,6 +4,7 @@
 #include "devices/kbd.h"
 #include "devices/serial.h"
 #include "devices/timer.h"
+#include "devices/vga.h"
 #include "threads/io.h"
 #include "threads/thread.h"
 #ifdef USERPROG
@@ -120,6 +121,7 @@ static void print_stats(void) {
   block_print_stats();
 #endif
   console_print_stats();
+  vga_print_stats(); /* Proves VGA driver is being used! */
   kbd_print_stats();
 #ifdef USERPROG
   exception_print_stats();

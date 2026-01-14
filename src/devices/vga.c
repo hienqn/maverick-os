@@ -2,6 +2,7 @@
 #include <round.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 #include "devices/speaker.h"
 #include "threads/io.h"
@@ -32,6 +33,9 @@ static void newline(void);
 static void move_cursor(void);
 static void find_cursor(size_t* x, size_t* y);
 
+/* Count of characters written to VGA */
+static int vga_char_count = 0;
+
 /* Initializes the VGA text display. */
 static void init(void) {
   /* Already initialized? */
@@ -43,6 +47,11 @@ static void init(void) {
   }
 }
 
+/* Print VGA statistics - proves VGA is being used! */
+void vga_print_stats(void) {
+  printf("VGA: %d characters written to framebuffer at 0xB8000\n", vga_char_count);
+}
+
 /* Writes C to the VGA text display, interpreting control
    characters in the conventional ways.  */
 void vga_putc(int c) {
@@ -51,6 +60,7 @@ void vga_putc(int c) {
   enum intr_level old_level = intr_disable();
 
   init();
+  vga_char_count++; /* Count every character sent to VGA */
 
   switch (c) {
     case '\n':

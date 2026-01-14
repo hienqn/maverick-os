@@ -181,7 +181,8 @@ async function runQemu(options: SimulatorOptions): Promise<void> {
   }
 
   const cmd: string[] = ["qemu-system-i386"];
-  cmd.push("-device", "isa-debug-exit");
+  cmd.push("-device", "isa-debug-exit,iobase=0x501,iosize=0x02");
+  cmd.push("-no-reboot"); // Prevent reboot on shutdown/crash
 
   // Performance optimizations
   cmd.push("-accel", "tcg,thread=multi"); // Multi-threaded TCG

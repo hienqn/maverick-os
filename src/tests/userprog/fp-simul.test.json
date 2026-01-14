@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/userprog/fp-simul.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(fp-simul) begin",
+    "(fp-simul) Computing e...",
+    "(compute-e) Success!",
+    "compute-e: exit(162)",
+    "(fp-simul) Success!",
+    "fp-simul: exit(162)"
+  ]
+}

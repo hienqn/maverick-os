@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "source": "tests/filesys/extended/dir-open.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(dir-open) begin",
+    "(dir-open) mkdir \"xyzzy\"",
+    "(dir-open) open \"xyzzy\"",
+    "(dir-open) write \"xyzzy\"",
+    "(dir-open) write \"xyzzy\" (must return -1, actually -1)",
+    "(dir-open) end",
+    "dir-open: exit(0)"
+  ],
+  "expected_variants": [
+    [
+      "(dir-open) begin",
+      "(dir-open) mkdir \"xyzzy\"",
+      "(dir-open) open \"xyzzy\"",
+      "(dir-open) write \"xyzzy\"",
+      "(dir-open) write \"xyzzy\" (must return -1, actually -1)",
+      "(dir-open) end",
+      "dir-open: exit(0)"
+    ],
+    [
+      "(dir-open) begin",
+      "(dir-open) mkdir \"xyzzy\"",
+      "(dir-open) open \"xyzzy\"",
+      "(dir-open) write \"xyzzy\"",
+      "dir-open: exit(-1)"
+    ]
+  ]
+}

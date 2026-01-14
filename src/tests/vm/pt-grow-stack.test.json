@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "source": "tests/vm/pt-grow-stack.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(pt-grow-stack) begin",
+    "(pt-grow-stack) cksum: 3424492700",
+    "(pt-grow-stack) end"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "source": "tests/threads/smfs-starve-64.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(smfs-starve-64) begin",
+    "(smfs-starve-64) Spawning competitor threads...",
+    "(smfs-starve-64) Done spawning competitor threads.",
+    "(smfs-starve-64) Low-priority thread got to run!",
+    "(smfs-starve-64) end"
+  ]
+}

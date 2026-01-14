@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "source": "tests/userprog/stdio/stdio-stdout.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(stdio-stdout) begin",
+    "(stdio-stdout) stdout is not NULL",
+    "Hello from fprintf",
+    "(stdio-stdout) fprintf returns correct count",
+    "fputs output",
+    "(stdio-stdout) fputs to stdout succeeds",
+    "X",
+    "(stdio-stdout) stdout tests passed",
+    "(stdio-stdout) end",
+    "stdio-stdout: exit(0)"
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "source": "tests/filesys/extended/grow-tell.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(grow-tell) begin",
+    "(grow-tell) create \"foobar\"",
+    "(grow-tell) open \"foobar\"",
+    "(grow-tell) writing \"foobar\"",
+    "(grow-tell) close \"foobar\"",
+    "(grow-tell) open \"foobar\" for verification",
+    "(grow-tell) verified contents of \"foobar\"",
+    "(grow-tell) close \"foobar\"",
+    "(grow-tell) end"
+  ]
+}

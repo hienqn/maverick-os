@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "source": "tests/userprog/multithreading/arr-search.ck",
+  "type": "expected",
+  "options": {
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(arr-search) begin",
+    "(arr-search) Main starting",
+    "(arr-search) Main finished",
+    "(arr-search) end",
+    "arr-search: exit(0)"
+  ]
+}

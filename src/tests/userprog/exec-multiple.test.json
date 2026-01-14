@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "source": "tests/userprog/exec-multiple.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(exec-multiple) begin",
+    "(child-simple) run",
+    "child-simple: exit(81)",
+    "(child-simple) run",
+    "child-simple: exit(81)",
+    "(child-simple) run",
+    "child-simple: exit(81)",
+    "(child-simple) run",
+    "child-simple: exit(81)",
+    "(exec-multiple) end",
+    "exec-multiple: exit(0)"
+  ]
+}

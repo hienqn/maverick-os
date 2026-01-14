@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "source": "tests/userprog/multithreading/lock-dbl-rel.ck",
+  "type": "expected",
+  "options": {
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(lock-dbl-rel) begin",
+    "(lock-dbl-rel) First release succeeded",
+    "lock-dbl-rel: exit(1)"
+  ]
+}

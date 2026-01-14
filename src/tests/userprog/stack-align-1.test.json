@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "source": "tests/userprog/stack-align-1.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(stack-align) begin",
+    "(stack-align) last nybble of candidate is 0x0",
+    "(stack-align) end",
+    "stack-align-1: exit(0)"
+  ]
+}

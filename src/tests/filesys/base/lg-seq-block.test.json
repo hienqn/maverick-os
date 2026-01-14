@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "source": "tests/filesys/base/lg-seq-block.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(lg-seq-block) begin",
+    "(lg-seq-block) create \"noodle\"",
+    "(lg-seq-block) open \"noodle\"",
+    "(lg-seq-block) writing \"noodle\"",
+    "(lg-seq-block) close \"noodle\"",
+    "(lg-seq-block) open \"noodle\" for verification",
+    "(lg-seq-block) verified contents of \"noodle\"",
+    "(lg-seq-block) close \"noodle\"",
+    "(lg-seq-block) end"
+  ]
+}

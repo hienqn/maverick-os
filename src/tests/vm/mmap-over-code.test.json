@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/vm/mmap-over-code.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(mmap-over-code) begin",
+    "(mmap-over-code) open \"sample.txt\"",
+    "(mmap-over-code) try to mmap over code segment",
+    "(mmap-over-code) end"
+  ]
+}

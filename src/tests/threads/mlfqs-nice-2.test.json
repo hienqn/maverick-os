@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "source": "tests/threads/mlfqs-nice-2.ck",
+  "type": "mlfqs_fair",
+  "options": {},
+  "nice": [
+    0,
+    5
+  ],
+  "maxdiff": 50
+}

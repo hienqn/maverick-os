@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "source": "tests/userprog/stdio/stdio-fprintf.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(stdio-fprintf) begin",
+    "(stdio-fprintf) create testfile.txt",
+    "(stdio-fprintf) fopen succeeds",
+    "(stdio-fprintf) fprintf returns char count",
+    "(stdio-fprintf) integer format correct",
+    "(stdio-fprintf) string format correct",
+    "(stdio-fprintf) hex format correct",
+    "(stdio-fprintf) char format correct",
+    "(stdio-fprintf) width/padding correct",
+    "(stdio-fprintf) fprintf tests passed",
+    "(stdio-fprintf) end",
+    "stdio-fprintf: exit(0)"
+  ]
+}

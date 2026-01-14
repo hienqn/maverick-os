@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "source": "tests/userprog/fork-fd.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(fork-fd) begin",
+    "fork-fd: exit(0)",
+    "(fork-fd) end",
+    "fork-fd: exit(0)"
+  ]
+}

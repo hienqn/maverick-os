@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "source": "tests/threads/alarm-multiple.ck",
+  "type": "alarm",
+  "options": {},
+  "iterations": 7
+}

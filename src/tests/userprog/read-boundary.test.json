@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "source": "tests/userprog/read-boundary.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(read-boundary) begin",
+    "(read-boundary) open \"sample.txt\"",
+    "(read-boundary) end",
+    "read-boundary: exit(0)"
+  ]
+}

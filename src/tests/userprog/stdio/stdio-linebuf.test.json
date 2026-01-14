@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "source": "tests/userprog/stdio/stdio-linebuf.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(stdio-linebuf) begin",
+    "(stdio-linebuf) create testfile.txt",
+    "(stdio-linebuf) fopen succeeds",
+    "(stdio-linebuf) line buffer flushes on newline",
+    "(stdio-linebuf) first line preserved",
+    "(stdio-linebuf) second line correct",
+    "(stdio-linebuf) linebuf tests passed",
+    "(stdio-linebuf) end",
+    "stdio-linebuf: exit(0)"
+  ]
+}

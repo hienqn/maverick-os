@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/filesys/extended/dir-vine.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(dir-vine) begin",
+    "(dir-vine) creating many levels of files and directories...",
+    "(dir-vine) removing all but top 10 levels of files and directories...",
+    "(dir-vine) end"
+  ]
+}

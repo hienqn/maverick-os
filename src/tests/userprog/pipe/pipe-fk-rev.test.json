@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "source": "tests/userprog/pipe/pipe-fk-rev.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(pipe-fk-rev) begin",
+    "(pipe-fk-rev) pipe()",
+    "(pipe-fk-rev) end",
+    "pipe-fk-rev: exit(0)",
+    "(pipe-fk-rev) parent received: Hello from child",
+    "(pipe-fk-rev) end",
+    "pipe-fk-rev: exit(0)"
+  ]
+}

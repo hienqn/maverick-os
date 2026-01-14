@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/userprog/multithreading/exit-clean-1.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(exit-clean) Root process starting",
+    "(exit-clean) Spawning child threads",
+    "exit-clean-1: exit(162)",
+    "(exit-clean) Root process continuing",
+    "(exit-clean) Success!",
+    "exit-clean-1: exit(0)"
+  ]
+}

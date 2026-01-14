@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/userprog/multi-oom.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true,
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(multi-oom) begin",
+    "(multi-oom) success. program forked 10 times.",
+    "(multi-oom) end"
+  ]
+}

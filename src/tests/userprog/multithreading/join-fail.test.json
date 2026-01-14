@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "source": "tests/userprog/multithreading/join-fail.ck",
+  "type": "expected",
+  "options": {
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(join-fail) begin",
+    "(join-fail) Main starting",
+    "(join-fail) Thread finished",
+    "(join-fail) Finished joining",
+    "(join-fail) Main regained control",
+    "(join-fail) Finished joining",
+    "(join-fail) Main regained control",
+    "(join-fail) Finished self joining",
+    "(join-fail) Main finishing",
+    "(join-fail) end",
+    "join-fail: exit(0)"
+  ]
+}

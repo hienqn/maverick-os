@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "source": "tests/filesys/base/sm-seq-random.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(sm-seq-random) begin",
+    "(sm-seq-random) create \"nibble\"",
+    "(sm-seq-random) open \"nibble\"",
+    "(sm-seq-random) writing \"nibble\"",
+    "(sm-seq-random) close \"nibble\"",
+    "(sm-seq-random) open \"nibble\" for verification",
+    "(sm-seq-random) verified contents of \"nibble\"",
+    "(sm-seq-random) close \"nibble\"",
+    "(sm-seq-random) end"
+  ]
+}

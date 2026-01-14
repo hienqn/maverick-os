@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "source": "tests/vm/pt-grow-bad.ck",
+  "type": "expected",
+  "options": {
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(pt-grow-bad) begin",
+    "pt-grow-bad: exit(-1)"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "source": "tests/threads/alarm-zero.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(alarm-zero) begin",
+    "(alarm-zero) PASS",
+    "(alarm-zero) end"
+  ]
+}

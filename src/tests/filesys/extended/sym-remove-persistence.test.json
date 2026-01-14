@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "source": "tests/filesys/extended/sym-remove-persistence.ck",
+  "type": "archive",
+  "options": {},
+  "archive_tree": {}
+}

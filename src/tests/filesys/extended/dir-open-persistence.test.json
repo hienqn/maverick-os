@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "source": "tests/filesys/extended/dir-open-persistence.ck",
+  "type": "archive",
+  "options": {},
+  "archive_tree": {}
+}

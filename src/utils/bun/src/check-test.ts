@@ -5,12 +5,19 @@
  * Usage: check-test.ts <checker.ck> <test-name> <result-file>
  *
  * This replaces the `perl -I$(SRCDIR) $< $* $@` pattern in Make.tests
- * It parses the .ck file and runs the appropriate verification.
+ *
+ * It supports two formats:
+ * 1. .test.json - Native JSON format (preferred, faster)
+ * 2. .ck - Perl checker files (fallback, parsed at runtime)
+ *
+ * The .test.json files can be generated from .ck files using:
+ *   bun run src/generate-test-specs.ts
  */
 
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { dirname, join } from "path";
-import { parseCkFile, canHandle } from "./tests/ck-parser";
+import { parseCkFile, canHandle, type ParsedChecker } from "./tests/ck-parser";
+import type { CheckOptions } from "./tests/types";
 import {
   initTest,
   checkExpected,
@@ -28,6 +35,82 @@ import {
   checkMlfqsBlock,
 } from "./tests/mlfqs";
 import { checkArchive } from "./tests/archive";
+
+/**
+ * Test spec from .test.json file
+ */
+interface TestSpec {
+  version: 1;
+  source: string;
+  type: string;
+  options: {
+    ignore_exit_codes?: boolean;
+    ignore_user_faults?: boolean;
+  };
+  expected?: string[];
+  expected_variants?: string[][];
+  iterations?: number;
+  nice?: number[];
+  maxdiff?: number;
+  ticks?: number;
+  archive_tree?: any;
+}
+
+/**
+ * Load a .test.json file and convert to ParsedChecker format
+ */
+function loadTestSpec(jsonPath: string): ParsedChecker | null {
+  try {
+    const content = readFileSync(jsonPath, "utf-8");
+    const spec: TestSpec = JSON.parse(content);
+
+    if (spec.version !== 1) {
+      console.error(`Unsupported spec version: ${spec.version}`);
+      return null;
+    }
+
+    const options: CheckOptions = {};
+    if (spec.options.ignore_exit_codes) {
+      options.IGNORE_EXIT_CODES = true;
+    }
+    if (spec.options.ignore_user_faults) {
+      options.IGNORE_USER_FAULTS = true;
+    }
+
+    const parsed: ParsedChecker = {
+      type: spec.type as ParsedChecker["type"],
+      options,
+    };
+
+    // Copy type-specific data
+    if (spec.expected_variants) {
+      parsed.expected = spec.expected_variants;
+    } else if (spec.expected) {
+      parsed.expected = [spec.expected];
+    }
+
+    if (spec.iterations !== undefined) {
+      parsed.iterations = spec.iterations;
+    }
+    if (spec.nice !== undefined) {
+      parsed.nice = spec.nice;
+    }
+    if (spec.maxdiff !== undefined) {
+      parsed.maxdiff = spec.maxdiff;
+    }
+    if (spec.ticks !== undefined) {
+      parsed.ticks = spec.ticks;
+    }
+    if (spec.archive_tree !== undefined) {
+      parsed.archiveTree = spec.archive_tree;
+    }
+
+    return parsed;
+  } catch (err) {
+    // Failed to load JSON, fall back to .ck parsing
+    return null;
+  }
+}
 
 function main() {
   const args = process.argv.slice(2);
@@ -66,12 +149,21 @@ function main() {
   // Check prerequisites for -persistence tests
   checkPrerequisites();
 
-  // Parse the .ck file
-  if (!existsSync(ckFile)) {
-    fail(`Checker file not found: ${ckFile}`);
+  // Try to load .test.json first (faster, no Perl parsing)
+  const jsonFile = ckFile.replace(/\.ck$/, ".test.json");
+  let parsed: ParsedChecker | null = null;
+
+  if (existsSync(jsonFile)) {
+    parsed = loadTestSpec(jsonFile);
   }
 
-  const parsed = parseCkFile(ckFile);
+  // Fall back to parsing .ck file
+  if (parsed === null) {
+    if (!existsSync(ckFile)) {
+      fail(`Checker file not found: ${ckFile}`);
+    }
+    parsed = parseCkFile(ckFile);
+  }
 
   // Handle based on test type
   switch (parsed.type) {

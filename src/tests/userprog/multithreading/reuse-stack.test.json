@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "source": "tests/userprog/multithreading/reuse-stack.ck",
+  "type": "expected",
+  "options": {
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(reuse-stack) begin",
+    "(reuse-stack) Main started",
+    "(reuse-stack) Threads done",
+    "(reuse-stack) Main finished",
+    "(reuse-stack) end",
+    "reuse-stack: exit(0)"
+  ]
+}

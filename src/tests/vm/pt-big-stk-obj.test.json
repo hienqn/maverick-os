@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "source": "tests/vm/pt-big-stk-obj.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(pt-big-stk-obj) begin",
+    "(pt-big-stk-obj) cksum: 3256410166",
+    "(pt-big-stk-obj) end"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "source": "tests/userprog/fp-init.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(fp-init) begin",
+    "(fp-init) Success!",
+    "fp-init: exit(162)"
+  ]
+}

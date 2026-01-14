@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "source": "tests/userprog/exec-bad-ptr.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(exec-bad-ptr) begin",
+    "(exec-bad-ptr) end",
+    "exec-bad-ptr: exit(0)"
+  ],
+  "expected_variants": [
+    [
+      "(exec-bad-ptr) begin",
+      "(exec-bad-ptr) end",
+      "exec-bad-ptr: exit(0)"
+    ],
+    [
+      "(exec-bad-ptr) begin",
+      "exec-bad-ptr: exit(-1)"
+    ]
+  ]
+}

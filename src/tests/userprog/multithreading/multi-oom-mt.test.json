@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/userprog/multithreading/multi-oom-mt.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true,
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(multi-oom-mt) begin",
+    "(multi-oom-mt) success. program forked 10 times.",
+    "(multi-oom-mt) end"
+  ]
+}

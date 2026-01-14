@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "source": "tests/threads/mlfqs-block.ck",
+  "type": "mlfqs_block",
+  "options": {}
+}

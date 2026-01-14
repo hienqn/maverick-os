@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "source": "tests/userprog/read-stdout.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(read-stdout) begin",
+    "(read-stdout) end",
+    "read-stdout: exit(0)"
+  ],
+  "expected_variants": [
+    [
+      "(read-stdout) begin",
+      "(read-stdout) end",
+      "read-stdout: exit(0)"
+    ],
+    [
+      "(read-stdout) begin",
+      "read-stdout: exit(-1)"
+    ]
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "source": "tests/filesys/extended/dir-mk-tree.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(dir-mk-tree) begin",
+    "(dir-mk-tree) creating /0/0/0/0 through /3/2/2/3...",
+    "(dir-mk-tree) open \"/0/2/0/3\"",
+    "(dir-mk-tree) close \"/0/2/0/3\"",
+    "(dir-mk-tree) end"
+  ]
+}

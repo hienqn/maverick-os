@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "source": "tests/userprog/create-bad-ptr.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(create-bad-ptr) begin",
+    "create-bad-ptr: exit(-1)"
+  ]
+}

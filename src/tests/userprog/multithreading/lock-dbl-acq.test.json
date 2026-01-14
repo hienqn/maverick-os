@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "source": "tests/userprog/multithreading/lock-dbl-acq.ck",
+  "type": "expected",
+  "options": {
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(lock-dbl-acq) begin",
+    "(lock-dbl-acq) First acquire succeeded",
+    "lock-dbl-acq: exit(1)"
+  ]
+}

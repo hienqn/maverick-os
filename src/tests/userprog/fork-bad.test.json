@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "source": "tests/userprog/fork-bad.ck",
+  "type": "expected",
+  "options": {
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(fork-bad) begin",
+    "fork-bad: exit(-1)",
+    "(fork-bad) Child process exited with -1",
+    "(fork-bad) end",
+    "fork-bad: exit(0)"
+  ]
+}

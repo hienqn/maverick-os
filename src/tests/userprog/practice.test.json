@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/userprog/practice.ck",
+  "type": "expected",
+  "options": {
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(practice) begin",
+    "practice",
+    "(practice) end",
+    "practice: exit(0)"
+  ]
+}

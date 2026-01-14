@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "source": "tests/threads/mt-matmul-2.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(mt-matmul-2) begin",
+    "(mt-matmul-2) Executing blocked matmul with 2 threads...",
+    "(mt-matmul-2) Matrix results match expected values.",
+    "(mt-matmul-2) end"
+  ]
+}

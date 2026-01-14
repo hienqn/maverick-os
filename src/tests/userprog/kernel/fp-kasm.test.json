@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "source": "tests/userprog/kernel/fp-kasm.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(fp-kasm) begin",
+    "(fp-kasm) PASS",
+    "(fp-kasm) end"
+  ]
+}

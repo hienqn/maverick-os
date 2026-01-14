@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "source": "tests/filesys/extended/sym-write.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(sym-write) begin",
+    "(sym-write) create \"target-file\"",
+    "(sym-write) symlink \"target-file\" -> \"symlink\"",
+    "(sym-write) open \"symlink\"",
+    "(sym-write) write \"symlink\"",
+    "(sym-write) close \"symlink\"",
+    "(sym-write) open \"target-file\"",
+    "(sym-write) read \"target-file\"",
+    "(sym-write) verify contents in \"target-file\"",
+    "(sym-write) close \"target-file\"",
+    "(sym-write) end"
+  ]
+}

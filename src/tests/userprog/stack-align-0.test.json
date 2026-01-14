@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "source": "tests/userprog/stack-align-0.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "stack-align-0: exit(12)"
+  ]
+}

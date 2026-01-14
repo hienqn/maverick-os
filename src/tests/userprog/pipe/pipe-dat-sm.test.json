@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "source": "tests/userprog/pipe/pipe-dat-sm.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(pipe-dat-sm) begin",
+    "(pipe-dat-sm) pipe()",
+    "(pipe-dat-sm) wrote 20 bytes",
+    "(pipe-dat-sm) read 20 bytes",
+    "(pipe-dat-sm) data integrity verified",
+    "(pipe-dat-sm) end",
+    "pipe-dat-sm: exit(0)"
+  ]
+}

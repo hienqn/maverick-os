@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "source": "tests/filesys/extended/grow-file-size.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(grow-file-size) begin",
+    "(grow-file-size) create \"testfile\"",
+    "(grow-file-size) open \"testfile\"",
+    "(grow-file-size) writing \"testfile\"",
+    "(grow-file-size) close \"testfile\"",
+    "(grow-file-size) open \"testfile\" for verification",
+    "(grow-file-size) verified contents of \"testfile\"",
+    "(grow-file-size) close \"testfile\"",
+    "(grow-file-size) end"
+  ]
+}

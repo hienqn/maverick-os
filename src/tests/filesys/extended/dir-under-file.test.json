@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/filesys/extended/dir-under-file.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(dir-under-file) begin",
+    "(dir-under-file) create \"abc\"",
+    "(dir-under-file) mkdir \"abc\" (must return false)",
+    "(dir-under-file) end"
+  ]
+}

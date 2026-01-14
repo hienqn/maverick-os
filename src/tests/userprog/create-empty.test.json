@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "source": "tests/userprog/create-empty.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(create-empty) begin",
+    "(create-empty) create(\"\"): 0",
+    "(create-empty) end",
+    "create-empty: exit(0)"
+  ],
+  "expected_variants": [
+    [
+      "(create-empty) begin",
+      "(create-empty) create(\"\"): 0",
+      "(create-empty) end",
+      "create-empty: exit(0)"
+    ],
+    [
+      "(create-empty) begin",
+      "create-empty: exit(-1)"
+    ]
+  ]
+}

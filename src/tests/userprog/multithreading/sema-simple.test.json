@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/userprog/multithreading/sema-simple.ck",
+  "type": "expected",
+  "options": {
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(sema-simple) begin",
+    "(sema-simple) PASS",
+    "(sema-simple) end",
+    "sema-simple: exit(0)"
+  ]
+}

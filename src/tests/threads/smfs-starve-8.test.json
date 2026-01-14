@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "source": "tests/threads/smfs-starve-8.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(smfs-starve-8) begin",
+    "(smfs-starve-8) Spawning competitor threads...",
+    "(smfs-starve-8) Done spawning competitor threads.",
+    "(smfs-starve-8) Low-priority thread got to run!",
+    "(smfs-starve-8) end"
+  ]
+}

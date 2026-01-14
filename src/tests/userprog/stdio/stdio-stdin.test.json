@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/userprog/stdio/stdio-stdin.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(stdio-stdin) begin",
+    "(stdio-stdin) stdin is not NULL",
+    "(stdio-stdin) stdin fd is 0",
+    "(stdio-stdin) stdin tests passed",
+    "(stdio-stdin) end",
+    "stdio-stdin: exit(0)"
+  ]
+}

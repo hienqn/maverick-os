@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/userprog/multithreading/lock-ll.ck",
+  "type": "expected",
+  "options": {
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(lock-ll) begin",
+    "(lock-ll) PASS",
+    "(lock-ll) end",
+    "lock-ll: exit(0)"
+  ]
+}

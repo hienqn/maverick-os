@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "source": "tests/userprog/wait-bad-pid.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(wait-bad-pid) begin",
+    "(wait-bad-pid) end",
+    "wait-bad-pid: exit(0)"
+  ],
+  "expected_variants": [
+    [
+      "(wait-bad-pid) begin",
+      "(wait-bad-pid) end",
+      "wait-bad-pid: exit(0)"
+    ],
+    [
+      "(wait-bad-pid) begin",
+      "wait-bad-pid: exit(-1)"
+    ]
+  ]
+}

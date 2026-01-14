@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "source": "tests/userprog/open-missing.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(open-missing) begin",
+    "(open-missing) end",
+    "open-missing: exit(0)"
+  ]
+}

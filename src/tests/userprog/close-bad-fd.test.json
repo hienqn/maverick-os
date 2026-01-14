@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "source": "tests/userprog/close-bad-fd.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(close-bad-fd) begin",
+    "(close-bad-fd) end",
+    "close-bad-fd: exit(0)"
+  ],
+  "expected_variants": [
+    [
+      "(close-bad-fd) begin",
+      "(close-bad-fd) end",
+      "close-bad-fd: exit(0)"
+    ],
+    [
+      "(close-bad-fd) begin",
+      "close-bad-fd: exit(-1)"
+    ]
+  ]
+}

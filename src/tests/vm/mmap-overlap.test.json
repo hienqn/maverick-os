@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "source": "tests/vm/mmap-overlap.ck",
+  "type": "expected",
+  "options": {
+    "ignore_exit_codes": true
+  },
+  "expected": [
+    "(mmap-overlap) begin",
+    "(mmap-overlap) open \"zeros\" once",
+    "(mmap-overlap) mmap \"zeros\"",
+    "(mmap-overlap) open \"zeros\" again",
+    "(mmap-overlap) try to mmap \"zeros\" again",
+    "(mmap-overlap) end"
+  ]
+}

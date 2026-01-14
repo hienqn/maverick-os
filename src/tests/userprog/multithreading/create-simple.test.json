@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "source": "tests/userprog/multithreading/create-simple.ck",
+  "type": "expected",
+  "options": {
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(create-simple) begin",
+    "(create-simple) Main started.",
+    "(create-simple) Thread ran.",
+    "(create-simple) Main finished.",
+    "(create-simple) end",
+    "create-simple: exit(0)"
+  ]
+}

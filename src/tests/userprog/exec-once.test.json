@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "source": "tests/userprog/exec-once.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(exec-once) begin",
+    "(child-simple) run",
+    "child-simple: exit(81)",
+    "(exec-once) end",
+    "exec-once: exit(0)"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "tests/userprog/iloveos.ck",
+  "type": "expected",
+  "options": {
+    "ignore_user_faults": true
+  },
+  "expected": [
+    "(iloveos) begin",
+    "I love CS162",
+    "(iloveos) end",
+    "iloveos: exit(0)"
+  ]
+}

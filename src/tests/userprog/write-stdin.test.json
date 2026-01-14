@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "source": "tests/userprog/write-stdin.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(write-stdin) begin",
+    "(write-stdin) end",
+    "write-stdin: exit(0)"
+  ],
+  "expected_variants": [
+    [
+      "(write-stdin) begin",
+      "(write-stdin) end",
+      "write-stdin: exit(0)"
+    ],
+    [
+      "(write-stdin) begin",
+      "write-stdin: exit(-1)"
+    ]
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "source": "tests/userprog/write-boundary.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(write-boundary) begin",
+    "(write-boundary) open \"sample.txt\"",
+    "(write-boundary) end",
+    "write-boundary: exit(0)"
+  ]
+}

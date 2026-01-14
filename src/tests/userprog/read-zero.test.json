@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "source": "tests/userprog/read-zero.ck",
+  "type": "expected",
+  "options": {},
+  "expected": [
+    "(read-zero) begin",
+    "(read-zero) open \"sample.txt\"",
+    "(read-zero) end",
+    "read-zero: exit(0)"
+  ]
+}

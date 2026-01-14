@@ -57,7 +57,8 @@ include ../../Makefile.userprog
 endif
 
 # Default timeout for each test (seconds)
-TIMEOUT = 60
+# Most tests complete in <10s; 30s is plenty for slower ones
+TIMEOUT = 30
 
 # =============================================================================
 # Test Targets
@@ -128,7 +129,8 @@ RUNCMD = run
 # Build the pintos command line piece by piece
 # -v: verbose; -k: kill on kernel panic
 # --gdb or -T: either enable GDB or set timeout
-TESTCMD = pintos -v -k $(if ${PINTOS_DEBUG},--gdb,-T $(TIMEOUT))
+# Note: $(PINTOS) is defined in Make.config (supports USE_BUN=1 toggle)
+TESTCMD = $(PINTOS) -v -k $(if ${PINTOS_DEBUG},--gdb,-T $(TIMEOUT))
 
 # Simulator selection (can be overridden with FORCE_SIMULATOR)
 TESTCMD += $(or ${FORCE_SIMULATOR},$(SIMULATOR))
@@ -178,7 +180,8 @@ TESTCMD += $(if ${PINTOS_DEBUG},,2> $(TEST).errors $(if $(VERBOSE),|tee,>) $(TES
 %.output: kernel.bin loader.bin
 	$(TESTCMD)
 
-# Check test output against expected results using Perl checker script
+# Check test output against expected results
 # $< = checker script (.ck), $* = test name (stem)
+# Note: $(CHECK_TEST) is defined in Make.config (supports USE_BUN=1 toggle)
 %.result: %.ck %.output
-	perl -I$(SRCDIR) $< $* $@
+	$(CHECK_TEST) $< $* $@

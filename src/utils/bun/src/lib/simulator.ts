@@ -169,6 +169,10 @@ async function runQemu(options: SimulatorOptions): Promise<void> {
   const cmd: string[] = ["qemu-system-i386"];
   cmd.push("-device", "isa-debug-exit");
 
+  // Performance optimizations
+  cmd.push("-accel", "tcg,thread=multi"); // Multi-threaded TCG
+  cmd.push("-cpu", "qemu32"); // Simpler CPU = faster emulation
+
   // Add disks
   const hdFlags = ["-hda", "-hdb", "-hdc", "-hdd"];
   for (let i = 0; i < 4; i++) {

@@ -1,6 +1,17 @@
-# Pintos Documentation
+# MaverickOS Documentation
 
-This folder contains learning guides and future implementation plans for the Pintos operating system.
+This folder contains learning guides and future implementation plans for MaverickOS.
+
+## Overview
+
+MaverickOS is an extended implementation of PintOS, the educational operating system from Stanford/Berkeley's CS162 course. Beyond the standard four projects (Threads, User Programs, Virtual Memory, File System), this implementation adds:
+
+- **Crash consistency** via write-ahead logging
+- **RISC-V architecture** support (experimental)
+- **VGA display** driver
+- **Modern tooling** with Bun/TypeScript
+
+Planned features include a TCP/IP network stack, SMP support, VFS layer, and software RAID.
 
 ## Concepts
 
@@ -14,6 +25,7 @@ Educational guides covering OS fundamentals:
 | [PROJECT3_FILESYSTEM_GUIDE.md](concepts/PROJECT3_FILESYSTEM_GUIDE.md) | Comprehensive filesystem tutorial |
 | [APPEND_ONLY_LOGS.md](concepts/APPEND_ONLY_LOGS.md) | Append-only log and journaling concepts |
 | [IO_PATTERNS_AND_CONCEPTS.md](concepts/IO_PATTERNS_AND_CONCEPTS.md) | I/O patterns from blocking to io_uring |
+| [UART_SERIAL_COMMUNICATION.md](concepts/UART_SERIAL_COMMUNICATION.md) | UART serial port and terminal I/O |
 | [network-stack-guide.md](concepts/network-stack-guide.md) | Network stack layers 1-4 guide |
 | [transport-layer-concepts.md](concepts/transport-layer-concepts.md) | UDP/TCP transport layer concepts |
 

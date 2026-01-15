@@ -1,9 +1,9 @@
 <h1 align="center">
-  PintOS
+  MaverickOS
 </h1>
 
 <p align="center">
-  <strong>A Complete Educational Operating System Implementation</strong>
+  <strong>An Advanced Operating System</strong>
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
 
 ## Overview
 
-PintOS is a simple operating system framework for the x86 architecture, developed at Stanford University for teaching OS fundamentals. This repository contains a **fully-featured implementation** of all four major PintOS projects from UC Berkeley's CS162 course.
+MaverickOS is inspired by PintOS, a simple operating system framework for the x86 architecture, developed at Stanford University for teaching OS fundamentals. This repository contains a **fully-featured implementation** of all four major PintOS projects from UC Berkeley's CS162 course. 
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -41,6 +41,8 @@ PintOS is a simple operating system framework for the x86 architecture, develope
 │                    Hardware Abstraction                         │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+On top of these projects, there are a lot more features added to this Operating System that makes it quite different from its origin. For example, this project no longer use Perl for its tooling, but the entire tooling is switched to Typescript. It also added a few more advanced schedulers. The filesystem also support journaling. This repo also support RISC-V architecture as well as x86. It has a complete networking stack as well (pending, in future roadmap)
 
 ## Features
 

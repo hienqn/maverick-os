@@ -47,7 +47,7 @@ jobs:
 
       - name: Install Bun dependencies
         run: bun install --frozen-lockfile
-        working-directory: src/utils/bun
+        working-directory: src/utils
 
       - name: Build ${{ matrix.component }}
         run: make

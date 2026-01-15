@@ -51,7 +51,7 @@ make check ARCH=riscv64
 ### Run Single Test
 ```bash
 # Using pintos directly
-../../utils/bun/bin/pintos --arch=riscv64 -v -k -T 30 -- rtkt alarm-single
+../../utils/bin/pintos --arch=riscv64 -v -k -T 30 -- rtkt alarm-single
 
 # Or with QEMU directly
 qemu-system-riscv64 -machine virt -bios default -nographic \

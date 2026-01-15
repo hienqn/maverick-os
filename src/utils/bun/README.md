@@ -40,25 +40,25 @@ bun run src/set-cmdline.ts disk.dsk -- -q run test
 | `mkdisk.ts` | Create virtual disk images |
 | `backtrace.ts` | Convert crash addresses to symbols |
 | `set-cmdline.ts` | Modify kernel command line in disk |
-| `debug-pintos.ts` | Agent-friendly debugger with JSON output |
+| `maverick-debug.ts` | Agent-friendly debugger with JSON output |
 
 ## Debug Tool for AI Agents
 
-The `debug-pintos` tool provides machine-readable debugging for AI assistants. It runs GDB in batch mode with the MI (Machine Interface) protocol and returns structured JSON.
+The `maverick-debug` tool provides machine-readable debugging for AI assistants. It runs GDB in batch mode with the MI (Machine Interface) protocol and returns structured JSON.
 
 ```bash
 # Basic breakpoint debugging
-debug-pintos --test alarm-single --break thread_create
+maverick-debug --test alarm-single --break thread_create
 
 # With custom GDB commands and memory dumps
-debug-pintos --test priority-donate-one \
+maverick-debug --test priority-donate-one \
   --break lock_acquire \
   --commands "bt,print lock->holder->priority" \
   --memory '$esp:8' \
   --max-stops 5
 
 # Conditional breakpoint
-debug-pintos --test priority-donate-one \
+maverick-debug --test priority-donate-one \
   --break-if "lock_acquire if lock->holder != 0"
 ```
 
@@ -100,7 +100,7 @@ src/utils/bun/
 │   ├── mkdisk.ts            # Disk creation
 │   ├── backtrace.ts         # Symbol resolution
 │   ├── set-cmdline.ts       # Cmdline modification
-│   └── debug-pintos.ts      # Agent-friendly debugger
+│   └── maverick-debug.ts      # Agent-friendly debugger
 └── bin/                     # Wrapper shell scripts
 ```
 

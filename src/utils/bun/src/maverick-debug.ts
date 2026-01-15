@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 /**
- * debug-pintos - Agent-friendly debugger for PintOS
+ * maverick-debug - Agent-friendly debugger for PintOS
  *
  * Runs a PintOS test with GDB in batch mode and returns structured JSON output.
  * Designed for AI agent consumption - provides machine-readable debugging state.
  *
  * Usage:
- *   debug-pintos --test alarm-single --break thread_create --commands "bt"
- *   debug-pintos --spec debug-session.json
+ *   maverick-debug --test alarm-single --break thread_create --commands "bt"
+ *   maverick-debug --spec debug-session.json
  */
 
 import * as fs from "fs";
@@ -105,9 +105,9 @@ function parseArgs(argv: string[]): CliArgs {
 }
 
 function printHelp(): void {
-  console.log(`debug-pintos - Agent-friendly debugger for PintOS
+  console.log(`maverick-debug - Agent-friendly debugger for PintOS
 
-Usage: debug-pintos [OPTIONS]
+Usage: maverick-debug [OPTIONS]
 
 Required (one of):
   --test, -t NAME       Run test NAME (e.g., "alarm-single")
@@ -130,8 +130,8 @@ Output options:
   --arch, -a ARCH       Architecture: i386 (default) or riscv64
 
 Examples:
-  debug-pintos --test alarm-single --break thread_create
-  debug-pintos --test priority-donate-one --break lock_acquire --commands "bt,print lock->holder"
+  maverick-debug --test alarm-single --break thread_create
+  maverick-debug --test priority-donate-one --break lock_acquire --commands "bt,print lock->holder"
 `);
 }
 
@@ -262,7 +262,7 @@ async function buildTestDisk(
   }
 
   // i386: Build bootable disk
-  const tmpDir = fs.mkdtempSync("/tmp/debug-pintos-");
+  const tmpDir = fs.mkdtempSync("/tmp/maverick-debug-");
   const diskPath = path.join(tmpDir, "os.dsk");
 
   // Read loader

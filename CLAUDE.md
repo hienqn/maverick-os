@@ -373,36 +373,36 @@ pintos-gdb kernel.o
 (gdb) continue
 ```
 
-### Agent-Friendly Debugging with debug-pintos
+### Agent-Friendly Debugging with maverick-debug
 
-The `debug-pintos` tool provides machine-readable debugging output for AI agents. It runs GDB in batch mode and returns structured JSON with registers, backtraces, memory dumps, and custom command output.
+The `maverick-debug` tool provides machine-readable debugging output for AI agents. It runs GDB in batch mode and returns structured JSON with registers, backtraces, memory dumps, and custom command output.
 
-**Location:** `src/utils/bun/bin/debug-pintos`
+**Location:** `src/utils/bun/bin/maverick-debug`
 
 **Basic Usage:**
 ```bash
 # Debug a test with a breakpoint
-debug-pintos --test alarm-single --break thread_create
+maverick-debug --test alarm-single --break thread_create
 
 # Multiple breakpoints with custom commands
-debug-pintos --test priority-donate-one \
+maverick-debug --test priority-donate-one \
   --break lock_acquire \
   --break thread_set_priority \
   --commands "bt,print lock->holder->priority" \
   --max-stops 5
 
 # With memory dumps
-debug-pintos --test alarm-single \
+maverick-debug --test alarm-single \
   --break thread_create \
   --memory '$esp:16' \
   --commands "print name,print function"
 
 # Conditional breakpoint
-debug-pintos --test priority-donate-one \
+maverick-debug --test priority-donate-one \
   --break-if "lock_acquire if lock->holder != 0"
 
 # For RISC-V (when toolchain is available)
-debug-pintos --test alarm-single --arch riscv64 --break thread_create
+maverick-debug --test alarm-single --arch riscv64 --break thread_create
 ```
 
 **CLI Options:**
@@ -451,7 +451,7 @@ debug-pintos --test alarm-single --arch riscv64 --break thread_create
 }
 ```
 
-**When to Use debug-pintos:**
+**When to Use maverick-debug:**
 - Investigating test failures that need stepping through code
 - Understanding execution flow at specific functions
 - Examining register/memory state at breakpoints
@@ -459,7 +459,7 @@ debug-pintos --test alarm-single --arch riscv64 --break thread_create
 
 **Example: Debugging a Priority Donation Bug:**
 ```bash
-debug-pintos --test priority-donate-one \
+maverick-debug --test priority-donate-one \
   --break lock_acquire \
   --break lock_release \
   --commands "print lock->holder->priority,print thread_current()->priority" \

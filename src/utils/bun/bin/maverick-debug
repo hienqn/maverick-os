@@ -1,7 +1,7 @@
 #!/bin/bash
 # Agent-friendly debugger for PintOS
-# Runs the Bun/TypeScript debug-pintos tool
+# Runs the Bun/TypeScript maverick-debug tool
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PATH="$HOME/.bun/bin:$PATH"
-exec bun run "$SCRIPT_DIR/../src/debug-pintos.ts" "$@"
+exec bun run "$SCRIPT_DIR/../src/maverick-debug.ts" "$@"

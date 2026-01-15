@@ -128,8 +128,8 @@ $(foreach test,$(TESTS),$(eval $(test).output: $($(test)_PUTFILES)))
 # Set TEST variable for each test's output rule
 $(foreach test,$(TESTS),$(eval $(test).output: TEST = $(test)))
 
-# Each result depends on output and checker script (.ck file)
-$(foreach test,$(TESTS),$(eval $(test).result: $(test).output $(test).ck))
+# Each result depends on output and test spec (.test.json file)
+$(foreach test,$(TESTS),$(eval $(test).result: $(test).output $(test).test.json))
 
 # =============================================================================
 # Test Execution Command
@@ -211,7 +211,7 @@ else
 endif
 
 # Check test output against expected results
-# $< = checker script (.ck), $* = test name (stem)
+# $< = test spec (.test.json), $* = test name (stem)
 # Note: $(CHECK_TEST) is defined in Make.config (supports USE_BUN=1 toggle)
-%.result: %.ck %.output
+%.result: %.test.json %.output
 	$(CHECK_TEST) $< $* $@

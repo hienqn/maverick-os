@@ -2,16 +2,11 @@
 /**
  * PintOS Test Checker - TypeScript port of Perl test verification
  *
- * Usage: check-test.ts <checker.ck> <test-name> <result-file>
+ * Usage: check-test.ts <spec.test.json> <test-name> <result-file>
  *
  * This replaces the `perl -I$(SRCDIR) $< $* $@` pattern in Make.tests
  *
- * It supports two formats:
- * 1. .test.json - Native JSON format (preferred, faster)
- * 2. .ck - Perl checker files (parsed at runtime, no Perl needed)
- *
- * The .test.json files can be generated from .ck files using:
- *   bun run src/generate-test-specs.ts
+ * Primary format: .test.json (native JSON, fast)
  */
 
 import { existsSync, readFileSync } from "fs";
@@ -180,20 +175,29 @@ function main() {
   // Check prerequisites for -persistence tests
   checkPrerequisites();
 
-  // Try to load .test.json first (faster, no Perl parsing)
-  const jsonFile = ckFile.replace(/\.ck$/, ".test.json");
+  // Determine the JSON spec file path
+  // Support both .test.json (preferred) and .ck (legacy) inputs
+  let jsonFile: string;
+  if (ckFile.endsWith(".test.json")) {
+    jsonFile = ckFile;
+  } else {
+    jsonFile = ckFile.replace(/\.ck$/, ".test.json");
+  }
+
   let parsed: ParsedChecker | null = null;
 
+  // Try to load .test.json first (faster, no Perl parsing)
   if (existsSync(jsonFile)) {
     parsed = loadTestSpec(jsonFile);
   }
 
-  // Fall back to parsing .ck file
-  if (parsed === null) {
-    if (!existsSync(ckFile)) {
-      fail(`Checker file not found: ${ckFile}`);
-    }
+  // Fall back to parsing .ck file (legacy support)
+  if (parsed === null && !ckFile.endsWith(".test.json") && existsSync(ckFile)) {
     parsed = parseCkFile(ckFile);
+  }
+
+  if (parsed === null) {
+    fail(`Test spec file not found: ${jsonFile}`);
   }
 
   // Handle based on test type

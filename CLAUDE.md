@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance for AI assistants working with the PintOS codebase.
+This file provides comprehensive guidance for AI assistants working with the PintOS codebase.
 
 ## Project Overview
 
@@ -15,8 +15,13 @@ src/
 ├── vm/           # Virtual memory, paging, swap, mmap
 ├── filesys/      # File system, buffer cache, directories, WAL
 ├── devices/      # Hardware drivers (timer, disk, keyboard, etc.)
-├── arch/         # Architecture-specific code (riscv64/)
-├── lib/          # C library (kernel/ and user/ subdirectories)
+├── arch/         # Architecture-specific code
+│   ├── i386/     # x86 32-bit (start.S, intr.c, pagedir.c, loader.S)
+│   ├── riscv64/  # RISC-V 64-bit (start.S, mmu.c, trap.S, virtio)
+│   └── common/   # Shared abstractions (arch.h, cpu.h, intr.h)
+├── lib/          # C library
+│   ├── kernel/   # Kernel-only: bitmap, hash, list, debug
+│   └── user/     # User-space C library
 ├── tests/        # Test suites for each component
 ├── examples/     # Sample user programs
 └── utils/        # Build and test utilities (Bun/TypeScript)
@@ -53,6 +58,8 @@ make format
 
 ## Testing
 
+### Running Tests
+
 ```bash
 # Run all tests for a component
 cd src/userprog && make check
@@ -74,6 +81,32 @@ pintos --qemu -- run alarm-multiple
 cat tests/threads/alarm-multiple.output
 ```
 
+### Test File Structure
+
+Each test consists of complementary files:
+- **`.c`**: Test source code (user program or kernel code)
+- **`.ck`**: Perl checker script for output verification
+- **`.test.json`**: Native JSON format (faster than `.ck`)
+
+Test utilities (`tests/lib.h`):
+- `msg()` - Print test output
+- `fail()` - Fail test with error message
+- `CHECK(condition, "message")` - Assert macro
+
+### Debugging Test Failures
+
+```bash
+# Check test output vs expected
+cat tests/userprog/args-single.output   # Actual output
+cat tests/userprog/args-single.result   # Pass/fail result
+
+# Run with timeout and verbose output
+pintos --qemu -T 60 -- run args-single
+
+# Run with specific scheduler
+pintos --qemu -- -sched=prio run priority-donate-one
+```
+
 ## Code Style
 
 - **Indentation**: 2 spaces (no tabs)
@@ -85,10 +118,11 @@ cat tests/threads/alarm-multiple.output
 
 ### Threading (`src/threads/`)
 - `thread.h/c` - Thread struct, lifecycle, scheduling
-- `synch.h/c` - Locks, semaphores, condition variables
+- `synch.h/c` - Locks, semaphores, condition variables, rw_locks
 - `interrupt.h/c` - Interrupt handling
 - `palloc.h/c` - Page allocator
 - `malloc.h/c` - Subpage allocator
+- `fixed-point.h` - 17.14 fixed-point arithmetic for MLFQS
 
 ### User Programs (`src/userprog/`)
 - `process.h/c` - ELF loading, process management, fork/exec
@@ -108,44 +142,156 @@ cat tests/threads/alarm-multiple.output
 - `cache.h/c` - 64-block buffer cache with LRU
 - `wal.h/c` - Write-ahead logging
 
-## Architecture Notes
+## Architecture Support
 
-### Memory Layout
-- `PHYS_BASE` (0xC0000000): Kernel/user boundary
+### x86 (i386) - Primary
+
+**Memory Layout:**
+- `PHYS_BASE` = 0xC0000000 (3GB boundary)
+- User space: 0x00000000 - 0xBFFFFFFF
+- Kernel space: 0xC0000000 - 0xFFFFFFFF
 - User code starts at 0x08048000
-- User stack grows down from PHYS_BASE
 
-### Synchronization Primitives
-- Interrupts must be disabled for certain operations (use `intr_disable()`)
-- Never hold locks across blocking operations
-- Priority donation prevents priority inversion
+**Key Files:**
+- `arch/i386/start.S` - Bootstrap code
+- `arch/i386/intr.c` - Interrupt handling
+- `arch/i386/pagedir.c` - Page directory manipulation
+- `arch/i386/loader.S` - Bootloader
 
-### Page Fault Handling
-- User pointer validation happens via page faults in `exception.c`
-- SPT in `vm/page.c` tracks page locations (frame, swap, file, or zero)
+**System Calls:** Via `INT 0x30` interrupt, arguments on user stack.
 
-### System Calls
-- Entry point: `syscall_handler()` in `userprog/syscall.c`
-- Arguments passed on user stack
-- Always validate user pointers before dereferencing
+### RISC-V (riscv64) - Experimental
 
-## Common Patterns
+**Memory Layout:**
+- Sv39 MMU (39-bit virtual address space)
+- `PHYS_BASE` = 0xFFFFFFFF80000000
+- User space: Lower 256GB
+- Kernel space: Upper half
 
-### Disabling Interrupts
+**Key Files:**
+- `arch/riscv64/start.S` - Entry from OpenSBI
+- `arch/riscv64/mmu.c` - Page table management
+- `arch/riscv64/trap.S` - Trap entry/exit
+- `arch/riscv64/virtio*.c` - VirtIO device drivers
+
+**System Calls:** Via `ECALL` instruction, arguments in a0-a7 registers.
+
+### Architecture-Neutral Patterns
+
+Use these macros for portable code:
 ```c
-enum intr_level old_level = intr_disable();
-// Critical section
-intr_set_level(old_level);
+#ifdef ARCH_RISCV64
+  // RISC-V specific code
+#else
+  // x86 specific code (default)
+#endif
+
+// Use arch-neutral functions
+is_user_vaddr(addr)   // Check if address is in user space
+is_kernel_vaddr(addr) // Check if address is in kernel space
+ptov(paddr)           // Physical to virtual address
+vtop(vaddr)           // Virtual to physical address
 ```
 
-### Lock Usage
+## Core Code Patterns
+
+### Embedded Container Pattern
+
+PintOS uses embedded elements instead of pointers to avoid dynamic allocation overhead. This pattern appears throughout `list.h` and `hash.h`:
+
+```c
+// Define structure with embedded element
+struct thread {
+  struct list_elem elem;      // For ready queue
+  struct list_elem allelem;   // For all_list
+  // ... other fields
+};
+
+// Convert from element back to containing structure
+struct list_elem *e;
+for (e = list_begin(&ready_list); e != list_end(&ready_list); e = list_next(e)) {
+  struct thread *t = list_entry(e, struct thread, elem);
+  // Process t...
+}
+```
+
+For hash tables (used in SPT):
+```c
+struct spt_entry {
+  void *upage;
+  struct hash_elem hash_elem;
+  // ... other fields
+};
+
+// Lookup and convert
+struct hash_elem *h = hash_find(&spt->pages, &lookup.hash_elem);
+struct spt_entry *entry = hash_entry(h, struct spt_entry, hash_elem);
+```
+
+### Synchronization Primitives
+
+**Hierarchy (bottom to top):**
+```
+Semaphore (foundation) → Lock (mutex) → Condition Variable → RW Lock
+```
+
+**Disabling Interrupts:**
+```c
+enum intr_level old_level = intr_disable();
+// Critical section - atomic on uniprocessor
+intr_set_level(old_level);  // Restore previous state
+```
+
+**Lock Usage:**
 ```c
 lock_acquire(&some_lock);
 // Protected section
 lock_release(&some_lock);
 ```
 
-### Hash Table Iteration (SPT, etc.)
+**Condition Variables (Mesa semantics):**
+```c
+lock_acquire(&lock);
+while (!condition)              // WHILE, not IF (spurious wakeup)
+  cond_wait(&cond, &lock);      // Releases lock, blocks, reacquires
+// Condition is now true
+lock_release(&lock);
+```
+
+**Readers-Writers Lock (writer-preferring):**
+```c
+rw_lock_acquire_read(&cache_lock);   // Multiple readers allowed
+read_from_cache();
+rw_lock_release_read(&cache_lock);
+
+rw_lock_acquire_write(&cache_lock);  // Exclusive access
+update_cache();
+rw_lock_release_write(&cache_lock);
+```
+
+### Memory Management
+
+**Page Allocation:**
+```c
+enum palloc_flags {
+  PAL_ASSERT = 001,  // Panic on failure
+  PAL_ZERO = 002,    // Zero page contents
+  PAL_USER = 004     // User page (not kernel)
+};
+
+void *page = palloc_get_page(PAL_USER | PAL_ZERO);
+// ... use page ...
+palloc_free_page(page);
+```
+
+**SPT Page States:**
+- `PAGE_ZERO` - Not yet allocated, will be zero-filled on access
+- `PAGE_FILE` - Backed by file (executable or mmap)
+- `PAGE_SWAP` - Swapped out to disk
+- `PAGE_FRAME` - Currently in physical memory
+
+### Hash Table Iteration
+
 ```c
 struct hash_iterator i;
 hash_first(&i, &table);
@@ -155,12 +301,168 @@ while (hash_next(&i)) {
 }
 ```
 
-## Debugging
+### User Pointer Validation
 
-- Use `printf()` or `PANIC()` for debugging
-- Run with `--qemu` flag: `pintos --qemu -- run test-name`
-- GDB support: `pintos-gdb` wrapper script
-- Backtrace utility: `utils/bun/bin/backtrace`
+User pointers are NOT manually validated before dereferencing. Instead, page faults catch invalid accesses:
+
+```c
+// In page fault handler (exception.c)
+if (!user && is_user_vaddr(fault_addr)) {
+  // Kernel tried to access invalid user address
+  thread_current()->pcb->my_status->exit_code = -1;
+  process_exit();
+}
+```
+
+## Debugging Guide
+
+### Debug Macros
+
+Located in `lib/debug.h`:
+
+```c
+// Halt kernel with message (always enabled)
+PANIC("message: %d", value);
+// Output: "PANIC in function_name (file.c:123): message: 42"
+
+// Assert condition (disabled with NDEBUG)
+ASSERT(ptr != NULL);
+// Panics with: "assertion `ptr != NULL' failed."
+
+// Unreachable code check
+NOT_REACHED();
+// Panics with: "executed an unreachable statement"
+```
+
+### Kernel Panics
+
+When a panic occurs, you'll see:
+```
+PANIC in thread_schedule (thread.c:456): assertion `is_thread(t)' failed.
+Call stack: 0x8004a1 0x8003b2 0x8002c3
+```
+
+Use the backtrace utility:
+```bash
+cd build/i386
+../../utils/bun/bin/backtrace kernel.o 0x8004a1 0x8003b2 0x8002c3
+```
+
+### Page Fault Debugging
+
+Page faults are handled in `userprog/exception.c`:
+- **User fault + valid SPT entry**: Load page via `spt_load_page()`
+- **User fault + invalid address**: Terminate process with exit code -1
+- **Kernel fault on user address**: Bug in kernel code
+
+Common causes:
+- Invalid user pointer passed to syscall
+- Stack overflow (access below stack pointer)
+- Use-after-free
+
+### GDB Usage
+
+```bash
+# Start pintos with GDB support
+pintos --qemu --gdb -- run test-name
+
+# In another terminal
+pintos-gdb kernel.o
+(gdb) target remote localhost:1234
+(gdb) break thread_create
+(gdb) continue
+```
+
+### Printf Debugging
+
+```c
+// In kernel code
+printf("DEBUG: value=%d, ptr=%p\n", value, ptr);
+
+// Use hex_dump for memory inspection
+hex_dump(0, buffer, 64, true);
+```
+
+## Common Pitfalls
+
+### Thread Stack Overflow
+
+Each thread has a 4KB page with struct thread at the bottom and stack growing down:
+```
+┌─────────────────────┐ 4KB
+│   Kernel Stack ↓    │
+│                     │
+│  (< 4KB available!) │
+├─────────────────────┤
+│   magic (canary)    │
+│   struct thread     │
+└─────────────────────┘ 0
+```
+
+**Avoid:** Large local arrays or deep recursion in kernel code.
+
+### Lock Misuse
+
+```c
+// WRONG: Holding lock across blocking operation
+lock_acquire(&lock);
+sema_down(&sema);  // May block!
+lock_release(&lock);
+
+// CORRECT: Release lock before blocking
+lock_acquire(&lock);
+// ... critical section ...
+lock_release(&lock);
+sema_down(&sema);  // Safe to block
+```
+
+### Interrupt Level Restoration
+
+```c
+// WRONG: Always enables interrupts
+intr_disable();
+// critical section
+intr_enable();  // What if interrupts were already disabled?
+
+// CORRECT: Restore previous state
+enum intr_level old_level = intr_disable();
+// critical section
+intr_set_level(old_level);  // Restore to previous state
+```
+
+### Priority Donation
+
+When high-priority thread H waits for lock held by low-priority L:
+- L inherits H's priority temporarily
+- L runs at elevated priority until it releases the lock
+- Without donation: priority inversion (H starves)
+
+The `lock->max_donation` and `thread->held_locks` fields support this.
+
+### User Pointer Bugs
+
+```c
+// WRONG: Deference user pointer directly
+int value = *user_ptr;  // May page fault!
+
+// CORRECT: Let page fault handler validate
+// (PintOS approach - simpler than manual validation)
+// If fault occurs in kernel mode on user address,
+// exception handler terminates the process.
+```
+
+### Fixed-Point Arithmetic
+
+The kernel cannot use floating-point (FPU not initialized). MLFQS uses 17.14 fixed-point:
+
+```c
+#include "threads/fixed-point.h"
+
+fixed_point_t half = fix_frac(1, 2);   // 0.5
+fixed_point_t two = fix_int(2);        // 2.0
+fixed_point_t one = fix_mul(half, two); // 1.0
+int result = fix_round(one);           // 1
+```
 
 ## Commit Guidelines
 
@@ -172,3 +474,9 @@ Each test has:
 - `.c` file: Test source code
 - `.ck` file: Expected output checker script
 - Tests run in QEMU/Bochs emulator via `pintos` utility
+
+Test categories by component:
+- **threads/**: alarm-*, priority-*, mlfqs-*, fair-*
+- **userprog/**: args-*, exec-*, fork-*, syscall-*
+- **vm/**: pt-*, page-*, mmap-*
+- **filesys/**: grow-*, dir-*, syn-*, cache-*

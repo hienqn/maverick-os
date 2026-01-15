@@ -542,6 +542,31 @@ printf("DEBUG: value=%d, ptr=%p\n", value, ptr);
 hex_dump(0, buffer, 64, true);
 ```
 
+### Debugging Skills (Slash Commands)
+
+Specialized debugging workflows are available as slash commands:
+
+| Skill | Description |
+|-------|-------------|
+| `/debug` | Main debugging hub with decision tree |
+| `/debug-test` | Quick test run with structured output |
+| `/debug-panic` | Kernel panic analysis workflow |
+| `/debug-fault` | Page faults, triple faults, memory errors |
+| `/debug-deadlock` | Timeout and deadlock investigation |
+| `/debug-printf` | Add printf statements for tracing |
+| `/debug-learn` | Debug while teaching OS concepts |
+
+**Decision Tree:**
+```
+Test failing?
+├── PANIC message → /debug-panic
+├── TIMEOUT → /debug-deadlock
+├── Page fault → /debug-fault
+├── Triple fault → /debug-fault
+├── Wrong output → /debug-test (check diff)
+└── Unknown → /debug-test (start here)
+```
+
 ## Common Pitfalls
 
 ### Thread Stack Overflow

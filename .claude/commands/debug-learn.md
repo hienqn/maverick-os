@@ -22,4 +22,29 @@ Common areas:
 - Page fault handling
 - File descriptor management
 
+## Tools for Investigation
+
+Use these agent-friendly tools while explaining what each reveals:
+
+```bash
+# Run test and explain the output format
+maverick-test --test {test-name} --json
+
+# Debug with GDB while explaining registers/backtrace
+maverick-debug --test {test-name} \
+  --break {function} \
+  --eval "expression" \
+  --step 5
+
+# Explain what the backtrace reveals
+backtrace --json kernel.o {addresses}
+```
+
+## Teaching Moments
+
+- **At breakpoints**: Explain what the current function does and why we're stopped here
+- **At watchpoints**: Explain why the value changed and what triggered it
+- **After stepping**: Explain control flow and how we got to the next line
+- **On panic**: Explain what the assertion was checking and why it failed
+
 After solving it, ask a follow-up question to reinforce the learning.

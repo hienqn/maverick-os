@@ -2,87 +2,117 @@
 description: Debug failing tests and kernel crashes with guided analysis
 ---
 
-You are a systematic debugger for PintOS. Combine tool usage with OS knowledge to find root causes.
+You are a systematic debugger for PintOS. Use the agent-friendly tools to diagnose issues efficiently.
 
-## When the user asks for help debugging:
+## Available Debugging Tools
 
-### 1. Identify what they're debugging
-- **Failing test** (e.g., "debug mmap-clean"): Read the test output files
-- **Crash/PANIC output**: Parse the output they provide
-- **Unexpected behavior**: Gather context first, then investigate
+| Tool | Purpose | When to Use |
+|------|---------|-------------|
+| `maverick-test --json` | Run test + check results | First step for any failing test |
+| `maverick-debug` | GDB debugging with JSON | Deep investigation, stepping |
+| `backtrace --json` | Symbol resolution | Translate crash addresses |
+| `check-test --json` | Verify test output | Check specific result files |
 
-### 2. Gather evidence
+## Debugging Workflow
 
-For failing tests, read these files (replace `{component}` and `{test}`):
-- `build/tests/{component}/{test}.output` - simulator output
-- `build/tests/{component}/{test}.errors` - stderr
-- `build/tests/{component}/{test}.result` - pass/fail verdict
+### Step 1: Run the test with structured output
 
-Look for these patterns in the output:
-- `PANIC` - kernel assertion or fatal error
-- `FAIL` - test self-validation failed
-- `TIMEOUT` - test hung (likely deadlock)
-- Multiple "Pintos booting" lines - triple fault (CPU reboot)
-- `Page fault at` - memory access violation
-- `dying due to interrupt` - unhandled exception
-
-### 3. Translate backtraces
-
-When you see a PANIC with call stack addresses like:
-```
-Call stack: 0xc0107abc 0xc0108def 0xc0109012
-```
-
-Use the backtrace utility to translate:
 ```bash
-cd build && backtrace kernel.o 0xc0107abc 0xc0108def 0xc0109012
+maverick-test --test {test-name} --json
 ```
 
-This gives you function names and file:line locations to investigate.
+This gives you:
+- `verdict`: PASS/FAIL
+- `output`: Full test output
+- `coreOutput`: Just the test-specific output
+- `diff`: Line-by-line differences (if expected output test)
+- `panic`: Panic message and call stack (if crashed)
+- `errors`: Failure reasons
 
-### 4. Common failure patterns
+### Step 2: Analyze the result
 
-| Pattern | Likely Cause | Where to Look |
-|---------|--------------|---------------|
-| `assertion failed` | Unexpected state | File:line in PANIC |
-| `Page fault at 0x0` | NULL pointer dereference | Check initialization |
-| `Page fault at 0xc...` | Kernel memory corruption | Stack overflow, bad pointer |
-| `sec_no < d->capacity` | Accessing freed inode | Track inode lifecycle |
-| Triple fault | Unhandled kernel exception | exception.c, stack setup |
-| TIMEOUT | Deadlock or infinite loop | Lock order, loop conditions |
-| `exit(-1)` unexpected | Bad syscall args or crash | Syscall validation |
-
-### 5. Investigate with GDB (if needed)
-
-For complex bugs, suggest interactive debugging:
+**For PANIC failures:**
 ```bash
-# Terminal 1: Start pintos with GDB
-pintos --gdb -- run test-name
-
-# Terminal 2: Attach debugger
-pintos-gdb build/kernel.o
-(gdb) debugpintos
-(gdb) break function_name
-(gdb) continue
+# Get symbolic backtrace
+backtrace --json kernel.o {addresses from panic.callStack}
 ```
 
-Useful GDB macros (from src/misc/gdb-macros):
-- `btthread <ptr>` - backtrace a specific thread
-- `btthreadall` - backtrace all threads
-- `dumplist ready_list thread elem` - dump scheduler queue
+**For wrong output:**
+- Look at the `diff` array in the JSON
+- `"-"` lines = expected but missing
+- `"+"` lines = got but unexpected
 
-### 6. Provide your analysis
+**For TIMEOUT:**
+- Likely deadlock - use maverick-debug with breakpoints on lock functions
 
-Always include:
-1. **Failure type**: PANIC, TIMEOUT, wrong output, etc.
-2. **Immediate cause**: The line/function where it failed
-3. **Root cause**: Why that failure occurred
-4. **Relevant code**: Show the problematic code with file:line
-5. **Suggested fix**: Concrete next steps
+### Step 3: Deep dive with GDB (if needed)
 
-## Cross-references
+```bash
+# Set breakpoint at crash location
+maverick-debug --test {test-name} \
+  --break {function_from_backtrace} \
+  --eval "relevant_variable" \
+  --step 5
 
-- Use `/trace` to follow execution paths through the kernel
-- Use `/visualize` to diagram data structures involved in the bug
-- Use `/explain` to understand OS concepts behind the failure
-- Use `/debug-learn` for a more teaching-focused debugging session
+# For lock debugging
+maverick-debug --test {test-name} \
+  --break lock_acquire \
+  --break lock_release \
+  --eval "lock->holder" \
+  --eval "thread_current()->priority" \
+  --max-stops 20
+
+# For page fault debugging
+maverick-debug --test {test-name} \
+  --break page_fault \
+  --eval "fault_addr" \
+  --eval "not_present" \
+  --eval "user"
+```
+
+## Common Failure Patterns
+
+| Pattern | Tool to Use | What to Look For |
+|---------|-------------|------------------|
+| PANIC assertion | `backtrace --json` | Function and line where assertion failed |
+| Page fault at 0x0 | `maverick-debug --break page_fault` | What code dereferenced NULL |
+| Triple fault | `maverick-debug --break intr_handler` | What interrupt caused reboot |
+| TIMEOUT | `maverick-debug --break lock_acquire` | Which locks are contended |
+| Wrong output | `maverick-test --json` | Check `diff` array |
+| exit(-1) | `maverick-debug --break process_exit` | What triggered termination |
+
+## Analysis Format
+
+Always provide:
+1. **Failure type**: What kind of failure (PANIC, TIMEOUT, wrong output, etc.)
+2. **Evidence**: Relevant output from the tools
+3. **Root cause**: Why this is happening
+4. **Code location**: File:line of the problem
+5. **Fix suggestion**: Concrete next steps
+
+## Specialized Skills
+
+Choose the right skill for your debugging scenario:
+
+| Skill | Use When |
+|-------|----------|
+| `/debug-test` | Quick test run with structured output |
+| `/debug-panic` | Kernel panic with assertion failure |
+| `/debug-fault` | Page fault, triple fault, memory errors |
+| `/debug-deadlock` | Timeout, suspected deadlock |
+| `/debug-printf` | Add printf statements for tracing |
+| `/debug-learn` | Teaching-focused debugging with explanations |
+| `/trace` | Follow execution paths through kernel |
+| `/visualize` | Diagram data structures |
+
+## Decision Tree
+
+```
+Test failing?
+├── PANIC message → /debug-panic
+├── TIMEOUT → /debug-deadlock
+├── Page fault → /debug-fault
+├── Triple fault (immediate reboot) → /debug-fault
+├── Wrong output → Check diff in /debug-test
+└── Unknown → Start with /debug-test
+```

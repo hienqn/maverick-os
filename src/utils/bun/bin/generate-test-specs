@@ -4,5 +4,6 @@
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUN_DIR="$(dirname "$SCRIPT_DIR")"
+export PATH="$HOME/.bun/bin:$PATH"
 
 exec bun run "$BUN_DIR/src/generate-test-specs.ts" "$@"

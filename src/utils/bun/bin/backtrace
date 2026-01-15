@@ -3,4 +3,5 @@
 # Runs the Bun/TypeScript version
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PATH="$HOME/.bun/bin:$PATH"
 exec bun run "$SCRIPT_DIR/../src/backtrace.ts" "$@"

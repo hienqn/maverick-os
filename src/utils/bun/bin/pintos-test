@@ -1,2 +1,4 @@
-#!/usr/bin/env bun
-import "../src/pintos-test.ts";
+#!/bin/bash
+export PATH="$HOME/.bun/bin:$PATH"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec bun run "$SCRIPT_DIR/../src/pintos-test.ts" "$@"

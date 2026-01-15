@@ -7,7 +7,8 @@
     "pintos": "bun run src/pintos.ts",
     "mkdisk": "bun run src/mkdisk.ts",
     "backtrace": "bun run src/backtrace.ts",
-    "set-cmdline": "bun run src/set-cmdline.ts"
+    "set-cmdline": "bun run src/set-cmdline.ts",
+    "debug-pintos": "bun run src/debug-pintos.ts"
   },
   "dependencies": {
     "commander": "^12.0.0"

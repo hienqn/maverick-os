@@ -373,6 +373,101 @@ pintos-gdb kernel.o
 (gdb) continue
 ```
 
+### Agent-Friendly Debugging with debug-pintos
+
+The `debug-pintos` tool provides machine-readable debugging output for AI agents. It runs GDB in batch mode and returns structured JSON with registers, backtraces, memory dumps, and custom command output.
+
+**Location:** `src/utils/bun/bin/debug-pintos`
+
+**Basic Usage:**
+```bash
+# Debug a test with a breakpoint
+debug-pintos --test alarm-single --break thread_create
+
+# Multiple breakpoints with custom commands
+debug-pintos --test priority-donate-one \
+  --break lock_acquire \
+  --break thread_set_priority \
+  --commands "bt,print lock->holder->priority" \
+  --max-stops 5
+
+# With memory dumps
+debug-pintos --test alarm-single \
+  --break thread_create \
+  --memory '$esp:16' \
+  --commands "print name,print function"
+
+# Conditional breakpoint
+debug-pintos --test priority-donate-one \
+  --break-if "lock_acquire if lock->holder != 0"
+
+# For RISC-V (when toolchain is available)
+debug-pintos --test alarm-single --arch riscv64 --break thread_create
+```
+
+**CLI Options:**
+| Option | Description |
+|--------|-------------|
+| `--test NAME` | Test to debug (e.g., "alarm-single") |
+| `--break LOC` | Set breakpoint (function, file:line, or *address) |
+| `--break-if "LOC if COND"` | Conditional breakpoint |
+| `--watch EXPR` | Write watchpoint |
+| `--rwatch EXPR` | Read watchpoint |
+| `--commands CMDS` | Comma-separated GDB commands to run at each stop |
+| `--memory SPEC` | Memory dump spec (e.g., "$esp:16" or "0xc0000000:32") |
+| `--max-stops N` | Max breakpoint hits before returning (default: 10) |
+| `--timeout SECS` | Execution timeout (default: 60) |
+| `--arch ARCH` | Architecture: i386 (default) or riscv64 |
+| `--output FILE` | Write JSON to file instead of stdout |
+
+**Output JSON Structure:**
+```json
+{
+  "status": "completed|timeout|panic|error",
+  "test": "alarm-single",
+  "arch": "i386",
+  "stops": [
+    {
+      "stopNumber": 1,
+      "reason": "breakpoint-hit",
+      "location": {
+        "function": "thread_create",
+        "file": "../../../threads/thread.c",
+        "line": 387,
+        "address": "0xc00214dd"
+      },
+      "registers": { "eax": "0x...", "esp": "0x...", "eip": "0x...", ... },
+      "backtrace": [
+        { "frame": 0, "function": "thread_create", "file": "thread.c", "line": 387 },
+        { "frame": 1, "function": "main", "file": "init.c", "line": 179 }
+      ],
+      "memoryDumps": { "$esp:8": ["0xc0026b9b", "0xc00543a0", ...] },
+      "commandOutputs": { "print name": "$1 = 0xc00543a0 \"kbd-worker\"" }
+    }
+  ],
+  "breakpointsSet": [...],
+  "serialOutput": "Pintos booting...",
+  "errors": []
+}
+```
+
+**When to Use debug-pintos:**
+- Investigating test failures that need stepping through code
+- Understanding execution flow at specific functions
+- Examining register/memory state at breakpoints
+- Debugging kernel panics (set breakpoint at panic location)
+
+**Example: Debugging a Priority Donation Bug:**
+```bash
+debug-pintos --test priority-donate-one \
+  --break lock_acquire \
+  --break lock_release \
+  --commands "print lock->holder->priority,print thread_current()->priority" \
+  --max-stops 10
+```
+
+This captures priority values at each lock operation to trace donation behavior.
+
 ### Printf Debugging
 
 ```c

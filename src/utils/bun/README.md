@@ -40,6 +40,37 @@ bun run src/set-cmdline.ts disk.dsk -- -q run test
 | `mkdisk.ts` | Create virtual disk images |
 | `backtrace.ts` | Convert crash addresses to symbols |
 | `set-cmdline.ts` | Modify kernel command line in disk |
+| `debug-pintos.ts` | Agent-friendly debugger with JSON output |
+
+## Debug Tool for AI Agents
+
+The `debug-pintos` tool provides machine-readable debugging for AI assistants. It runs GDB in batch mode with the MI (Machine Interface) protocol and returns structured JSON.
+
+```bash
+# Basic breakpoint debugging
+debug-pintos --test alarm-single --break thread_create
+
+# With custom GDB commands and memory dumps
+debug-pintos --test priority-donate-one \
+  --break lock_acquire \
+  --commands "bt,print lock->holder->priority" \
+  --memory '$esp:8' \
+  --max-stops 5
+
+# Conditional breakpoint
+debug-pintos --test priority-donate-one \
+  --break-if "lock_acquire if lock->holder != 0"
+```
+
+**Output includes:**
+- Register values at each stop
+- Full backtrace with file/line info
+- Memory dumps at specified addresses
+- Custom GDB command outputs
+- QEMU serial console output
+- Breakpoint/watchpoint confirmation
+
+See CLAUDE.md for full documentation.
 
 ## PTY/Socket Utilities
 
@@ -57,16 +88,20 @@ src/utils/bun/
 ├── tsconfig.json
 ├── src/
 │   ├── lib/
-│   │   ├── types.ts        # Shared type definitions
-│   │   ├── disk.ts         # Disk operations, MBR, partitions
-│   │   ├── ustar.ts        # ustar archive format
-│   │   ├── subprocess.ts   # Process management with timeout
-│   │   └── simulator.ts    # QEMU/Bochs/VMware launchers
-│   ├── pintos.ts           # Main entry point
-│   ├── mkdisk.ts           # Disk creation
-│   ├── backtrace.ts        # Symbol resolution
-│   └── set-cmdline.ts      # Cmdline modification
-└── bin/                    # Wrapper shell scripts
+│   │   ├── types.ts         # Shared type definitions
+│   │   ├── disk.ts          # Disk operations, MBR, partitions
+│   │   ├── ustar.ts         # ustar archive format
+│   │   ├── subprocess.ts    # Process management with timeout
+│   │   ├── simulator.ts     # QEMU/Bochs/VMware launchers
+│   │   ├── debug-types.ts   # Debug tool type definitions
+│   │   ├── gdb-mi-parser.ts # GDB/MI protocol parser
+│   │   └── gdb-session.ts   # GDB session management
+│   ├── pintos.ts            # Main entry point
+│   ├── mkdisk.ts            # Disk creation
+│   ├── backtrace.ts         # Symbol resolution
+│   ├── set-cmdline.ts       # Cmdline modification
+│   └── debug-pintos.ts      # Agent-friendly debugger
+└── bin/                     # Wrapper shell scripts
 ```
 
 ## Compatibility

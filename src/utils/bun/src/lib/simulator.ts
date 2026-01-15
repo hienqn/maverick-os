@@ -6,6 +6,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import { spawn, type Subprocess } from "bun";
 import { xsystem, runCommand, findInPath, type XSystemOptions } from "./subprocess";
 import type { Architecture } from "./types";
 
@@ -367,4 +368,96 @@ ddb.geometry.sectors = "${geom.S}"
 
   console.log(cmd.join(" "));
   await xsystem(cmd);
+}
+
+/**
+ * Debug handle returned by startForDebug
+ */
+export interface DebugHandle {
+  process: Subprocess;
+  qemuCmd: string[];
+  gdbPort: number;
+  terminate: () => Promise<void>;
+}
+
+/**
+ * Start QEMU for debugging (does not wait for completion)
+ *
+ * Returns a handle that allows control of the debug session.
+ * Use this for debug-pintos tool integration with GDB.
+ */
+export async function startForDebug(options: SimulatorOptions): Promise<DebugHandle> {
+  const { arch, mem, serial, vga, disks, kernelBin, kernelArgs } = options;
+  const gdbPort = 1234; // Standard QEMU GDB port
+
+  let cmd: string[];
+
+  if (arch === "riscv64") {
+    if (!kernelBin) {
+      throw new Error("RISC-V mode requires kernel.bin");
+    }
+
+    cmd = ["qemu-system-riscv64"];
+    cmd.push("-machine", "virt");
+    cmd.push("-bios", "default");
+    cmd.push("-m", String(mem));
+    cmd.push("-kernel", kernelBin);
+
+    if (kernelArgs && kernelArgs.length > 0) {
+      cmd.push("-append", kernelArgs.join(" "));
+    }
+
+    cmd.push("-nographic");
+    cmd.push("-s", "-S"); // GDB server on port 1234, paused
+  } else {
+    // i386
+    cmd = ["qemu-system-i386"];
+    cmd.push("-device", "isa-debug-exit,iobase=0x501,iosize=0x02");
+    cmd.push("-no-reboot");
+    cmd.push("-accel", "tcg,thread=multi");
+    cmd.push("-cpu", "qemu32");
+
+    const hdFlags = ["-hda", "-hdb", "-hdc", "-hdd"];
+    for (let i = 0; i < 4; i++) {
+      if (disks[i]) {
+        cmd.push(hdFlags[i], disks[i]!);
+      }
+    }
+
+    cmd.push("-m", String(mem));
+    cmd.push("-netdev", "user,id=net0");
+    cmd.push("-device", "e1000,netdev=net0");
+
+    if (vga === "none") {
+      cmd.push("-nographic");
+    }
+    if (serial && vga !== "none") {
+      cmd.push("-serial", "stdio");
+    }
+    if (vga === "none") {
+      cmd.push("-monitor", "null");
+    }
+
+    cmd.push("-s", "-S"); // GDB server on port 1234, paused
+  }
+
+  // Start QEMU process without waiting
+  const proc = spawn({
+    cmd,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const terminate = async () => {
+    proc.kill();
+    await proc.exited;
+  };
+
+  return {
+    process: proc,
+    qemuCmd: cmd,
+    gdbPort,
+    terminate,
+  };
 }

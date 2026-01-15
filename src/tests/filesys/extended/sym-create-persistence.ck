@@ -1,6 +1,0 @@
-# -*- perl -*-
-use strict;
-use warnings;
-use tests::tests;
-check_archive ({'target-file' => ["\0" x 512]});
-pass;

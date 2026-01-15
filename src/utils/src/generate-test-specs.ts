@@ -30,7 +30,13 @@ interface TestSpec {
     | "mlfqs_recent"
     | "mlfqs_nice"
     | "mlfqs_block"
-    | "archive";
+    | "archive"
+    | "process_death"
+    | "halt"
+    | "contains_pass"
+    | "flexible_order"
+    | "multi_check"
+    | "custom";
 
   // Options
   options: {
@@ -46,6 +52,10 @@ interface TestSpec {
   maxdiff?: number; // For MLFQS tests
   ticks?: number; // For MLFQS recent tests
   archive_tree?: any; // For archive tests
+  process_name?: string; // For process_death, contains_pass, flexible_order tests
+  checks?: Array<{ type: string; pattern: string; message?: string }>; // For multi_check tests
+  thread_count?: number; // For flexible_order tests
+  iter_count?: number; // For flexible_order tests
 }
 
 function findCkFiles(dir: string): string[] {

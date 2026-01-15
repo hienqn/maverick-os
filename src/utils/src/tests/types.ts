@@ -7,6 +7,32 @@ export interface TestResult {
   messages: string[];
 }
 
+/**
+ * Structured test result for agent consumption
+ */
+export interface StructuredTestResult {
+  version: 1;
+  test: string;
+  verdict: "PASS" | "FAIL";
+  errors: string[];
+  output?: string[];
+  coreOutput?: string[];
+  diff?: DiffEntry[];
+  panic?: {
+    message: string;
+    callStack?: string;
+    backtrace?: string;
+  };
+}
+
+/**
+ * Diff entry for structured output
+ */
+export interface DiffEntry {
+  type: "-" | "+" | " ";
+  line: string;
+}
+
 export interface CheckOptions {
   IGNORE_EXIT_CODES?: boolean;
   IGNORE_USER_FAULTS?: boolean;

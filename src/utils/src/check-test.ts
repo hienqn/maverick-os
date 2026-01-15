@@ -11,7 +11,7 @@
 
 import { existsSync, readFileSync } from "fs";
 import { dirname, join } from "path";
-import { parseCkFile, canHandle, type ParsedChecker } from "./tests/ck-parser";
+import { parseCkFile, canHandle, type ParsedChecker, type CheckRule } from "./tests/ck-parser";
 import type { CheckOptions } from "./tests/types";
 import {
   initTest,
@@ -25,7 +25,10 @@ import {
   checkContainsPass,
   checkFlexibleOrder,
   checkMultiRule,
+  enableStructuredMode,
+  TestResultError,
 } from "./tests/tests";
+import type { StructuredTestResult } from "./tests/types";
 import { checkAlarm } from "./tests/alarm";
 import {
   checkMlfqsFair,
@@ -35,15 +38,6 @@ import {
   checkMlfqsBlock,
 } from "./tests/mlfqs";
 import { checkArchive } from "./tests/archive";
-
-/**
- * Check rule for multi_check tests
- */
-interface CheckRule {
-  type: "contains" | "not_contains" | "regex" | "not_regex" | "equals";
-  pattern: string;
-  message?: string;
-}
 
 /**
  * Test spec from .test.json file
@@ -139,10 +133,14 @@ function loadTestSpec(jsonPath: string): ParsedChecker | null {
 }
 
 function main() {
-  const args = process.argv.slice(2);
+  let args = process.argv.slice(2);
+
+  // Check for --json flag
+  const jsonOutput = args.includes("--json");
+  args = args.filter((a) => a !== "--json");
 
   if (args.length < 2) {
-    console.error("Usage: check-test.ts <checker.ck> <test-name> <result-file>");
+    console.error("Usage: check-test.ts [--json] <checker.ck> <test-name> <result-file>");
     process.exit(1);
   }
 
@@ -161,6 +159,11 @@ function main() {
     ckFile = args[0];
     testName = args[1];
     resultFile = args[2];
+  }
+
+  // Enable structured mode for JSON output
+  if (jsonOutput) {
+    enableStructuredMode();
   }
 
   // Find source directory (for module paths)
@@ -197,9 +200,38 @@ function main() {
   }
 
   if (parsed === null) {
+    if (jsonOutput) {
+      // Output structured error result for JSON mode
+      const errorResult: StructuredTestResult = {
+        version: 1,
+        test: testName,
+        verdict: "FAIL",
+        errors: [`Test spec file not found: ${jsonFile}`],
+      };
+      console.log(JSON.stringify(errorResult, null, 2));
+      process.exit(1);
+    }
     fail(`Test spec file not found: ${jsonFile}`);
   }
 
+  // Wrap in try/catch for structured mode
+  try {
+    runTestChecks(parsed, testName, jsonOutput);
+  } catch (err) {
+    if (err instanceof TestResultError) {
+      // Structured mode - output JSON result
+      console.log(JSON.stringify(err.result, null, 2));
+      process.exit(err.result.verdict === "PASS" ? 0 : 1);
+    }
+    // Unexpected error
+    throw err;
+  }
+}
+
+/**
+ * Execute test checks based on parsed spec
+ */
+function runTestChecks(parsed: ParsedChecker, testName: string, jsonOutput: boolean): void {
   // Handle based on test type
   switch (parsed.type) {
     case "expected":

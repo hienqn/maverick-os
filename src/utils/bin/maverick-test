@@ -1,0 +1,7 @@
+#!/bin/bash
+# Agent-friendly test runner for PintOS
+# Runs the Bun/TypeScript maverick-test tool
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PATH="$HOME/.bun/bin:$PATH"
+exec bun run "$SCRIPT_DIR/../src/maverick-test.ts" "$@"

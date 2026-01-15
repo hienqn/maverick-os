@@ -5,8 +5,8 @@
 
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { execSync } from "child_process";
-import { diff, formatDiff, arraysEqual } from "./diff";
-import type { TestResult, CheckOptions, CheckRule } from "./types";
+import { diff, formatDiff, arraysEqual, type DiffEntry } from "./diff";
+import type { TestResult, CheckOptions, CheckRule, StructuredTestResult } from "./types";
 
 // ANSI color codes for terminal output
 const isTerminal = process.stdout.isTTY;
@@ -24,6 +24,64 @@ let testName: string;
 let srcDir: string;
 let messages: string[] = [];
 let prereqTests: string[] = [];
+
+// Structured mode state
+let structuredMode = false;
+let structuredResult: StructuredTestResult | null = null;
+let capturedOutput: string[] = [];
+let capturedCoreOutput: string[] = [];
+let capturedDiff: DiffEntry[] = [];
+let capturedPanic: StructuredTestResult["panic"] = undefined;
+
+/**
+ * Custom error for structured mode - thrown instead of process.exit()
+ */
+export class TestResultError extends Error {
+  constructor(public result: StructuredTestResult) {
+    super(`Test ${result.verdict}: ${result.errors.join(", ")}`);
+    this.name = "TestResultError";
+  }
+}
+
+/**
+ * Enable structured mode - throws instead of exiting, captures rich data
+ */
+export function enableStructuredMode(): void {
+  structuredMode = true;
+  structuredResult = null;
+  capturedOutput = [];
+  capturedCoreOutput = [];
+  capturedDiff = [];
+  capturedPanic = undefined;
+}
+
+/**
+ * Disable structured mode - returns to normal exit behavior
+ */
+export function disableStructuredMode(): void {
+  structuredMode = false;
+}
+
+/**
+ * Capture output for structured results
+ */
+export function setCapturedOutput(output: string[], coreOutput?: string[]): void {
+  if (structuredMode) {
+    capturedOutput = output;
+    if (coreOutput) {
+      capturedCoreOutput = coreOutput;
+    }
+  }
+}
+
+/**
+ * Capture diff for structured results
+ */
+export function setCapturedDiff(diffEntries: DiffEntry[]): void {
+  if (structuredMode) {
+    capturedDiff = diffEntries;
+  }
+}
 
 /**
  * Initialize the test context
@@ -61,10 +119,27 @@ export function pass(...msgs: string[]): never {
 }
 
 /**
- * Write result file and exit
+ * Write result file and exit (or throw in structured mode)
  */
 function finish(verdict: "PASS" | "FAIL", ...msgs: string[]): never {
   const allMessages = [...messages, ...msgs];
+
+  if (structuredMode) {
+    // Build structured result and throw
+    const result: StructuredTestResult = {
+      version: 1,
+      test: testName,
+      verdict,
+      errors: allMessages,
+      output: capturedOutput.length > 0 ? capturedOutput : undefined,
+      coreOutput: capturedCoreOutput.length > 0 ? capturedCoreOutput : undefined,
+      diff: capturedDiff.length > 0 ? capturedDiff : undefined,
+      panic: capturedPanic,
+    };
+    throw new TestResultError(result);
+  }
+
+  // Normal mode - write result file and exit
   const resultFile = `${testName}.result`;
 
   // Write verdict first, then each message on its own line
@@ -174,7 +249,11 @@ function checkForPanic(run: string, output: string[]): void {
   if (!panicLine) return;
 
   const panicStart = panicLine.indexOf("PANIC");
-  log(`Kernel panic in ${run}: ${panicLine.substring(panicStart)}`);
+  const panicMessage = panicLine.substring(panicStart);
+  log(`Kernel panic in ${run}: ${panicMessage}`);
+
+  let callStack: string | undefined;
+  let backtraceResult: string | undefined;
 
   // Try to get and translate backtrace
   const stackLine = output.find((line) => /Call stack:/.test(line));
@@ -182,6 +261,7 @@ function checkForPanic(run: string, output: string[]): void {
     const match = stackLine.match(/Call stack:((?:\s+0x[0-9a-f]+)+)/);
     if (match) {
       const addrs = match[1];
+      callStack = addrs.trim();
       log(`Call stack:${addrs}`);
 
       // Try to translate the backtrace
@@ -189,12 +269,22 @@ function checkForPanic(run: string, output: string[]): void {
         const trace = execSync(`backtrace kernel.o ${addrs}`, {
           encoding: "utf-8",
         });
+        backtraceResult = trace.trim();
         log("Translation of call stack:");
         log(trace);
       } catch {
         // Backtrace translation failed, continue without it
       }
     }
+  }
+
+  // Capture panic for structured mode
+  if (structuredMode) {
+    capturedPanic = {
+      message: panicMessage,
+      callStack,
+      backtrace: backtraceResult,
+    };
   }
 
   // Add helpful hints for common panics
@@ -284,6 +374,12 @@ function compareOutput(
 ): void {
   let output = getCoreOutput(run, fullOutput);
 
+  // Capture output for structured mode
+  if (structuredMode) {
+    capturedOutput = fullOutput;
+    capturedCoreOutput = output;
+  }
+
   if (output.length === 0) {
     fail(`${capitalize(run)} didn't produce any output`);
   }
@@ -309,6 +405,7 @@ function compareOutput(
   // Handle multiple acceptable outputs
   const expectedVariants = Array.isArray(expected) ? expected : [expected];
   let msg = "";
+  let lastDiffEntries: DiffEntry[] = [];
 
   for (const exp of expectedVariants) {
     const expectedLines = exp.split("\n").filter((line) => line !== "");
@@ -323,8 +420,14 @@ function compareOutput(
 
     // Generate diff
     const diffEntries = diff(expectedLines, output);
+    lastDiffEntries = diffEntries;
     msg += "Differences in `diff -u' format:\n";
     msg += formatDiff(diffEntries) + "\n";
+  }
+
+  // Capture diff for structured mode (use last variant's diff)
+  if (structuredMode) {
+    capturedDiff = lastDiffEntries;
   }
 
   // No match found

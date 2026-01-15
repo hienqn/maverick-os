@@ -24,7 +24,8 @@ function lcsIndices(a: string[], b: string[]): Map<number, number> {
 
   // Find LCS using patience-style algorithm
   const thresh: number[] = [];
-  const links: Array<[typeof links[0] | null, number, number]> = [];
+  type Link = [Link | null, number, number];
+  const links: Link[] = [];
 
   for (let i = 0; i < a.length; i++) {
     const positions = bPositions.get(a[i]);

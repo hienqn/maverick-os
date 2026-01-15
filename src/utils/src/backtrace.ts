@@ -18,11 +18,23 @@ interface Location {
   BINARY?: string;
 }
 
+interface BacktraceFrame {
+  address: string;
+  function: string | null;
+  file: string | null;
+  line: number | null;
+  binary: string | null;
+}
+
 function usage(): never {
   console.log(`backtrace, for converting raw addresses into symbolic backtraces
-usage: backtrace [BINARY]... ADDRESS...
+usage: backtrace [OPTIONS] [BINARY]... ADDRESS...
 where BINARY is the binary file or files from which to obtain symbols
  and ADDRESS is a raw address to convert to a symbol name.
+
+Options:
+  --json        Output structured JSON instead of text (for agent consumption)
+  -h, --help    Show this help message
 
 If no BINARY is unspecified, the default is the first of kernel.o or
 build/kernel.o that exists.  If multiple binaries are specified, each
@@ -66,6 +78,10 @@ async function main(): Promise<void> {
   if (args.some((a) => a === "-h" || a === "--help")) {
     usage();
   }
+
+  // Check for --json flag
+  const jsonOutput = args.includes("--json");
+  args = args.filter((a) => a !== "--json");
 
   if (args.length === 0) {
     console.error("backtrace: at least one argument required (use --help for help)");
@@ -139,49 +155,101 @@ async function main(): Promise<void> {
     }
   }
 
-  // Print backtrace
-  let curBinary: string | undefined;
-  for (const loc of locs) {
-    // Print binary header if changed and multiple binaries
-    if (
-      loc.BINARY !== undefined &&
-      binaries.length > 1 &&
-      (curBinary === undefined || loc.BINARY !== curBinary)
-    ) {
-      curBinary = loc.BINARY;
-      console.log(`In ${curBinary}:`);
-    }
-
-    // Format address as 0x00000000
-    let addr = loc.ADDR;
-    if (/^0x[0-9a-f]+$/i.test(addr)) {
-      addr = "0x" + parseInt(addr, 16).toString(16).padStart(8, "0");
-    }
-
-    process.stdout.write(`${addr}: `);
-
-    if (loc.BINARY !== undefined) {
-      const func = loc.FUNCTION!;
-      let line = loc.LINE!;
-
-      // Clean up the line info
-      // Remove leading ../
-      line = line.replace(/^(\.\.\/)*/, "");
-
-      // Handle absolute paths
-      if (line.startsWith("/")) {
-        line = realPath(line.split(":")[0]) + ":" + (line.split(":")[1] || "");
-        const offset = line.indexOf("pintos/src/");
-        if (offset !== -1) {
-          line = line.substring(offset);
-        }
-        // Remove discriminator info
-        line = line.replace(/ \(discriminator[^)]*\)/, "");
+  // Output results
+  if (jsonOutput) {
+    // JSON output mode
+    const frames: BacktraceFrame[] = locs.map((loc) => {
+      // Format address as 0x00000000
+      let addr = loc.ADDR;
+      if (/^0x[0-9a-f]+$/i.test(addr)) {
+        addr = "0x" + parseInt(addr, 16).toString(16).padStart(8, "0");
       }
 
-      console.log(`${func} (${line})`);
-    } else {
-      console.log("(unknown)");
+      if (loc.BINARY === undefined) {
+        return {
+          address: addr,
+          function: null,
+          file: null,
+          line: null,
+          binary: null,
+        };
+      }
+
+      const func = loc.FUNCTION!;
+      let lineInfo = loc.LINE!;
+
+      // Clean up the line info
+      lineInfo = lineInfo.replace(/^(\.\.\/)*/, "");
+
+      // Handle absolute paths
+      if (lineInfo.startsWith("/")) {
+        lineInfo = realPath(lineInfo.split(":")[0]) + ":" + (lineInfo.split(":")[1] || "");
+        const offset = lineInfo.indexOf("pintos/src/");
+        if (offset !== -1) {
+          lineInfo = lineInfo.substring(offset);
+        }
+        lineInfo = lineInfo.replace(/ \(discriminator[^)]*\)/, "");
+      }
+
+      // Parse file:line
+      const [file, lineStr] = lineInfo.split(":");
+      const line = lineStr ? parseInt(lineStr, 10) : null;
+
+      return {
+        address: addr,
+        function: func,
+        file: file || null,
+        line: isNaN(line!) ? null : line,
+        binary: loc.BINARY,
+      };
+    });
+
+    console.log(JSON.stringify({ frames }, null, 2));
+  } else {
+    // Text output mode (original behavior)
+    let curBinary: string | undefined;
+    for (const loc of locs) {
+      // Print binary header if changed and multiple binaries
+      if (
+        loc.BINARY !== undefined &&
+        binaries.length > 1 &&
+        (curBinary === undefined || loc.BINARY !== curBinary)
+      ) {
+        curBinary = loc.BINARY;
+        console.log(`In ${curBinary}:`);
+      }
+
+      // Format address as 0x00000000
+      let addr = loc.ADDR;
+      if (/^0x[0-9a-f]+$/i.test(addr)) {
+        addr = "0x" + parseInt(addr, 16).toString(16).padStart(8, "0");
+      }
+
+      process.stdout.write(`${addr}: `);
+
+      if (loc.BINARY !== undefined) {
+        const func = loc.FUNCTION!;
+        let line = loc.LINE!;
+
+        // Clean up the line info
+        // Remove leading ../
+        line = line.replace(/^(\.\.\/)*/, "");
+
+        // Handle absolute paths
+        if (line.startsWith("/")) {
+          line = realPath(line.split(":")[0]) + ":" + (line.split(":")[1] || "");
+          const offset = line.indexOf("pintos/src/");
+          if (offset !== -1) {
+            line = line.substring(offset);
+          }
+          // Remove discriminator info
+          line = line.replace(/ \(discriminator[^)]*\)/, "");
+        }
+
+        console.log(`${func} (${line})`);
+      } else {
+        console.log("(unknown)");
+      }
     }
   }
 }

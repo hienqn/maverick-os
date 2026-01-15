@@ -20,6 +20,10 @@ export interface DebugSpec {
   memoryDumps: MemoryDumpSpec[];
   commandsAtStop: string[];
   maxStops: number;
+  /** Number of source line steps to take after each breakpoint */
+  stepCount?: number;
+  /** Number of instruction steps to take after each breakpoint */
+  stepiCount?: number;
 }
 
 /**
@@ -100,6 +104,42 @@ export interface StopEvent {
   backtrace: StackFrame[];
   memoryDumps: Record<string, string[]>;
   commandOutputs: Record<string, string>;
+  /** Source code context around the current location */
+  sourceContext?: SourceContext;
+  /** Disassembly around the current instruction */
+  disassembly?: DisassemblyLine[];
+}
+
+/**
+ * Source code context around a location
+ */
+export interface SourceContext {
+  /** Source file path */
+  file: string;
+  /** Lines of source code with line numbers */
+  lines: SourceLine[];
+}
+
+/**
+ * A single line of source code
+ */
+export interface SourceLine {
+  lineNumber: number;
+  text: string;
+  /** Whether this is the current execution line */
+  isCurrent: boolean;
+}
+
+/**
+ * A single line of disassembly
+ */
+export interface DisassemblyLine {
+  address: string;
+  funcName: string;
+  offset: number;
+  instruction: string;
+  /** Whether this is the current instruction */
+  isCurrent: boolean;
 }
 
 export type StopReason =
@@ -279,9 +319,12 @@ export interface CliArgs {
   watches: string[];
   rwatches: string[];
   commands: string[];
+  evals: string[];
   memory: string[];
   maxStops: number;
   timeout: number;
   arch: Architecture;
   output?: string;
+  stepCount: number;
+  stepiCount: number;
 }

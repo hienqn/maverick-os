@@ -28,6 +28,7 @@ export interface SimulatorOptions {
   disks: (string | undefined)[];
   kernelBin?: string; // For RISC-V: path to kernel.bin
   kernelArgs?: string[]; // For RISC-V: kernel command line arguments
+  gdbPort?: number; // Custom GDB port (default: 1234)
 }
 
 /**
@@ -388,7 +389,7 @@ export interface DebugHandle {
  */
 export async function startForDebug(options: SimulatorOptions): Promise<DebugHandle> {
   const { arch, mem, serial, vga, disks, kernelBin, kernelArgs } = options;
-  const gdbPort = 1234; // Standard QEMU GDB port
+  const gdbPort = options.gdbPort ?? 1234; // Custom or standard QEMU GDB port
 
   let cmd: string[];
 
@@ -408,7 +409,7 @@ export async function startForDebug(options: SimulatorOptions): Promise<DebugHan
     }
 
     cmd.push("-nographic");
-    cmd.push("-s", "-S"); // GDB server on port 1234, paused
+    cmd.push("-gdb", `tcp::${gdbPort}`, "-S"); // GDB server on custom port, paused
   } else {
     // i386
     cmd = ["qemu-system-i386"];
@@ -438,7 +439,7 @@ export async function startForDebug(options: SimulatorOptions): Promise<DebugHan
       cmd.push("-monitor", "null");
     }
 
-    cmd.push("-s", "-S"); // GDB server on port 1234, paused
+    cmd.push("-gdb", `tcp::${gdbPort}`, "-S"); // GDB server on custom port, paused
   }
 
   // Start QEMU process without waiting

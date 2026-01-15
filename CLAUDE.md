@@ -345,7 +345,7 @@ Call stack: 0x8004a1 0x8003b2 0x8002c3
 Use the backtrace utility:
 ```bash
 cd build/i386
-../../utils/bun/bin/backtrace kernel.o 0x8004a1 0x8003b2 0x8002c3
+../../utils/bin/backtrace kernel.o 0x8004a1 0x8003b2 0x8002c3
 ```
 
 ### Page Fault Debugging
@@ -375,27 +375,34 @@ pintos-gdb kernel.o
 
 ### Agent-Friendly Debugging with maverick-debug
 
-The `maverick-debug` tool provides machine-readable debugging output for AI agents. It runs GDB in batch mode and returns structured JSON with registers, backtraces, memory dumps, and custom command output.
+The `maverick-debug` tool provides machine-readable debugging output for AI agents. It runs GDB in batch mode and returns structured JSON with registers, backtraces, source context, disassembly, memory dumps, and custom command output.
 
-**Location:** `src/utils/bun/bin/maverick-debug`
+**Location:** `src/utils/bin/maverick-debug`
+
+**Key Features:**
+- Random GDB port selection (enables parallel test runs)
+- TCP port polling (robust GDB connection)
+- Signal handlers (prevents zombie QEMU processes on Ctrl+C)
+- Source code context at each stop
+- Mixed source/assembly disassembly
 
 **Basic Usage:**
 ```bash
 # Debug a test with a breakpoint
 maverick-debug --test alarm-single --break thread_create
 
-# Multiple breakpoints with custom commands
+# Multiple breakpoints with custom commands (semicolon-separated)
 maverick-debug --test priority-donate-one \
   --break lock_acquire \
   --break thread_set_priority \
-  --commands "bt,print lock->holder->priority" \
+  --commands "bt; print lock->holder->priority" \
   --max-stops 5
 
 # With memory dumps
 maverick-debug --test alarm-single \
   --break thread_create \
   --memory '$esp:16' \
-  --commands "print name,print function"
+  --commands "print name; print function"
 
 # Conditional breakpoint
 maverick-debug --test priority-donate-one \
@@ -413,8 +420,11 @@ maverick-debug --test alarm-single --arch riscv64 --break thread_create
 | `--break-if "LOC if COND"` | Conditional breakpoint |
 | `--watch EXPR` | Write watchpoint |
 | `--rwatch EXPR` | Read watchpoint |
-| `--commands CMDS` | Comma-separated GDB commands to run at each stop |
+| `--commands CMDS` | Semicolon-separated GDB commands to run at each stop |
+| `--eval EXPR` | Evaluate expression at each stop (shorthand for "print EXPR") |
 | `--memory SPEC` | Memory dump spec (e.g., "$esp:16" or "0xc0000000:32") |
+| `--step N` | Step N source lines after each breakpoint (captures state each step) |
+| `--stepi N` | Step N instructions after each breakpoint (captures state each step) |
 | `--max-stops N` | Max breakpoint hits before returning (default: 10) |
 | `--timeout SECS` | Execution timeout (default: 60) |
 | `--arch ARCH` | Architecture: i386 (default) or riscv64 |
@@ -441,6 +451,14 @@ maverick-debug --test alarm-single --arch riscv64 --break thread_create
         { "frame": 0, "function": "thread_create", "file": "thread.c", "line": 387 },
         { "frame": 1, "function": "main", "file": "init.c", "line": 179 }
       ],
+      "sourceContext": {
+        "lines": [
+          { "lineNumber": 384, "text": "   comment line..." },
+          { "lineNumber": 387, "text": "tid_t thread_create(...) {" }
+        ],
+        "currentLineIndex": 1
+      },
+      "disassembly": "Dump of assembler code...\n=> 0xc00214dd <+0>: push %ebp\n...",
       "memoryDumps": { "$esp:8": ["0xc0026b9b", "0xc00543a0", ...] },
       "commandOutputs": { "print name": "$1 = 0xc00543a0 \"kbd-worker\"" }
     }
@@ -462,11 +480,57 @@ maverick-debug --test alarm-single --arch riscv64 --break thread_create
 maverick-debug --test priority-donate-one \
   --break lock_acquire \
   --break lock_release \
-  --commands "print lock->holder->priority,print thread_current()->priority" \
+  --commands "print lock->holder->priority; print thread_current()->priority" \
   --max-stops 10
 ```
 
 This captures priority values at each lock operation to trace donation behavior.
+
+### Agent-Friendly Test Runner with maverick-test
+
+The `maverick-test` tool combines running a test and checking results into a single command with structured JSON output.
+
+**Location:** `src/utils/bin/maverick-test`
+
+**Usage:**
+```bash
+# Run test with text output
+maverick-test alarm-single
+
+# Run test with structured JSON output
+maverick-test --test priority-donate-one --json
+
+# With custom timeout
+maverick-test --test alarm-multiple --timeout 120 --json
+```
+
+**Output JSON Structure:**
+```json
+{
+  "version": 1,
+  "test": "alarm-single",
+  "arch": "i386",
+  "verdict": "PASS",
+  "executionTimeMs": 1234,
+  "output": ["Pintos booting...", ...],
+  "coreOutput": ["(alarm-single) begin", ...],
+  "errors": [],
+  "diff": [{"type": "-", "line": "expected"}, {"type": "+", "line": "actual"}],
+  "panic": {"message": "PANIC...", "callStack": "0x..."}
+}
+```
+
+### Other Agent-Friendly Tools
+
+**check-test --json:** Get structured test verification results.
+```bash
+check-test --json alarm-single tests/threads/alarm-single.result
+```
+
+**backtrace --json:** Get structured symbol resolution.
+```bash
+backtrace --json kernel.o 0xc0020000 0xc0021000
+```
 
 ### Printf Debugging
 

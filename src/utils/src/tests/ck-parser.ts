@@ -32,7 +32,12 @@ export interface ParsedChecker {
     | "mlfqs_nice"
     | "mlfqs_block"
     | "archive"
-    | "custom";
+    | "custom"
+    | "process_death"
+    | "halt"
+    | "contains_pass"
+    | "flexible_order"
+    | "multi_check";
   options: CheckOptions;
   expected?: string[][]; // For expected output tests (multiple acceptable outputs)
   iterations?: number; // For alarm tests
@@ -40,6 +45,19 @@ export interface ParsedChecker {
   maxdiff?: number; // For MLFQS tests
   ticks?: number; // For MLFQS recent tests
   archiveTree?: any; // For archive tests (parsed Perl data structure)
+  processName?: string; // For process_death, contains_pass, flexible_order tests
+  checks?: CheckRule[]; // For multi_check tests
+  threadCount?: number; // For flexible_order tests
+  iterCount?: number; // For flexible_order tests
+}
+
+/**
+ * Check rule for multi_check tests
+ */
+export interface CheckRule {
+  type: "contains" | "not_contains" | "regex" | "not_regex" | "equals";
+  pattern: string;
+  message?: string;
 }
 
 /**

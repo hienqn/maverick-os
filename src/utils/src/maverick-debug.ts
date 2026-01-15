@@ -12,6 +12,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import * as net from "net";
 import type { Architecture } from "./lib/types";
 import type {
   DebugSpec,
@@ -27,14 +28,8 @@ import type {
 } from "./lib/debug-types";
 import { GdbSession } from "./lib/gdb-session";
 import { startForDebug, type SimulatorOptions } from "./lib/simulator";
-import {
-  assembleDisk,
-  readLoader,
-  findFile,
-  roundUp,
-} from "./lib/disk";
-import { putScratchFile } from "./lib/ustar";
-import { ROLE_ORDER, type PartitionMap, type PartitionSource } from "./lib/types";
+import { assembleDisk, readLoader } from "./lib/disk";
+import { type PartitionMap } from "./lib/types";
 
 // ============================================================================
 // Constants
@@ -43,7 +38,10 @@ import { ROLE_ORDER, type PartitionMap, type PartitionSource } from "./lib/types
 const DEFAULT_TIMEOUT = 60;
 const DEFAULT_MAX_STOPS = 10;
 const DEFAULT_MEM = 4;
-const GDB_PORT = 1234;
+const GDB_PORT_MIN = 10000;
+const GDB_PORT_MAX = 60000;
+const PORT_POLL_INTERVAL_MS = 50;
+const PORT_POLL_TIMEOUT_MS = 10000;
 
 // ============================================================================
 // CLI Argument Parsing
@@ -56,10 +54,13 @@ function parseArgs(argv: string[]): CliArgs {
     watches: [],
     rwatches: [],
     commands: [],
+    evals: [],
     memory: [],
     maxStops: DEFAULT_MAX_STOPS,
     timeout: DEFAULT_TIMEOUT,
     arch: "i386",
+    stepCount: 0,
+    stepiCount: 0,
   };
 
   let i = 2; // Skip 'bun' and script name
@@ -79,11 +80,18 @@ function parseArgs(argv: string[]): CliArgs {
     } else if (arg === "--rwatch") {
       args.rwatches.push(argv[++i]);
     } else if (arg === "--commands" || arg === "-c") {
-      args.commands.push(...argv[++i].split(","));
+      // Use semicolon as delimiter (commas can appear in GDB expressions)
+      args.commands.push(...argv[++i].split(";").map(c => c.trim()).filter(c => c.length > 0));
     } else if (arg === "--memory" || arg === "-m") {
       args.memory.push(argv[++i]);
+    } else if (arg === "--eval" || arg === "-e") {
+      args.evals.push(argv[++i]);
     } else if (arg === "--max-stops") {
       args.maxStops = parseInt(argv[++i], 10);
+    } else if (arg === "--step") {
+      args.stepCount = parseInt(argv[++i], 10);
+    } else if (arg === "--stepi") {
+      args.stepiCount = parseInt(argv[++i], 10);
     } else if (arg === "--timeout" || arg === "-T") {
       args.timeout = parseInt(argv[++i], 10);
     } else if (arg === "--arch" || arg === "-a") {
@@ -120,9 +128,12 @@ Breakpoint options:
   --rwatch EXPR         Set read watchpoint
 
 Command options:
-  --commands, -c CMDS   Commands to run at each stop (comma-separated)
+  --commands, -c CMDS   Commands to run at each stop (semicolon-separated)
+  --eval, -e EXPR       Evaluate expression at each stop (shorthand for "print EXPR")
   --memory, -m SPEC     Memory to dump (e.g., "0xc0000000:64" or "$esp:32")
   --max-stops N         Max breakpoint hits (default: ${DEFAULT_MAX_STOPS})
+  --step N              Step N source lines after each breakpoint (captures state each step)
+  --stepi N             Step N instructions after each breakpoint (captures state each step)
   --timeout, -T SECS    Execution timeout (default: ${DEFAULT_TIMEOUT})
 
 Output options:
@@ -131,7 +142,7 @@ Output options:
 
 Examples:
   maverick-debug --test alarm-single --break thread_create
-  maverick-debug --test priority-donate-one --break lock_acquire --commands "bt,print lock->holder"
+  maverick-debug --test priority-donate-one --break lock_acquire --commands "bt; print lock->holder"
 `);
 }
 
@@ -175,6 +186,12 @@ function buildSpecFromArgs(args: CliArgs): DebugSpec {
     }
   }
 
+  // Combine explicit commands with eval expressions (converted to print commands)
+  const commandsAtStop: string[] = [
+    ...args.commands,
+    ...args.evals.map((expr) => `print ${expr}`),
+  ];
+
   return {
     version: 1,
     test: args.test || "",
@@ -183,8 +200,10 @@ function buildSpecFromArgs(args: CliArgs): DebugSpec {
     breakpoints,
     watchpoints,
     memoryDumps,
-    commandsAtStop: args.commands,
+    commandsAtStop,
     maxStops: args.maxStops,
+    stepCount: args.stepCount,
+    stepiCount: args.stepiCount,
   };
 }
 
@@ -215,15 +234,34 @@ function findBuildPaths(test: string, arch: Architecture): BuildPaths {
     component = "threads";
   }
 
-  // Find src directory
-  let srcDir = process.cwd();
-  while (srcDir !== "/" && !fs.existsSync(path.join(srcDir, "Make.config"))) {
-    srcDir = path.dirname(srcDir);
+  // Find src directory - search multiple locations
+  const searchPaths = [
+    process.cwd(),
+    path.dirname(process.cwd()), // Parent of current dir
+    path.resolve(path.dirname(process.argv[1]), "../../.."), // Relative to script
+    "/home/workspace/group0/src", // Common workspace location
+  ];
+
+  let srcDir: string | null = null;
+  for (const searchPath of searchPaths) {
+    let candidate = searchPath;
+    // Walk up to find Make.config
+    for (let i = 0; i < 5 && candidate !== "/"; i++) {
+      if (fs.existsSync(path.join(candidate, "Make.config"))) {
+        srcDir = candidate;
+        break;
+      }
+      candidate = path.dirname(candidate);
+    }
+    if (srcDir) break;
   }
 
-  if (srcDir === "/") {
-    // Try relative to script location
-    srcDir = path.resolve(path.dirname(process.argv[1]), "../../..");
+  if (!srcDir) {
+    throw new Error(
+      `Could not find PintOS src directory (looking for Make.config).\n` +
+      `Searched: ${searchPaths.join(", ")}\n` +
+      `Please run from within the PintOS source tree or build directory.`
+    );
   }
 
   const buildDir = path.join(srcDir, component, "build", arch);
@@ -232,9 +270,41 @@ function findBuildPaths(test: string, arch: Architecture): BuildPaths {
   const loaderBin = path.join(buildDir, "loader.bin");
   const gdbMacros = path.join(srcDir, "misc", "gdb-macros");
 
-  // Verify files exist
+  // Verify kernel.o exists
   if (!fs.existsSync(kernelO)) {
-    throw new Error(`Kernel not found: ${kernelO}. Run 'make' in ${component}/ first.`);
+    // Check if any build exists for this component
+    const componentDir = path.join(srcDir, component);
+    const hasBuildDir = fs.existsSync(path.join(componentDir, "build"));
+
+    if (!hasBuildDir) {
+      throw new Error(
+        `No build directory found for ${component}.\n` +
+        `Run 'make' in ${componentDir}/ to build the kernel first.`
+      );
+    }
+
+    // Check if wrong architecture was built
+    const otherArch = arch === "i386" ? "riscv64" : "i386";
+    const otherArchKernel = path.join(srcDir, component, "build", otherArch, "kernel.o");
+    if (fs.existsSync(otherArchKernel)) {
+      throw new Error(
+        `Kernel built for ${otherArch} but requested ${arch}.\n` +
+        `Run 'make ARCH=${arch}' in ${componentDir}/ to build for the correct architecture.`
+      );
+    }
+
+    throw new Error(
+      `Kernel not found: ${kernelO}\n` +
+      `Run 'make ARCH=${arch}' in ${componentDir}/ to build the kernel.`
+    );
+  }
+
+  // Verify loader exists for i386
+  if (arch === "i386" && !fs.existsSync(loaderBin)) {
+    throw new Error(
+      `Bootloader not found: ${loaderBin}\n` +
+      `The build may be incomplete. Run 'make' in ${path.join(srcDir, component)}/ again.`
+    );
   }
 
   return { buildDir, kernelO, kernelBin, loaderBin, gdbMacros };
@@ -354,6 +424,9 @@ async function runDebugSession(spec: DebugSpec): Promise<DebugResult> {
     };
   }
 
+  // Generate random GDB port
+  const gdbPort = randomGdbPort();
+
   // Start QEMU
   let debugHandle;
   try {
@@ -369,9 +442,11 @@ async function runDebugSession(spec: DebugSpec): Promise<DebugResult> {
       disks: disks,
       kernelBin: spec.arch === "riscv64" ? buildPaths.kernelBin : undefined,
       kernelArgs: spec.arch === "riscv64" ? kernelArgs : undefined,
+      gdbPort,
     };
 
     debugHandle = await startForDebug(simOptions);
+    activeDebugHandle = debugHandle; // Track for cleanup
   } catch (err) {
     return {
       version: 1,
@@ -392,21 +467,26 @@ async function runDebugSession(spec: DebugSpec): Promise<DebugResult> {
     arch: spec.arch,
     kernelPath: buildPaths.kernelO,
     gdbMacrosPath: fs.existsSync(buildPaths.gdbMacros) ? buildPaths.gdbMacros : undefined,
-    gdbPort: GDB_PORT,
+    gdbPort,
     timeout: spec.timeout,
   });
+  activeGdbSession = gdbSession; // Track for cleanup
 
   // Capture serial output from QEMU
   let qemuOutput = "";
-  if (debugHandle.process.stdout) {
-    captureOutput(debugHandle.process.stdout, (data) => {
+  const stdout = debugHandle.process.stdout;
+  if (stdout && typeof stdout !== "number") {
+    captureOutput(stdout, (data) => {
       qemuOutput += data;
     });
   }
 
   try {
-    // Wait a bit for QEMU to start GDB server
-    await sleep(1500);
+    // Wait for QEMU GDB server to become available using TCP polling
+    const portReady = await waitForPort(gdbPort, "localhost", PORT_POLL_TIMEOUT_MS);
+    if (!portReady) {
+      throw new Error(`GDB server port ${gdbPort} did not become available within ${PORT_POLL_TIMEOUT_MS}ms`);
+    }
 
     // Connect GDB (QEMU is already started via startForDebug)
     await gdbSession.connectGdb();
@@ -439,6 +519,14 @@ async function runDebugSession(spec: DebugSpec): Promise<DebugResult> {
       stopNumber++;
       stopEvent.stopNumber = stopNumber;
 
+      // Update breakpoint hit count
+      if (stopEvent.reason === "breakpoint-hit" && stopEvent.breakpointId !== undefined) {
+        const bp = breakpointsSet.find((b) => b.id === stopEvent.breakpointId);
+        if (bp) {
+          bp.hitCount++;
+        }
+      }
+
       // Read memory dumps
       for (const memSpec of spec.memoryDumps) {
         try {
@@ -448,6 +536,28 @@ async function runDebugSession(spec: DebugSpec): Promise<DebugResult> {
         } catch (err) {
           errors.push(`Failed to read memory at ${memSpec.address}: ${(err as Error).message}`);
         }
+      }
+
+      // Get source context (3 lines before/after current line)
+      // GdbSession derives current file/line internally from GDB's frame
+      try {
+        const sourceContext = await gdbSession.getSourceContext(3);
+        if (sourceContext) {
+          stopEvent.sourceContext = sourceContext;
+        }
+      } catch {
+        // Source context is optional, ignore errors
+      }
+
+      // Get disassembly around current instruction
+      // GdbSession derives current address internally from GDB's frame
+      try {
+        const disassembly = await gdbSession.getDisassembly(10);
+        if (disassembly && disassembly.length > 0) {
+          stopEvent.disassembly = disassembly;
+        }
+      } catch {
+        // Disassembly is optional, ignore errors
       }
 
       // Execute custom commands
@@ -478,6 +588,83 @@ async function runDebugSession(spec: DebugSpec): Promise<DebugResult> {
         status = "timeout";
         break;
       }
+
+      // Perform stepping after breakpoint/watchpoint hits
+      const shouldStep =
+        stopEvent.reason === "breakpoint-hit" || stopEvent.reason === "watchpoint-trigger";
+
+      if (shouldStep && (spec.stepCount || spec.stepiCount)) {
+        const stepsToTake = spec.stepiCount || spec.stepCount || 0;
+        const useInstructionStep = !!spec.stepiCount;
+
+        for (let stepIdx = 0; stepIdx < stepsToTake && stopNumber < spec.maxStops; stepIdx++) {
+          try {
+            const stepEvent = useInstructionStep
+              ? await gdbSession.stepi()
+              : await gdbSession.step();
+
+            stopNumber++;
+            stepEvent.stopNumber = stopNumber;
+
+            // Get source context for step
+            try {
+              const sourceContext = await gdbSession.getSourceContext(3);
+              if (sourceContext) {
+                stepEvent.sourceContext = sourceContext;
+              }
+            } catch {
+              // Optional
+            }
+
+            // Get disassembly for step
+            try {
+              const disassembly = await gdbSession.getDisassembly(10);
+              if (disassembly && disassembly.length > 0) {
+                stepEvent.disassembly = disassembly;
+              }
+            } catch {
+              // Optional
+            }
+
+            // Execute custom commands at step
+            for (const cmd of spec.commandsAtStop) {
+              try {
+                const output = await gdbSession.execute(cmd);
+                stepEvent.commandOutputs[cmd] = output.trim();
+              } catch (err) {
+                errors.push(`Failed to execute command '${cmd}' at step: ${(err as Error).message}`);
+              }
+            }
+
+            stops.push(stepEvent);
+
+            // Check exit conditions during stepping
+            if (stepEvent.reason === "exited" || stepEvent.reason === "exited-normally") {
+              status = "completed";
+              break;
+            }
+            if (stepEvent.reason === "panic") {
+              status = "panic";
+              break;
+            }
+          } catch (err) {
+            errors.push(`Step failed: ${(err as Error).message}`);
+            break;
+          }
+        }
+
+        // Break outer loop if we hit exit condition during stepping
+        if (status !== "completed" || stops.length === 0) {
+          const lastStop = stops[stops.length - 1];
+          if (
+            lastStop?.reason === "exited" ||
+            lastStop?.reason === "exited-normally" ||
+            lastStop?.reason === "panic"
+          ) {
+            break;
+          }
+        }
+      }
     }
 
     serialOutput = qemuOutput;
@@ -496,12 +683,14 @@ async function runDebugSession(spec: DebugSpec): Promise<DebugResult> {
     } catch {
       // Ignore cleanup errors
     }
+    activeGdbSession = null;
 
     try {
       await debugHandle.terminate();
     } catch {
       // Ignore cleanup errors
     }
+    activeDebugHandle = null;
   }
 
   return {
@@ -543,8 +732,8 @@ async function main(): Promise<void> {
   // Run debug session
   const result = await runDebugSession(spec);
 
-  // Output result
-  const output = JSON.stringify(result, null, 2);
+  // Output result (with BigInt handling)
+  const output = JSON.stringify(result, jsonReplacer, 2);
 
   if (args.output) {
     fs.writeFileSync(args.output, output);
@@ -561,8 +750,82 @@ async function main(): Promise<void> {
 // Utilities
 // ============================================================================
 
+/**
+ * JSON replacer function to handle BigInt values
+ * JSON.stringify crashes on BigInt by default
+ */
+function jsonReplacer(_key: string, value: unknown): unknown {
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  return value;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Generate a random port number for GDB server
+ */
+function randomGdbPort(): number {
+  return Math.floor(Math.random() * (GDB_PORT_MAX - GDB_PORT_MIN + 1)) + GDB_PORT_MIN;
+}
+
+/**
+ * Check if a TCP port is accepting connections
+ */
+function checkPort(port: number, host: string = "localhost"): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    let resolved = false;
+
+    const cleanup = () => {
+      if (!resolved) {
+        resolved = true;
+        socket.destroy();
+      }
+    };
+
+    socket.setTimeout(1000);
+
+    socket.on("connect", () => {
+      cleanup();
+      resolve(true);
+    });
+
+    socket.on("error", () => {
+      cleanup();
+      resolve(false);
+    });
+
+    socket.on("timeout", () => {
+      cleanup();
+      resolve(false);
+    });
+
+    socket.connect(port, host);
+  });
+}
+
+/**
+ * Wait for a TCP port to become available (accepting connections)
+ */
+async function waitForPort(
+  port: number,
+  host: string = "localhost",
+  timeoutMs: number = PORT_POLL_TIMEOUT_MS
+): Promise<boolean> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeoutMs) {
+    if (await checkPort(port, host)) {
+      return true;
+    }
+    await sleep(PORT_POLL_INTERVAL_MS);
+  }
+
+  return false;
 }
 
 /**
@@ -588,8 +851,63 @@ function captureOutput(
   })();
 }
 
+// ============================================================================
+// Process Cleanup Handlers
+// ============================================================================
+
+// Track active debug handles for cleanup
+let activeDebugHandle: { terminate: () => Promise<void> } | null = null;
+let activeGdbSession: GdbSession | null = null;
+
+/**
+ * Clean up any running processes on exit
+ */
+async function cleanup(): Promise<void> {
+  if (activeGdbSession) {
+    try {
+      await activeGdbSession.terminate();
+    } catch {
+      // Ignore cleanup errors
+    }
+    activeGdbSession = null;
+  }
+  if (activeDebugHandle) {
+    try {
+      await activeDebugHandle.terminate();
+    } catch {
+      // Ignore cleanup errors
+    }
+    activeDebugHandle = null;
+  }
+}
+
+// Register signal handlers
+process.on("SIGINT", async () => {
+  await cleanup();
+  process.exit(130); // 128 + SIGINT (2)
+});
+
+process.on("SIGTERM", async () => {
+  await cleanup();
+  process.exit(143); // 128 + SIGTERM (15)
+});
+
+process.on("exit", () => {
+  // Synchronous cleanup attempt (best effort)
+  if (activeDebugHandle) {
+    try {
+      // Force kill without waiting
+      (activeDebugHandle as any).process?.kill("SIGKILL");
+    } catch {
+      // Ignore
+    }
+  }
+});
+
 // Run main
 main().catch((err) => {
-  console.error(`Fatal error: ${err.message}`);
-  process.exit(1);
+  cleanup().finally(() => {
+    console.error(`Fatal error: ${err.message}`);
+    process.exit(1);
+  });
 });

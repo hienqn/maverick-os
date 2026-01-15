@@ -14,6 +14,9 @@ import type {
   StopEvent,
   StopReason,
   SourceLocation,
+  SourceContext,
+  SourceLine,
+  DisassemblyLine,
   Registers,
   I386Registers,
   Riscv64Registers,
@@ -21,17 +24,15 @@ import type {
   BreakpointSpec,
   WatchpointSpec,
   MemoryDumpSpec,
+  MiRecord,
 } from "./debug-types";
 import {
   parseMiOutput,
   findResultRecord,
-  findAsyncRecord,
-  isResultDone,
   isResultError,
   getErrorMessage,
   collectConsoleOutput,
   parseStoppedRecord,
-  type MiRecord,
 } from "./gdb-mi-parser";
 import { findInPath } from "./subprocess";
 
@@ -40,7 +41,7 @@ import { findInPath } from "./subprocess";
  */
 export class GdbSession {
   private config: GdbSessionConfig;
-  private qemuProc: Subprocess | null = null;
+  private qemuProc: Subprocess<"pipe", "pipe", "pipe"> | null = null;
   private gdbProc: Subprocess<"pipe", "pipe", "pipe"> | null = null;
   private gdbStdout: string = "";
   private tokenCounter = 1;
@@ -380,6 +381,38 @@ export class GdbSession {
   }
 
   /**
+   * Step one source line (step into)
+   */
+  async step(): Promise<StopEvent> {
+    await this.executeCommand("-exec-step");
+    return await this.waitForStop();
+  }
+
+  /**
+   * Step one instruction
+   */
+  async stepi(): Promise<StopEvent> {
+    await this.executeCommand("-exec-step-instruction");
+    return await this.waitForStop();
+  }
+
+  /**
+   * Step over (next source line, not entering functions)
+   */
+  async next(): Promise<StopEvent> {
+    await this.executeCommand("-exec-next");
+    return await this.waitForStop();
+  }
+
+  /**
+   * Step over one instruction (nexti)
+   */
+  async nexti(): Promise<StopEvent> {
+    await this.executeCommand("-exec-next-instruction");
+    return await this.waitForStop();
+  }
+
+  /**
    * Wait for execution to stop
    */
   private async waitForStop(): Promise<StopEvent> {
@@ -712,6 +745,164 @@ export class GdbSession {
   async execute(command: string): Promise<string> {
     const records = await this.executeCommand(`-interpreter-exec console "${command}"`);
     return collectConsoleOutput(records);
+  }
+
+  /**
+   * Get source code context around the current location.
+   * Derives current file/line internally from GDB's current frame.
+   * @param contextLines Number of lines before and after current line (default 3)
+   */
+  async getSourceContext(contextLines: number = 3): Promise<SourceContext | null> {
+    try {
+      // Get current frame info to determine file and line
+      const frameRecords = await this.executeCommand("-stack-info-frame");
+      const frameResult = findResultRecord(frameRecords);
+      const frame = frameResult?.data?.frame as Record<string, unknown> | undefined;
+
+      const filePath = (frame?.file as string) || (frame?.fullname as string) || "??";
+      const currentLine = parseInt((frame?.line as string) || "0", 10);
+
+      if (currentLine === 0 || filePath === "??") {
+        return null;
+      }
+
+      // Use GDB list command to get source around current location
+      // Format: list -CONTEXT,+CONTEXT (shows lines around current)
+      const output = await this.execute(`list -${contextLines},+${contextLines}`);
+
+      if (!output || output.includes("No line number") || output.includes("No symbol table")) {
+        return null;
+      }
+
+      // Parse the list output - format is "LINENUM\tCODE"
+      const lines: SourceLine[] = [];
+
+      // Parse each line of output
+      const outputLines = output.split("\n").filter((l) => l.trim());
+      for (const line of outputLines) {
+        // GDB list output format: "123\t    code here"
+        const match = line.match(/^(\d+)\t(.*)$/);
+        if (match) {
+          const lineNumber = parseInt(match[1], 10);
+          const text = match[2];
+          lines.push({
+            lineNumber,
+            text,
+            isCurrent: lineNumber === currentLine,
+          });
+        }
+      }
+
+      if (lines.length === 0) {
+        return null;
+      }
+
+      return { file: filePath, lines };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Get disassembly around the current instruction.
+   * Derives current address internally from GDB's current frame.
+   * @param instructionCount Number of instructions to show (before and after)
+   */
+  async getDisassembly(instructionCount: number = 10): Promise<DisassemblyLine[] | null> {
+    try {
+      // Get current address from GDB's current frame
+      const frameRecords = await this.executeCommand("-stack-info-frame");
+      const frameResult = findResultRecord(frameRecords);
+      const frame = frameResult?.data?.frame as Record<string, unknown> | undefined;
+      const currentAddress = ((frame?.addr as string) || "0x0").toLowerCase();
+
+      // Use GDB disassemble command
+      const output = await this.execute(`disassemble`);
+
+      if (!output || output.includes("No function")) {
+        // Fall back to disassemble by address
+        const pc = this.config.arch === "riscv64" ? "$pc" : "$eip";
+        const fallbackOutput = await this.execute(
+          `x/${instructionCount * 2}i ${pc} - ${instructionCount * 4}`
+        );
+        if (!fallbackOutput) return null;
+
+        // Parse x/i output format: "0xaddr <func+offset>: instruction"
+        return this.parseXiOutput(fallbackOutput, currentAddress);
+      }
+
+      // Parse disassemble output
+      return this.parseDisassemblyOutput(output, currentAddress);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Parse disassemble command output
+   */
+  private parseDisassemblyOutput(output: string, currentAddress: string): DisassemblyLine[] {
+    const lines: DisassemblyLine[] = [];
+    const currentAddrLower = currentAddress.toLowerCase();
+
+    // GDB disassemble output format examples:
+    // "=> 0xc00214dd <+0>:\tpush   %ebp"     (current instruction with arrow)
+    // "   0xc00214de <+1>:\tmov    %esp,%ebp" (other instructions)
+    // Note: uses tab (\t) between colon and instruction
+    const regex = /^(=>)?\s*(0x[0-9a-f]+)\s+<\+(\d+)>:\t(.*)$/i;
+
+    // Also need to extract function name from header line like:
+    // "Dump of assembler code for function thread_create:"
+    let funcName = "??";
+    const funcMatch = output.match(/Dump of assembler code for function ([^:]+):/);
+    if (funcMatch) {
+      funcName = funcMatch[1];
+    }
+
+    for (const line of output.split("\n")) {
+      const match = line.match(regex);
+      if (match) {
+        const address = match[2].toLowerCase();
+        lines.push({
+          address: match[2],
+          funcName,
+          offset: parseInt(match[3], 10),
+          instruction: match[4].trim(),
+          isCurrent: address === currentAddrLower || match[1] === "=>",
+        });
+      }
+    }
+
+    return lines;
+  }
+
+  /**
+   * Parse x/i (examine instructions) command output
+   */
+  private parseXiOutput(output: string, currentAddress: string): DisassemblyLine[] {
+    const lines: DisassemblyLine[] = [];
+    const currentAddrLower = currentAddress.toLowerCase();
+
+    // x/i output format examples:
+    // "   0xc00214dd <thread_create>:\tpush   %ebp"
+    // "   0xc00214de <thread_create+1>:\tmov    %esp,%ebp"
+    const regex = /^(=>)?\s*(0x[0-9a-f]+)\s+<([^>+]+)(?:\+(\d+))?>:\t(.*)$/i;
+
+    for (const line of output.split("\n")) {
+      const match = line.match(regex);
+      if (match) {
+        const address = match[2].toLowerCase();
+        lines.push({
+          address: match[2],
+          funcName: match[3],
+          offset: match[4] ? parseInt(match[4], 10) : 0,
+          instruction: match[5].trim(),
+          isCurrent: address === currentAddrLower || match[1] === "=>",
+        });
+      }
+    }
+
+    return lines;
   }
 
   /**
